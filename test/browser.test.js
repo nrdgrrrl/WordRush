@@ -78,6 +78,34 @@ test('random rush starts by touch and the board stays inside the phone viewport'
   await browser.close();
 });
 
+test('active games hide the title bar and preserve a no-scroll compact layout', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator('#quickPlay').click();
+  const layout = await page.evaluate(() => {
+    const style = selector => getComputedStyle(document.querySelector(selector));
+    return {
+      header: style('header').display,
+      screenHeight: document.querySelector('#gameScreen').getBoundingClientRect().height,
+      viewportHeight: innerHeight,
+      scrollHeight: document.documentElement.scrollHeight,
+      modeSize: parseFloat(style('#gameMode').fontSize),
+      ruleSize: parseFloat(style('#ruleBanner').fontSize),
+      previewSize: parseFloat(style('#preview').fontSize),
+      scoreSize: parseFloat(style('#gameScore').fontSize)
+    };
+  });
+  assert.equal(layout.header, 'none');
+  assert.equal(layout.screenHeight, layout.viewportHeight);
+  assert.equal(layout.scrollHeight, layout.viewportHeight);
+  assert.ok(layout.modeSize > 11);
+  assert.ok(layout.ruleSize > 11);
+  assert.ok(layout.previewSize > 13);
+  assert.ok(layout.scoreSize < 28);
+  await browser.close();
+});
+
 test('sudden death can return home from its results screen', async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
