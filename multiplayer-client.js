@@ -15,8 +15,8 @@
       if (message.type === 'room_created') { localStorage.setItem('wordrush-room', message.code); toast('Room ' + message.code + ' created'); }
       if (message.type === 'joined_room') { localStorage.setItem('wordrush-room', message.code); toast('Joined room ' + message.code); }
       if (message.type === 'round_started') { renderPlayers(message.players); window.wordrushOnlineRound?.(message.round, message.config, message.mode); toast('Round started · ' + message.players.length + ' players'); } if (message.type === 'room_state') renderPlayers(message.players); if (message.type === 'room_state' && message.round && message.status === 'playing') { window.wordrushOnlineRound?.(message.round, { label: message.mode.toUpperCase(), rule: 'Multiplayer round' }, message.mode); }
-      if (message.type === 'word_accepted') { renderPlayers(message.scores); document.querySelector('#gameScore').textContent = message.scores.find(score => score.id === message.playerId)?.score || document.querySelector('#gameScore').textContent; }
-      if (message.type === 'word_rejected') toast(message.reason === 'path' ? 'Invalid path' : 'Word rejected');
+      if (message.type === 'word_accepted') { if(message.playerId===guestId) window.wordrushRecordOnlineWord?.(message.word); renderPlayers(message.scores); document.querySelector('#gameScore').textContent = message.scores.find(score => score.id === message.playerId)?.score || document.querySelector('#gameScore').textContent; }
+      if (message.type === 'word_rejected') { if(message.playerId===guestId) window.wordrushRecordOnlineIncorrect?.(); toast(message.reason === 'path' ? 'Invalid path' : 'Word rejected'); }
       if (message.type === 'round_finished') { window.wordrushOnlineFinish?.(message.ranking); toast('Round complete'); } 
       if (message.type === 'error') toast(message.code.replaceAll('_', ' ').toLowerCase());
     });

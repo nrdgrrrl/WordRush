@@ -43,6 +43,9 @@ test('browser can start, play, persist stats, and toggle dark mode', async () =>
   await page.locator('#endGame').click();
   await page.locator('[data-screen="homeScreen"]').last().click();
   assert.ok(Number(await page.locator('#homeWords').textContent()) > 0);
+  await page.locator('#navStats').click();
+  assert.equal(await page.locator('#statsGrid .stat-card').count(), 12);
+  assert.match(await page.locator('[data-stat="averageWordLength"] strong').textContent(), /^\d+\.\d$/);
   await page.locator('#themeToggle').click();
   assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
   assert.deepEqual(errors, []);
@@ -66,6 +69,22 @@ test('random rush starts by touch and the board stays inside the phone viewport'
     assert.equal(layout.nav, 'none');
     await page.close();
   }
+  await browser.close();
+});
+
+test('sudden death can return home from its results screen', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator('[data-mode="sudden"]').click();
+  const tile = await page.locator('.tile').first().boundingBox();
+  await page.mouse.move(tile.x + tile.width / 2, tile.y + tile.height / 2);
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.waitForTimeout(450);
+  assert.equal(await page.locator('#resultsScreen').evaluate(node => node.classList.contains('active')), true);
+  await page.locator('#resultsScreen [data-screen="homeScreen"]').click();
+  assert.equal(await page.locator('#homeScreen').evaluate(node => node.classList.contains('active')), true);
   await browser.close();
 });
 
