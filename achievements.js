@@ -37,7 +37,7 @@
     const count = profile.unlocked.length;
     const counter = document.querySelector('#achievementCount'); if (counter) counter.textContent = count + ' / ' + achievements.length;
     const bar = document.querySelector('#achievementBar'); if (bar) bar.style.background = 'linear-gradient(90deg,var(--coral) ' + (count / achievements.length * 100) + '%,#e1dfd8 ' + (count / achievements.length * 100) + '%)';
-    if (announce) newly.forEach(item => setTimeout(() => { if (!document.querySelector('#resultsScreen.active')) toast(item.title + ' — ' + item.detail); }, 0));
+    if (announce && !document.querySelector('#resultsScreen.active')) newly.forEach(item => toast(item.title + ' — ' + item.detail));
   }
   render(readProfile());
   window.wordrushAchievementEvent = () => render(readProfile(), true);
