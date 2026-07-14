@@ -78,6 +78,24 @@ test('creator leaving closes the session for every connected player', async () =
   host.close(); guest.close();
 });
 
+test('creator disconnecting closes the session for every connected player', async () => {
+  const host = await client('disconnecting-host');
+  const guest = await client('disconnecting-guest');
+  const createdPromise = next(host, 'room_created');
+  const lobbyPromise = next(host, 'room_state');
+  message(host, 'create_room', { name: 'DisconnectingHost' });
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, 'joined_room');
+  message(guest, 'join_room', { code: created.code, name: 'DisconnectingGuest' });
+  await joinedPromise;
+  const closedGuest = next(guest, 'session_closed');
+  host.close();
+  await closedGuest;
+  assert.equal(rooms.has(created.code), false);
+  guest.close();
+});
+
 test('random multiplayer sessions automatically advance to another round', async () => {
   const ws = await client('random-host');
   const createdPromise = next(ws, 'room_created');

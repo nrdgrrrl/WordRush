@@ -159,6 +159,20 @@ test('multiplayer creates a five-letter session and launches co-op', async () =>
   await browser.close();
 });
 
+test('multiplayer banner disappears when its connection is lost', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator('#multiplayerButton').click();
+  await page.locator('#sessionCreate').click();
+  await page.waitForFunction(() => /^[A-Z]{5}$/.test(document.querySelector('#sessionCode').textContent));
+  assert.equal(await page.locator('#multiplayerBanner').isHidden(), false);
+  await page.evaluate(() => window.wordrushSocket.close());
+  await page.waitForFunction(() => document.querySelector('#multiplayerBanner').hidden);
+  assert.equal(await page.locator('#homeScreen').evaluate(node => node.classList.contains('active')), true);
+  await browser.close();
+});
+
 test('browser profile uses a generated identity and saves a selected avatar', async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });

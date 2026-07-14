@@ -32,7 +32,7 @@
       if (message.type === 'round_finished') { window.wordrushOnlineFinish?.(message.ranking,{cooperative:message.cooperative,teamScore:message.teamScore,stats:message.stats}); toast(message.cooperative ? 'Team round complete' : 'Round complete'); }
       if (message.type === 'error') toast(message.code.replaceAll('_', ' ').toLowerCase());
     });
-    socket.addEventListener('close', () => { window.wordrushSocket = null; }); return socket;
+    socket.addEventListener('close', () => { window.wordrushSocket = null; sessionCode = ''; window.wordrushSessionCode = ''; creator = false; $('#multiplayerBanner').hidden = true; $('#sessionLobby').hidden = true; $('#sessionChoices').hidden = false; goHome(); }); return socket;
   }
   window.wordrushIdentityChanged=()=>{if(socket?.readyState===1&&sessionCode)socket.send(JSON.stringify({type:'update_identity',...identity()}))};
   $('#multiplayerButton')?.addEventListener('click', () => { $('#sessionChoices').hidden = false; $('#sessionLobby').hidden = true; sessionDialog(); });
