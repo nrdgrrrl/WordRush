@@ -6,7 +6,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/core.test.js test/server.test.js",
+    "test:browser": "node --test test/browser.test.js",
     "headless": "node headless-client.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1"
   }
 }
