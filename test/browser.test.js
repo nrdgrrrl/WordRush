@@ -164,6 +164,7 @@ test('multiplayer banner disappears when its connection is lost', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   await page.locator('#multiplayerButton').click();
+  assert.equal(await page.locator('#multiplayerBanner').evaluate(node => getComputedStyle(node).display), 'none');
   await page.locator('#sessionCreate').click();
   await page.waitForFunction(() => /^[A-Z]{5}$/.test(document.querySelector('#sessionCode').textContent));
   assert.equal(await page.locator('#multiplayerBanner').isHidden(), false);
@@ -178,12 +179,14 @@ test('banner X exits a newly created session from the landing page', async () =>
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   await page.locator('#multiplayerButton').click();
+  assert.equal(await page.locator('#multiplayerBanner').evaluate(node => getComputedStyle(node).display), 'none');
   await page.locator('#sessionCreate').click();
   await page.waitForFunction(() => /^[A-Z]{5}$/.test(document.querySelector('#sessionCode').textContent));
   await page.locator('#multiplayerDialog button[value="cancel"]').click();
   page.once('dialog', dialog => dialog.accept());
   await page.locator('#exitMultiplayer').click();
   await page.waitForFunction(() => document.querySelector('#multiplayerBanner').hidden);
+  assert.equal(await page.locator('#multiplayerBanner').evaluate(node => getComputedStyle(node).display), 'none');
   assert.equal(await page.locator('#multiplayerBannerText').textContent(), 'No active session');
   assert.equal(await page.locator('#roomTitle').textContent(), 'No active session');
   assert.equal(await page.locator('#homeScreen').evaluate(node => node.classList.contains('active')), true);
