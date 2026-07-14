@@ -56,3 +56,23 @@ test('creator can launch cooperative multiplayer sessions', async () => {
   assert.equal(rooms.get(created.code).mode, 'coop');
   host.close(); guest.close();
 });
+
+test('creator leaving closes the session for every connected player', async () => {
+  const host = await client('leaving-host');
+  const guest = await client('leaving-guest');
+  const createdPromise = next(host, 'room_created');
+  const lobbyPromise = next(host, 'room_state');
+  message(host, 'create_room', { name: 'LeavingHost' });
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, 'joined_room');
+  message(guest, 'join_room', { code: created.code, name: 'LeavingGuest' });
+  await joinedPromise;
+  const closedHost = next(host, 'session_closed');
+  const closedGuest = next(guest, 'session_closed');
+  message(host, 'leave_session');
+  await closedHost;
+  await closedGuest;
+  assert.equal(rooms.has(created.code), false);
+  host.close(); guest.close();
+});

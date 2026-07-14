@@ -144,11 +144,17 @@ test('multiplayer creates a five-letter session and launches co-op', async () =>
   await page.locator('#sessionCreate').click();
   await page.waitForFunction(() => /^[A-Z]{5}$/.test(document.querySelector('#sessionCode').textContent));
   assert.equal(await page.locator('#sessionCode').textContent().then(code => code.length), 5);
+  assert.equal(await page.locator('#multiplayerBanner').isHidden(), false);
   await page.locator('#sessionType').selectOption('coop');
   await page.locator('#sessionStart').click();
   await page.waitForSelector('#gameScreen.active');
   assert.equal(await page.locator('#gameMode').textContent(), 'CO-OP');
   assert.equal(await page.locator('#livePlayers .live-player').count(), 1);
+  await page.locator('#gameScreen [data-screen="homeScreen"]').click();
+  page.on('dialog', dialog => dialog.accept());
+  await page.locator('#exitMultiplayer').click();
+  await page.waitForFunction(() => document.querySelector('#multiplayerBanner').hidden);
+  assert.equal(await page.locator('#homeScreen').evaluate(node => node.classList.contains('active')), true);
   await browser.close();
 });
 

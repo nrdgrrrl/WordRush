@@ -4,15 +4,16 @@
   localStorage.setItem('wordrush-guest-id', guestId);
   let socket, sessionCode = '', creator = false;
   const $ = selector => document.querySelector(selector);
+  const goHome = () => document.querySelector('[data-screen="homeScreen"]')?.click();
   const identity = () => window.wordrushProfile ? window.wordrushProfile() : { name: 'Guest', avatar: '🐈' };
   const toast = message => { const el = $('#toast'); if (!el) return; el.textContent = message; el.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 1800); };
   function renderPlayers(players) {
     const target = $('#livePlayers'); if (!target) return;
     target.innerHTML = (players || []).map(player => '<div class="live-player"><span class="player-avatar">' + (player.avatar || '🐈') + '</span><span class="player-name">' + player.name + '</span><b>' + player.score + '</b></div>').join('');
-    if (sessionCode) { $('#randomPreview').textContent = 'MULTIPLAYER'; $('#randomPreviewSub').textContent = (players || []).length + ' player' + ((players || []).length === 1 ? '' : 's') + ' in session'; $('#roomTitle').textContent = 'Multiplayer · ' + sessionCode; $('#roomSubtitle').textContent = (players || []).length + ' player' + ((players || []).length === 1 ? '' : 's') + ' connected'; $('#sessionPlayersText').textContent = (players || []).length + ' player' + ((players || []).length === 1 ? '' : 's') + ' connected'; }
+    if (sessionCode) { $('#multiplayerBanner').hidden = false; $('#multiplayerBannerText').textContent = (players || []).length + ' player' + ((players || []).length === 1 ? '' : 's') + ' in session'; $('#roomTitle').textContent = 'Multiplayer · ' + sessionCode; $('#roomSubtitle').textContent = (players || []).length + ' player' + ((players || []).length === 1 ? '' : 's') + ' connected'; $('#sessionPlayersText').textContent = (players || []).length + ' player' + ((players || []).length === 1 ? '' : 's') + ' connected'; }
   }
   function sessionDialog(open = true) { if (open) $('#multiplayerDialog').showModal(); else $('#multiplayerDialog').close(); }
-  function showLobby(code, isCreator) { sessionCode = code; window.wordrushSessionCode = code; creator = isCreator; $('#sessionChoices').hidden = true; $('#sessionLobby').hidden = false; $('#sessionCode').textContent = code; $('#sessionStart').hidden = !creator; $('#sessionType').disabled = !creator; sessionDialog(); }
+  function showLobby(code, isCreator) { sessionCode = code; window.wordrushSessionCode = code; creator = isCreator; $('#multiplayerBanner').hidden = false; $('#sessionChoices').hidden = true; $('#sessionLobby').hidden = false; $('#sessionCode').textContent = code; $('#sessionStart').hidden = !creator; $('#sessionType').disabled = !creator; sessionDialog(); }
   function sendWhenReady(payload) { const send = () => socket.send(JSON.stringify(payload)); socket.readyState === 1 ? send() : socket.addEventListener('open', send, { once: true }); }
   function connect() {
     if (socket && socket.readyState <= 1) return socket;
@@ -20,6 +21,8 @@
     socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'hello', guestId, ...identity() })));
     socket.addEventListener('message', event => {
       const message = JSON.parse(event.data);
+      if (message.type === 'session_closed') { sessionCode = ''; window.wordrushSessionCode = ''; creator = false; $('#multiplayerBanner').hidden = true; $('#sessionLobby').hidden = true; goHome(); $('#sessionChoices').hidden = false; if ($('#multiplayerDialog').open) $('#multiplayerDialog').close(); toast('Multiplayer session ended'); }
+      if (message.type === 'session_left') { sessionCode = ''; window.wordrushSessionCode = ''; creator = false; $('#multiplayerBanner').hidden = true; goHome(); if ($('#multiplayerDialog').open) $('#multiplayerDialog').close(); toast('Left multiplayer session'); }
       if (message.type === 'room_created') { localStorage.setItem('wordrush-room', message.code); showLobby(message.code, true); toast('Session ' + message.code + ' created'); }
       if (message.type === 'joined_room') { localStorage.setItem('wordrush-room', message.code); showLobby(message.code, false); toast('Joined session ' + message.code); }
       if (message.type === 'room_state') { renderPlayers(message.players); if (message.code && !sessionCode) showLobby(message.code, message.creatorId === guestId); if (message.round && message.status === 'playing') window.wordrushOnlineRound?.(message.round, { label: message.mode.toUpperCase(), rule: 'Multiplayer round' }, message.mode); }
@@ -36,5 +39,5 @@
   $('#sessionCreate')?.addEventListener('click', () => { const ws = connect(); sendWhenReady({ type: 'create_room', ...identity() }); });
   $('#sessionJoin')?.addEventListener('click', () => { const code = prompt('Enter the 5-letter session code')?.trim().toUpperCase(); if (!/^[A-Z]{5}$/.test(code || '')) return toast('Enter a 5-letter code'); socket = connect(); sendWhenReady({ type: 'join_room', code, ...identity() }); });
   $('#sessionStart')?.addEventListener('click', () => { const mode = $('#sessionType').value; sendWhenReady({ type: 'start_game', mode }); });
-  $('#sessionLeave')?.addEventListener('click', () => { sessionCode = ''; window.wordrushSessionCode = ''; creator = false; $('#sessionChoices').hidden = false; $('#sessionLobby').hidden = true; $('#roomTitle').textContent = 'No active session'; $('#roomSubtitle').textContent = 'Create or join a multiplayer session'; sessionDialog(false); });
+  $('#sessionLeave')?.addEventListener('click', () => leaveSession());$('#exitMultiplayer')?.addEventListener('click', () => { if (confirm(creator ? 'Exit multiplayer mode? This will end the session for everyone.' : 'Exit multiplayer mode?')) leaveSession(); });function leaveSession(){if(socket?.readyState===1&&sessionCode)sendWhenReady({type:'leave_session'});else { sessionCode=''; window.wordrushSessionCode=''; $('#multiplayerBanner').hidden=true; goHome(); sessionDialog(false); }}
 })();
