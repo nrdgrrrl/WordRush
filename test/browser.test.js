@@ -122,6 +122,20 @@ test('random rush rolls into a different game and can be stopped', async () => {
   await browser.close();
 });
 
+test('the Random Rush preview panel starts the rush while reload only rerolls it', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  const before = await page.locator('#randomPreview').textContent();
+  await page.locator('#reroll').click();
+  assert.equal(await page.locator('#homeScreen').evaluate(node => node.classList.contains('active')), true);
+  const after = await page.locator('#randomPreview').textContent();
+  assert.ok(after.length > 0);
+  await page.locator('#randomPanel').click();
+  assert.equal(await page.locator('#gameScreen').evaluate(node => node.classList.contains('active')), true);
+  await browser.close();
+});
+
 test('browser profile uses a generated identity and saves a selected avatar', async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
