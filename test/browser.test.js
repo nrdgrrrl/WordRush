@@ -49,3 +49,44 @@ test('browser can start, play, persist stats, and toggle dark mode', async () =>
   await browser.close();
 });
 
+test('browser profile uses a generated identity and saves a selected avatar', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  const initial = await page.locator('#profileButton').textContent();
+  assert.notEqual(initial, 'JD');
+  await page.locator('#profileButton').click();
+  assert.equal(await page.locator('#profileDialog').evaluate(dialog => dialog.open), true);
+  await page.locator('#profileName').fill('CosmicPaw');
+  await page.locator('[data-avatar="🦊"]').click();
+  await page.locator('.dialog-save').click();
+  assert.equal(await page.locator('#profileButton').textContent(), '🦊');
+  assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('wordrush-profile')).name), 'CosmicPaw');
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('wordrush-profile')).avatar), '🦊');
+  await browser.close();
+});
+
+test('browser exposes the expanded avatar set and unlocks achievement toasts', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  assert.equal(await page.evaluate(() => window.wordrushAchievementCatalog.length), 204);
+  await page.locator('#profileButton').click();
+  assert.equal(await page.locator('[data-avatar]').count(), 36);
+  await page.locator('[value="cancel"]').click();
+  await page.evaluate(() => {
+    const profile = JSON.parse(localStorage.getItem('wordrush-profile'));
+    profile.words = 1;
+    profile.score = 0;
+    profile.rounds = 0;
+    profile.streak = 0;
+    profile.unlocked = [];
+    localStorage.setItem('wordrush-profile', JSON.stringify(profile));
+    window.wordrushAchievementEvent();
+  });
+  assert.match(await page.locator('#toast').textContent(), /First blood/);
+  assert.match(await page.locator('#achievementCount').textContent(), /[1-9] \/ 204/);
+  await browser.close();
+});

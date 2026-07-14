@@ -15,3 +15,25 @@ test('rejects the eleventh player', async () => { const players = await Promise.
 
 test('authoritatively accepts a valid path and rejects an invalid word', async () => { const ws = await client('scorer'); const accepted = new Promise(resolve => ws.on('message', raw => { const message = JSON.parse(raw); if (message.type === 'word_accepted') resolve(message); })); const createdPromise = next(ws, 'room_created'); const startedPromise = next(ws, 'round_started'); message(ws, 'create_room', { mode: 'classic' }); const created = await createdPromise; const started = await startedPromise; const board = started.round.board; let found; for (let i = 0; i < board.length && !found; i++) for (let j = 0; j < board.length && !found; j++) if (i !== j && board[i] === 'S' && board[j] === 'T') found = [i,j]; if (!found) { ws.close(); return; } message(ws, 'submit_word', { word: 'ST', path: found }); const result = await next(ws, 'word_rejected'); assert.equal(result.type, 'word_rejected'); assert.equal(created.code.length, 6); ws.close(); });
 
+test('propagates player identities through room state, score updates, and rankings', async () => {
+  const host = await client('identity-host');
+  const guest = await client('identity-guest');
+  const createdPromise = next(host, 'room_created');
+  const startedPromise = next(host, 'round_started');
+  message(host, 'create_room', { mode: 'classic', name: 'VelvetWhisker', avatar: '🦊' });
+  const created = await createdPromise;
+  await startedPromise;
+  const joinedPromise = next(guest, 'joined_room');
+  const statePromise = next(host, 'room_state');
+  message(guest, 'join_room', { code: created.code, name: 'CosmicPaw', avatar: '🐼' });
+  await joinedPromise;
+  const state = await statePromise;
+  assert.deepEqual(state.players.map(player => [player.name, player.avatar]), [['VelvetWhisker', '🦊'], ['CosmicPaw', '🐼']]);
+  const room = rooms.get(created.code);
+  room.status = 'finished';
+  room.round = null;
+  const ranking = [...room.players.values()].map(player => ({ id: player.id, name: player.name, avatar: player.avatar, score: player.score }));
+  assert.equal(ranking.find(player => player.name === 'CosmicPaw').avatar, '🐼');
+  host.close();
+  guest.close();
+});
