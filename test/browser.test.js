@@ -1,7 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { chromium } = require('playwright');
 process.env.RANDOM_RUSH_DELAY = '50';
+process.env.WORDRUSH_LEADERBOARD_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wordrush-browser-')), 'leaderboard.json');
 const { server } = require('../server');
 
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM || '/home/victoria/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome';
@@ -188,8 +192,10 @@ test('the Random Rush preview panel starts the rush while reload only rerolls it
   assert.equal(await page.locator('#homeScreen').evaluate(node => node.classList.contains('active')), true);
   const after = await page.locator('#randomPreview').textContent();
   assert.ok(after.length > 0);
+  const preview = await page.locator('#randomPreview').textContent();
   await page.locator('#randomPanel').click();
   assert.equal(await page.locator('#gameScreen').evaluate(node => node.classList.contains('active')), true);
+  assert.match(await page.locator('#gameTitle').textContent(), new RegExp(preview.match(/(\d+)×\1/)?.[0] || 'never'));
   await browser.close();
 });
 
@@ -294,6 +300,32 @@ test('browser exposes the expanded avatar set and unlocks achievement toasts', a
   });
   assert.match(await page.locator('#toast').textContent(), /First blood/);
   assert.match(await page.locator('#achievementCount').textContent(), /[1-9] \/ 204/);
+  const lightToast = await page.locator('#toast').evaluate(node => ({ width: node.getBoundingClientRect().width, color: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor }));
+  assert.ok(lightToast.width > 300);
+  assert.notEqual(lightToast.color, lightToast.background);
+  await page.locator('#themeToggle').click();
+  const darkToast = await page.locator('#toast').evaluate(node => ({ color: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor }));
+  assert.notEqual(darkToast.color, darkToast.background);
+  await page.locator('#quickPlay').click();
+  await page.evaluate(() => {
+    const profile = JSON.parse(localStorage.getItem('wordrush-profile'));
+    profile.words = 1;
+    profile.unlocked = [];
+    localStorage.setItem('wordrush-profile', JSON.stringify(profile));
+    window.wordrushAchievementEvent();
+  });
+  const inGameToast = await page.locator('#toast').evaluate(node => {
+    const toast = node.getBoundingClientRect();
+    const board = document.querySelector('.board').getBoundingClientRect();
+    return { top: toast.top, boardTop: board.top, clearOfBoard: toast.bottom <= board.top };
+  });
+  assert.ok(Math.abs(inGameToast.top - 10) < 1);
+  assert.equal(inGameToast.clearOfBoard, true);
+  await page.waitForTimeout(3500);
+  assert.equal(await page.locator('#toast').evaluate(node => getComputedStyle(node).opacity), '1');
+  await page.locator('#endGame').click();
+  await page.waitForTimeout(350);
+  assert.equal(await page.locator('#toast').evaluate(node => getComputedStyle(node).opacity), '0');
   await browser.close();
 });
 test('tracing animates selected tiles and clears them with the trace line', async () => {
@@ -317,5 +349,69 @@ test('tracing animates selected tiles and clears them with the trace line', asyn
   await page.waitForTimeout(300);
   assert.equal(await page.locator('.tile.selected').count(), 0);
   assert.equal(await page.locator('#tracePath').getAttribute('d'), null);
+  await browser.close();
+});
+
+test('touch tracing accepts tile edges without selecting diagonal gaps', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  await page.goto(baseUrl);
+  await page.locator('#quickPlay').click();
+  const tiles = page.locator('.tile');
+  const first = await tiles.nth(0).boundingBox();
+  const gapPoint = { x: first.x + first.width + 2, y: first.y + first.height + 2 };
+
+  // A near-corner touch is still inside the first tile and must start tracing.
+  await page.mouse.move(first.x + 2, first.y + 2);
+  await page.mouse.down();
+  assert.equal(await page.locator('.tile.selected').count(), 1);
+  await page.mouse.up();
+
+  // A point in the diagonal gap must not be coerced to either neighboring tile.
+  await page.waitForTimeout(300);
+  await page.mouse.move(gapPoint.x, gapPoint.y);
+  await page.mouse.down();
+  assert.equal(await page.locator('.tile.selected').count(), 0);
+  await page.mouse.up();
+  await browser.close();
+});
+
+test('diagonal tracing does not pick corner-crossed neighboring tiles', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator('#quickPlay').click();
+  const from = await page.locator('.tile').nth(0).boundingBox();
+  const to = await page.locator('.tile').nth(5).boundingBox();
+  const center = box => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+  const start = center(from), finish = center(to);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  for (let step = 1; step < 10; step++) {
+    const progress = step / 10;
+    await page.mouse.move(start.x + (finish.x - start.x) * progress, start.y + (finish.y - start.y) * progress);
+  }
+  await page.mouse.move(finish.x, finish.y);
+  assert.deepEqual(await page.locator('.tile.selected').evaluateAll(nodes => nodes.map(node => Number(node.dataset.i))), [0, 5]);
+  await page.mouse.up();
+  await browser.close();
+});
+
+test('a canceled pointer cannot clear a newer trace', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  await page.goto(baseUrl);
+  await page.locator('#quickPlay').click();
+  const first = await page.locator('.tile').nth(0).boundingBox();
+  const second = await page.locator('.tile').nth(1).boundingBox();
+  await page.evaluate(({ first, second }) => {
+    const grid = document.querySelector('#grid');
+    const point = (box, id) => new PointerEvent('pointerdown', { bubbles: true, pointerId: id, clientX: box.x + 2, clientY: box.y + 2 });
+    grid.dispatchEvent(point(first, 1));
+    grid.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: first.x + 2, clientY: first.y + 2 }));
+    grid.dispatchEvent(point(second, 2));
+    grid.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 1, clientX: first.x + 2, clientY: first.y + 2 }));
+  }, { first, second });
+  assert.equal(await page.locator('.tile.selected').count(), 1);
   await browser.close();
 });

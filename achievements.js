@@ -25,7 +25,8 @@
   }
 
   function readProfile() { try { return JSON.parse(localStorage.getItem('wordrush-profile') || '{}'); } catch { return {}; } }
-  function toast(message) { const el = document.querySelector('#toast'); if (!el) return; el.textContent = '✦ ' + message; el.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 2400); }
+  function dismissToast() { const el = document.querySelector('#toast'); if (!el) return; clearTimeout(toast.timer); el.classList.remove('show'); }
+  function toast(message) { const el = document.querySelector('#toast'); if (!el) return; el.textContent = '✦ ' + message; el.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 4000); }
   function render(profile, announce = false) {
     profile.unlocked = Array.isArray(profile.unlocked) ? profile.unlocked : [];
     const newly = [];
@@ -36,9 +37,11 @@
     const count = profile.unlocked.length;
     const counter = document.querySelector('#achievementCount'); if (counter) counter.textContent = count + ' / ' + achievements.length;
     const bar = document.querySelector('#achievementBar'); if (bar) bar.style.background = 'linear-gradient(90deg,var(--coral) ' + (count / achievements.length * 100) + '%,#e1dfd8 ' + (count / achievements.length * 100) + '%)';
-    if (announce) newly.forEach(item => toast(item.title + ' — ' + item.detail));
+    if (announce) newly.forEach(item => setTimeout(() => { if (!document.querySelector('#resultsScreen.active')) toast(item.title + ' — ' + item.detail); }, 0));
   }
   render(readProfile());
   window.wordrushAchievementEvent = () => render(readProfile(), true);
   window.wordrushAchievementCatalog = achievements;
+  const resultsScreen = document.querySelector('#resultsScreen');
+  if (resultsScreen) new MutationObserver(() => { if (resultsScreen.classList.contains('active')) dismissToast(); }).observe(resultsScreen, { attributes: true, attributeFilter: ['class'] });
 })();

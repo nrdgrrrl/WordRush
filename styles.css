@@ -64,3 +64,17 @@ body:has(#gameScreen.active) .app-shell{padding-bottom:0}
 .scoreboard-tabs{display:flex;border-bottom:1px solid var(--line);margin:18px 0 10px}.scoreboard-tabs button{flex:1;padding:12px 8px;color:var(--muted);font:11px monospace;border-bottom:2px solid transparent}.scoreboard-tabs button.active{color:var(--coral);border-color:var(--coral)}
 .scoreboard-list{display:grid;gap:7px}.scoreboard-row{display:grid;grid-template-columns:24px 34px 1fr auto;align-items:center;gap:8px;width:100%;padding:12px 9px;text-align:left;border:1px solid var(--line);background:transparent;color:inherit}.scoreboard-row:hover{border-color:var(--coral);transform:translateY(-1px)}.scoreboard-rank{font:12px monospace;color:var(--muted)}.scoreboard-avatar{font-size:24px;text-align:center}.scoreboard-player{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.scoreboard-row b{font:14px monospace}.scoreboard-empty{text-align:center;color:var(--muted);padding:28px 10px;font:11px monospace}.leaderboard-profile{padding:0 20px 22px}.profile-score{text-align:center;border-block:1px solid var(--line);padding:16px;margin-bottom:14px}.profile-score strong{display:block;font-size:38px}.profile-score small,.profile-stat-grid small{display:block;color:var(--muted);font:10px monospace;margin-top:4px}.profile-stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.profile-stat-grid span{border:1px solid var(--line);padding:11px}.profile-stat-grid b{font-size:20px}
 html[data-theme="dark"] .scoreboard-row{background:#242823;border-color:#3b4239}@media(prefers-color-scheme:dark){html:not([data-theme="light"]) .scoreboard-row{background:#242823;border-color:#3b4239}}
+
+/* Keep the results actions together and let Play Again follow the active theme. */
+#resultsScreen > .primary,#resultsScreen > .secondary{display:inline-flex;width:calc(33.333% - 6px);justify-content:center;padding:0 8px;font-size:12px;vertical-align:top;margin-top:20px}
+#resultsScreen > #stopRushResults[hidden]{display:none}
+#resultsScreen:not(:has(#stopRushResults:not([hidden]))) > .primary,#resultsScreen:not(:has(#stopRushResults:not([hidden]))) > .secondary{width:calc(50% - 5px)}
+#resultsScreen > #again{background:var(--coral);color:#1d1d1b;border-color:var(--coral)}
+html[data-theme="dark"] #resultsScreen > #again{background:var(--lime);color:#1d1d1b;border-color:var(--lime)}
+@media(prefers-color-scheme:dark){html:not([data-theme="light"]) #resultsScreen > #again{background:var(--lime);color:#1d1d1b;border-color:var(--lime)}}
+/* Achievement notifications stay readable in either theme and out of the board. */
+#toast{width:min(420px,calc(100vw - 32px));max-width:calc(100vw - 32px);padding:13px 20px;text-align:center;line-height:1.35;border:1px solid var(--toast-border,#4b4b46);border-radius:4px;background:var(--toast-bg,#282825);color:var(--toast-fg,#fff);z-index:20;pointer-events:none;transform:translate(-50%,8px);transition:opacity .25s,transform .25s}
+#toast.show{transform:translate(-50%,0)}
+body:has(#gameScreen.active) #toast{top:10px;bottom:auto}
+html[data-theme="dark"] #toast{--toast-bg:#f3f1ea;--toast-fg:#1b1d1a;--toast-border:#aaa99f}
+@media(prefers-color-scheme:dark){html:not([data-theme="light"]) #toast{--toast-bg:#f3f1ea;--toast-fg:#1b1d1a;--toast-border:#aaa99f}}

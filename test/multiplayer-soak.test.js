@@ -1,7 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { chromium } = require('playwright');
 process.env.RANDOM_RUSH_DELAY = '50';
+process.env.WORDRUSH_LEADERBOARD_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wordrush-soak-')), 'leaderboard.json');
 const { server, rooms } = require('../server');
 
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM || '/home/victoria/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome';
