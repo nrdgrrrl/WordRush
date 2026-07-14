@@ -45,7 +45,9 @@ test('browser can start, play, persist stats, and toggle dark mode', async () =>
   await page.locator('[data-screen="homeScreen"]').last().click();
   assert.ok(Number(await page.locator('#homeWords').textContent()) > 0);
   await page.locator('#navStats').click();
-  assert.equal(await page.locator('#statsGrid .stat-card').count(), 12);
+  assert.equal(await page.locator('#statsGrid .stat-card').count(), 14);
+  assert.equal(await page.locator('[data-stat="multiplayerWins"] strong').textContent(), '0');
+  assert.match(await page.locator('[data-stat="multiplayerWinRate"] strong').textContent(), /^0\.0%$/);
   assert.match(await page.locator('[data-stat="averageWordLength"] strong').textContent(), /^\d+\.\d$/);
   await page.locator('[data-screen="homeScreen"]').first().click();
   assert.equal(await page.locator('#multiplayerButton').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(245, 243, 238)');
@@ -117,6 +119,7 @@ test('global scoreboard lists players and opens their stats', async () => {
   await page.waitForFunction(() => document.querySelector('#scoreboardList').textContent.includes('BoardCat'));
   assert.equal(await page.locator('.scoreboard-row').first().locator('.scoreboard-avatar').textContent(), '🐯');
   await page.locator('.scoreboard-row').first().click();
+  await page.waitForFunction(() => document.querySelector('#leaderboardProfileDialog').open);
   assert.equal(await page.locator('#leaderboardProfileDialog').evaluate(dialog => dialog.open), true);
   assert.match(await page.locator('#leaderboardProfileName').textContent(), /BoardCat/);
   assert.match(await page.locator('#leaderboardProfileBody').textContent(), /321/);

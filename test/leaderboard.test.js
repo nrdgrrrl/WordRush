@@ -11,9 +11,13 @@ test('leaderboard persists scores and separates weekly and total rankings', () =
   board.recordScore({ id: 'alpha', name: 'Alpha', avatar: '🐱', score: 120, words: 4, at: new Date() });
   board.recordScore({ id: 'alpha', name: 'Alpha', avatar: '🐱', score: 80, words: 3, at: new Date() });
   board.recordScore({ id: 'beta', name: 'Beta', avatar: '🦊', score: 150, at: new Date() });
-  assert.deepEqual(board.rankings('weekly').map(player => [player.name, player.score]), [['Alpha', 200], ['Beta', 150]]);
-  assert.equal(board.profile('alpha').totalScore, 200);
+  board.recordScore({ id: 'alpha', name: 'Alpha', avatar: '🐱', score: 20, multiplayer: true, multiplayerWin: true, at: new Date() });
+  board.recordScore({ id: 'beta', name: 'Beta', avatar: '🦊', score: 10, multiplayer: true, multiplayerWin: false, at: new Date() });
+  assert.deepEqual(board.rankings('weekly').map(player => [player.name, player.score]), [['Alpha', 220], ['Beta', 160]]);
+  assert.equal(board.profile('alpha').totalScore, 220);
   const reloaded = new Leaderboard(file);
   assert.equal(reloaded.profile('alpha').totalWords, 7);
+  assert.deepEqual(reloaded.rankings('multiplayer-wins').map(player => [player.name, player.score]), [['Alpha', 1]]);
+  assert.equal(reloaded.profile('beta').multiplayerWinRatio, 0);
   assert.equal(weekKey(new Date('2026-07-14T12:00:00Z')), '2026-07-13');
 });

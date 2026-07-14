@@ -12,6 +12,8 @@
     ['totalWords', 'Words found', p => p.words || 0],
     ['longestWord', 'Longest word', p => p.longest || 0, false, ' letters'],
     ['rounds', 'Rounds played', p => p.rounds || 0]
+    ,['multiplayerWins', 'Multiplayer wins', p => p.multiplayerWins || 0]
+    ,['multiplayerWinRate', 'Multiplayer win rate', p => (p.multiplayerWins + p.multiplayerLosses) ? p.multiplayerWins / (p.multiplayerWins + p.multiplayerLosses) * 100 : 0, true, '%']
   ];
   const read = () => { try { return JSON.parse(localStorage.getItem('wordrush-profile') || '{}'); } catch { return {}; } };
   const value = (number, decimal, suffix = '') => (decimal ? Number(number || 0).toFixed(1) : Math.round(number || 0).toLocaleString()) + suffix;

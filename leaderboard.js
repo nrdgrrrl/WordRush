@@ -13,6 +13,7 @@ function weekKey(date = new Date()) {
 function clean(value, fallback, max = 20) {
   return String(value ?? fallback).trim().slice(0, max) || fallback;
 }
+function bodyBoolean(value) { return value === true || value === 1 || value === '1' || value === 'true'; }
 
 class Leaderboard {
   constructor(file = process.env.WORDRUSH_LEADERBOARD_FILE || DEFAULT_FILE) {
@@ -38,7 +39,9 @@ class Leaderboard {
 
   recordScore({ id, name, avatar, score = 0, words = 0, correct = 0, incorrect = 0, longest = 0, totalWordLength = 0, gameSeconds = 0, at = new Date() }) {
     const playerId = clean(id, 'guest', 80);
-    const player = this.data.players[playerId] ||= { id: playerId, name: 'Guest', avatar: '🐈', totalScore: 0, totalWords: 0, rounds: 0, correct: 0, incorrect: 0, longest: 0, totalWordLength: 0, totalGameSeconds: 0, weekly: {} };
+    const player = this.data.players[playerId] ||= { id: playerId, name: 'Guest', avatar: '🐈', totalScore: 0, totalWords: 0, rounds: 0, correct: 0, incorrect: 0, longest: 0, totalWordLength: 0, totalGameSeconds: 0, multiplayerWins: 0, multiplayerLosses: 0, weekly: {} };
+    player.multiplayerWins ||= 0;
+    player.multiplayerLosses ||= 0;
     player.name = clean(name, player.name || 'Guest');
     player.avatar = clean(avatar, player.avatar || '🐈', 4);
     const values = { score, words, correct, incorrect, longest, totalWordLength, gameSeconds };
@@ -51,6 +54,10 @@ class Leaderboard {
     player.longest = Math.max(player.longest, values.longest);
     player.totalWordLength += values.totalWordLength;
     player.totalGameSeconds += values.gameSeconds;
+    if (bodyBoolean(arguments[0].multiplayer)) {
+      if (bodyBoolean(arguments[0].multiplayerWin)) player.multiplayerWins += 1;
+      else player.multiplayerLosses += 1;
+    }
     const key = weekKey(new Date(at));
     player.weekly[key] = (player.weekly[key] || 0) + values.score;
     this.save();
@@ -58,12 +65,13 @@ class Leaderboard {
   }
 
   publicPlayer(player, period = 'total') {
-    const score = period === 'weekly' ? player.weekly[weekKey()] || 0 : player.totalScore;
-    return { id: player.id, name: player.name, avatar: player.avatar, score, totalScore: player.totalScore, totalWords: player.totalWords, rounds: player.rounds, correct: player.correct, incorrect: player.incorrect, longest: player.longest, totalWordLength: player.totalWordLength, totalGameSeconds: player.totalGameSeconds };
+    const ratio = player.multiplayerWins + player.multiplayerLosses ? player.multiplayerWins / (player.multiplayerWins + player.multiplayerLosses) : 0;
+    const score = period === 'weekly' ? player.weekly[weekKey()] || 0 : period === 'multiplayer-wins' ? player.multiplayerWins : period === 'multiplayer-ratio' ? ratio : player.totalScore;
+    return { id: player.id, name: player.name, avatar: player.avatar, score, totalScore: player.totalScore, totalWords: player.totalWords, rounds: player.rounds, correct: player.correct, incorrect: player.incorrect, longest: player.longest, totalWordLength: player.totalWordLength, totalGameSeconds: player.totalGameSeconds, multiplayerWins: player.multiplayerWins, multiplayerLosses: player.multiplayerLosses, multiplayerWinRatio: ratio };
   }
 
   rankings(period = 'weekly') {
-    const selected = period === 'total' ? 'total' : 'weekly';
+    const selected = ['total', 'multiplayer-wins', 'multiplayer-ratio'].includes(period) ? period : 'weekly';
     return Object.values(this.data.players).map(player => this.publicPlayer(player, selected)).filter(player => player.score > 0).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, 100);
   }
 
