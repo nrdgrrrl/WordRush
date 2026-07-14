@@ -173,6 +173,23 @@ test('multiplayer banner disappears when its connection is lost', async () => {
   await browser.close();
 });
 
+test('banner X exits a newly created session from the landing page', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator('#multiplayerButton').click();
+  await page.locator('#sessionCreate').click();
+  await page.waitForFunction(() => /^[A-Z]{5}$/.test(document.querySelector('#sessionCode').textContent));
+  await page.locator('#multiplayerDialog button[value="cancel"]').click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#exitMultiplayer').click();
+  await page.waitForFunction(() => document.querySelector('#multiplayerBanner').hidden);
+  assert.equal(await page.locator('#multiplayerBannerText').textContent(), 'No active session');
+  assert.equal(await page.locator('#roomTitle').textContent(), 'No active session');
+  assert.equal(await page.locator('#homeScreen').evaluate(node => node.classList.contains('active')), true);
+  await browser.close();
+});
+
 test('browser profile uses a generated identity and saves a selected avatar', async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
