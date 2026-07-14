@@ -1,27 +1,33 @@
-# Wordrush code review
+# Wordrush final code review
 
 ## Fixed
 
-- Removed the conflicting two-controller architecture. The old controller used state.gridSize, state.timerId, renderBoard, and showScreen; the new controller uses one state model and one set of event listeners.
-- Added the mode UI to the actual HTML. Previously the mode extension code existed but its buttons did not.
-- Added working entry points for Random Rush, Classic, Minimum Word, Sudden Death, Race Mode, Dirty Mode, and custom dictionary.
-- Board size now matches the selected mode and the generated board is always filled to the requested dimensions.
-- Added seeded board generation for 3-, 4-, 5-, and 6+-letter targets, followed by weighted letter fill.
-- Added adjacency and no-repeat path validation. A word now has to be present in the active dictionary and traceable on the board.
-- Fixed race completion and sudden-death completion so rounds end once and timers are cleared.
-- Added safer local-storage parsing for custom words.
-- Added LAN serving through serve-lan.sh with 0.0.0.0 binding and the machine LAN URL.
-- Added solo-safe mode rules. Every mode uses the same local round engine; the opponent score is presentation-only, so no mode requires a second player to make progress.
+- Replaced the conflicting client controllers with one game state model.
+- Added authoritative WebSocket multiplayer for rooms up to 10 players.
+- Added server-side validation for board paths, adjacency, duplicate words, minimum lengths, dictionaries, timers, and Race Mode completion.
+- Added browser room creation/joining and synchronization for late joiners and round completion.
+- Added Classic, Minimum Word, Sudden Death, Race, Dirty, and Random/solo mode entry points.
+- Added deterministic room capacity enforcement and cleanup when all players leave.
+- Added balanced board generation with short, medium, and long word targets.
+- Added custom dictionaries and opt-in adult dictionaries.
+- Added a headless client harness for multi-client LAN testing.
+- Added unit and WebSocket integration tests.
+- Added a pre-commit hook that runs the full test suite.
+- Added LAN serving through serve-lan.sh, binding the combined HTTP/WebSocket server to 0.0.0.0.
+- Verified a 10-client Race Mode run against the live server.
 
-## Remaining product boundary
+## Known product limitations
 
-The browser build is still a static prototype. The displayed opponents are simulated. Production multiplayer needs a server-authoritative room, seed, board, dictionary, timer, path validation, and score calculation. Client-submitted scores must never be trusted.
+- Rooms are held in memory and disappear when the server restarts.
+- Authentication is guest-ID based; production accounts need signed sessions or a real identity provider.
+- The word list is intentionally small for this prototype. A production build should load a versioned dictionary and trie.
+- Prompt/confirm dialogs remain as temporary UI for room codes, custom words, and Dirty Mode.
+- Reconnect/resume and persistent match history are not implemented yet.
 
-## Suggested next hardening
+## Verification
 
-1. Move the word list to a versioned server-side dictionary and build a trie for fast prefix pruning.
-2. Generate candidate boards server-side, solve each candidate, and reject boards that miss minimum length-bucket quotas. The current seeded generator is a good client prototype but is not a fairness guarantee.
-3. Replace prompt and confirm with in-app dialogs for a better mobile experience.
-4. Add automated tests for adjacency, duplicate words, mode thresholds, board quotas, timer expiry, and local-storage corruption.
-5. Add a real WebSocket room service and reconnect/resume handling.
+- npm test: 6 passing tests.
+- node --check passed for app.js, server.js, multiplayer-client.js, and headless-client.js.
+- bash -n passed for serve-lan.sh.
+- Pre-commit test hook executed successfully during commit.
 
