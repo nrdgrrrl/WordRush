@@ -2,3 +2,4 @@
 set -e
 echo "Running Wordrush tests before commit..."
 npm test
+npm run test:browser
