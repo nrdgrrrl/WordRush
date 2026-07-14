@@ -88,6 +88,40 @@ test('sudden death can return home from its results screen', async () => {
   await browser.close();
 });
 
+test('custom game controls start the selected configuration', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator('#customGame').click();
+  await page.locator('#customType').selectOption('classic');
+  await page.locator('#customRules').selectOption('classic');
+  await page.locator('#customMin').fill('6');
+  await page.locator('#customBoard').selectOption('8');
+  await page.locator('#customTime').fill('45');
+  await page.locator('#customStart').click();
+  assert.equal(await page.locator('#gameScreen').evaluate(node => node.classList.contains('active')), true);
+  assert.equal(await page.locator('.tile').count(), 64);
+  assert.equal(await page.locator('#gameHint').textContent(), 'Minimum 6 letters');
+  assert.equal(await page.locator('#ruleBanner').textContent(), 'Minimum 6 letters · 45 seconds');
+  await browser.close();
+});
+
+test('random rush rolls into a different game and can be stopped', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.evaluate(() => { window.wordrushRushDelay = 50; });
+  await page.locator('#randomPlay').click();
+  const firstMode = await page.locator('#gameMode').textContent();
+  await page.locator('#endGame').click();
+  await page.waitForTimeout(120);
+  assert.equal(await page.locator('#gameScreen').evaluate(node => node.classList.contains('active')), true);
+  assert.notEqual(await page.locator('#gameMode').textContent(), firstMode);
+  await page.locator('#stopRush').click();
+  assert.equal(await page.locator('#homeScreen').evaluate(node => node.classList.contains('active')), true);
+  await browser.close();
+});
+
 test('browser profile uses a generated identity and saves a selected avatar', async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -100,7 +134,7 @@ test('browser profile uses a generated identity and saves a selected avatar', as
   assert.equal(await page.locator('#profileDialog').evaluate(dialog => dialog.open), true);
   await page.locator('#profileName').fill('CosmicPaw');
   await page.locator('[data-avatar="🦊"]').click();
-  await page.locator('.dialog-save').click();
+  await page.locator('#profileForm .dialog-save').click();
   assert.equal(await page.locator('#profileButton').textContent(), '🦊');
   assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('wordrush-profile')).name), 'CosmicPaw');
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('wordrush-profile')).avatar), '🦊');
@@ -114,7 +148,7 @@ test('browser exposes the expanded avatar set and unlocks achievement toasts', a
   assert.equal(await page.evaluate(() => window.wordrushAchievementCatalog.length), 204);
   await page.locator('#profileButton').click();
   assert.equal(await page.locator('[data-avatar]').count(), 36);
-  await page.locator('[value="cancel"]').click();
+  await page.locator('#profileForm [value="cancel"]').click();
   await page.evaluate(() => {
     const profile = JSON.parse(localStorage.getItem('wordrush-profile'));
     profile.words = 1;
