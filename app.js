@@ -6,3 +6,6 @@ window.wordrushOnlineRound=(round,config,mode)=>{const match=Object.entries(MODE
 
 
 
+
+const themePreference=localStorage.getItem('wordrush-theme');if(themePreference)document.documentElement.dataset.theme=themePreference;$('#themeToggle')?.addEventListener('click',()=>{const next=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=next;localStorage.setItem('wordrush-theme',next)});
+
