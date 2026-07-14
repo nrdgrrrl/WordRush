@@ -152,6 +152,12 @@ test('browser profile uses a generated identity and saves a selected avatar', as
   assert.equal(await page.locator('#profileButton').textContent(), '🦊');
   assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('wordrush-profile')).name), 'CosmicPaw');
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('wordrush-profile')).avatar), '🦊');
+  await page.locator('#profileButton').click();
+  await page.locator('[data-avatar="🐯"]').click();
+  await page.locator('#profileForm .dialog-save').click();
+  await page.reload();
+  assert.equal(await page.locator('#profileButton').textContent(), '🐯');
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('wordrush-profile')).avatar), '🐯');
   await browser.close();
 });
 
