@@ -49,6 +49,26 @@ test('browser can start, play, persist stats, and toggle dark mode', async () =>
   await browser.close();
 });
 
+test('random rush starts by touch and the board stays inside the phone viewport', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }]) {
+    const page = await browser.newPage({ viewport });
+    await page.goto(baseUrl);
+    await page.locator('#randomPlay').click();
+    assert.equal(await page.locator('#gameScreen').evaluate(node => node.classList.contains('active')), true);
+    const layout = await page.evaluate(() => {
+      const grid = document.querySelector('.grid').getBoundingClientRect();
+      return { scrollHeight: document.documentElement.scrollHeight, viewport: innerHeight, right: grid.right, bottom: grid.bottom, nav: getComputedStyle(document.querySelector('nav')).display };
+    });
+    assert.equal(layout.scrollHeight, viewport.height);
+    assert.ok(layout.right <= viewport.width);
+    assert.ok(layout.bottom <= viewport.height);
+    assert.equal(layout.nav, 'none');
+    await page.close();
+  }
+  await browser.close();
+});
+
 test('browser profile uses a generated identity and saves a selected avatar', async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });

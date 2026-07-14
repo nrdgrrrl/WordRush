@@ -8,6 +8,29 @@
 
 #gameScreen.active{height:calc(100svh - 182px);display:flex;flex-direction:column;overflow:hidden;padding-top:22px}.game-head,.rule-banner,.game-meta,.preview,.game-foot{flex:none}.board{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden}.grid{width:min(100%,calc(100svh - 370px));max-width:100%;max-height:100%;aspect-ratio:1;position:relative;z-index:1}.trace-layer{position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none;overflow:visible}.trace-layer path{fill:none;stroke:var(--coral);stroke-width:12;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 2px 2px #0003);opacity:.92}.board .tile{touch-action:none}.tile.selected{transform:scale(.94);transition:transform .08s ease}.game-foot{padding-bottom:4px}@media(max-height:650px){#gameScreen.active{height:calc(100svh - 162px);padding-top:8px}.game-head h2{font-size:17px}.game-meta{margin:8px 0 6px}.game-meta strong{font-size:27px}.preview{height:32px;margin-bottom:6px}.grid{width:min(100%,calc(100svh - 370px))}}@media(min-width:600px){#gameScreen.active{height:calc(100svh - 202px)}}
 
+/* The play surface owns the viewport on phones. */
+body:has(#gameScreen.active) nav{display:none}
+body:has(#gameScreen.active) .app-shell{padding-bottom:0}
+#gameScreen.active{height:calc(100svh - 76px);padding-top:12px}
+.game-head div{display:flex;align-items:baseline;gap:8px;min-width:0}
+.game-head .eyebrow{margin:0;white-space:nowrap}
+.game-head h2{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.game-meta{margin:12px 0 10px;gap:12px}
+.game-meta>div:first-child,.game-meta>div:nth-child(2){min-width:58px}
+.game-meta strong{font-size:28px}
+.preview{height:36px;margin-bottom:8px}
+.board{padding:6px}
+.grid{width:min(100%,100%);height:min(100%,100%);aspect-ratio:1/1;flex:0 0 auto;max-height:100%}
+.grid{width:min(100%,calc(100svh - 200px),calc(100vw - 56px));height:auto;max-height:none}
+.tile{background:#f7dfe4}
+body[data-mode="classic"] .tile{background:#dcecf7}
+body[data-mode="minimum"] .tile{background:#e6def8}
+body[data-mode="sudden"] .tile{background:#ffe1d2}
+body[data-mode="race"] .tile{background:#dcefdc}
+body[data-mode="dirty"] .tile{background:#f8e2bc}
+@media(max-height:650px){#gameScreen.active{height:calc(100svh - 76px);padding-top:6px}.game-head h2{font-size:17px}.game-meta{margin:6px 0 5px}.game-meta strong{font-size:23px}.preview{height:30px;margin-bottom:5px}.game-foot{padding-top:6px}}
+@media(min-width:600px){#gameScreen.active{height:calc(100svh - 116px)}}
+
 
 
 
