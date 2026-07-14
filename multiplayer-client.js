@@ -1,7 +1,7 @@
 (() => {
   const socketUrl = location.protocol === 'https:' ? 'wss://' + location.host : 'ws://' + location.host;
   let socket;
-  const guestId = localStorage.getItem('wordrush-guest-id') || crypto.randomUUID();
+  const guestId = localStorage.getItem('wordrush-guest-id') || (crypto.randomUUID ? crypto.randomUUID() : 'guest-' + Math.random().toString(36).slice(2));
   localStorage.setItem('wordrush-guest-id', guestId);
   const name = localStorage.getItem('wordrush-name') || 'Jordan';
   const toast = message => { const el = document.querySelector('#toast'); if (!el) return; el.textContent = message; el.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 1800); };
@@ -36,5 +36,6 @@
     ws.readyState === 1 ? send() : ws.addEventListener('open', send, { once: true });
   });
 })();
+
 
 
