@@ -42,3 +42,6 @@ html[data-theme="dark"] .primary{background:var(--lime);color:#1d1d1b}
 #multiplayerButton{background:#f5f3ee;color:#1d1d1b;border:1px solid #c9c7bf}
 html[data-theme="dark"] #multiplayerButton{background:#111311;color:#f3f1ea;border-color:#555b53}
 @media(prefers-color-scheme:dark){html:not([data-theme="light"]) #multiplayerButton{background:#111311;color:#f3f1ea;border-color:#555b53}}
+ .tile{transition:background-color .16s ease,transform .16s ease}
+ .tile.selected{animation:tile-selected .16s ease-out forwards}
+ @keyframes tile-selected{from{transform:scale(1)}to{transform:scale(.94)}}

@@ -245,3 +245,23 @@ test('browser exposes the expanded avatar set and unlocks achievement toasts', a
   assert.match(await page.locator('#achievementCount').textContent(), /[1-9] \/ 204/);
   await browser.close();
 });
+test('tracing animates selected tiles and clears them with the trace line', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator('#quickPlay').click();
+  const tile = await page.locator('.tile').first().boundingBox();
+  const point = { x: tile.x + tile.width / 2, y: tile.y + tile.height / 2 };
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.down();
+  assert.equal(await page.locator('.tile.selected').count(), 1);
+  await page.waitForFunction(() => Boolean(document.querySelector('#tracePath').getAttribute('d')));
+  assert.notEqual(await page.locator('#tracePath').getAttribute('d'), null);
+  await page.mouse.up();
+  assert.equal(await page.locator('.tile.selected').count(), 1);
+  assert.notEqual(await page.locator('#tracePath').getAttribute('d'), null);
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('.tile.selected').count(), 0);
+  assert.equal(await page.locator('#tracePath').getAttribute('d'), null);
+  await browser.close();
+});
