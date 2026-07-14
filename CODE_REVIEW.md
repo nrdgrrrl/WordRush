@@ -179,10 +179,31 @@ Reviewed: client gameplay, touch input, results, achievements, statistics, leade
 - Recommended solution: expose immutable game configuration through one browser/CommonJS-compatible module.
 - Fix: added `game-config.js` and made both `app.js` and `game-core.js` consume the same rule and dictionary constants.
 
+### 26. Multiplayer result details could lose the local word summary
+
+- Problem: the static result could show a correct score with zero words, while the reveal total remained zero.
+- Cause: the client retained a separate local multiplayer word list instead of normalizing and adopting the authoritative final ranking.
+- Recommended solution: treat the server ranking as the result source of truth and derive the local count from the stable player ID.
+- Fix: online completion now normalizes every ranked word/score, restores the local round state from the matching player, and gives the reveal view a score fallback for empty word payloads.
+
+### 27. Normal game buttons escaped an active multiplayer room
+
+- Problem: after one room game, Play Again and the normal home game cards started a solo game only in the creator's browser.
+- Cause: only the multiplayer dialog sent `start_game`; all other launch controls called the local board generator directly.
+- Recommended solution: route every launch through the active room and let only the creator request the next authoritative round.
+- Fix: the central game launcher now delegates to multiplayer whenever a session exists. Standard, Random Rush, repeated, and sanitized custom rounds are broadcast to every player.
+
+### 28. A creator refresh could leave an orphaned guest UI
+
+- Problem: after the creator refreshed, a guest could remain displayed in a one-player room without creator controls.
+- Cause: cleanup depended entirely on WebSocket close detection, which can be delayed after page navigation or an unclean network loss.
+- Recommended solution: explicitly leave on page unload and retain server-side dead-connection detection as a fallback.
+- Fix: creators send `leave_session` on `pagehide`, room shutdown now invalidates its state, and WebSocket heartbeat checks terminate stale connections.
+
 ## Verification
 
-- `npm test`: 18 unit/integration tests passing.
-- `npm run test:browser`: 19 browser/three-client soak tests passing.
+- `npm test`: 19 unit/integration tests passing.
+- `npm run test:browser`: 20 browser/three-client soak tests passing.
 - Syntax checks pass for server and browser JavaScript.
 - `git diff --check` passes.
 - `bash -n serve-lan.sh` passes.

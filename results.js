@@ -70,6 +70,16 @@
       0,
       ...players.map((player) => player.words?.length || 0),
     );
+    if (maximumWords === 0) {
+      const scoreTotal = players.reduce((sum, player, playerIndex) => {
+        const score = Number(player.score) || 0;
+        cards[playerIndex].querySelector(".reveal-player-total").textContent =
+          score.toLocaleString();
+        return sum + score;
+      }, 0);
+      $("#revealTotal").textContent = scoreTotal.toLocaleString();
+      return;
+    }
     let wordIndex = 0;
     let total = 0;
 

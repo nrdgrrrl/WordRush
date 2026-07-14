@@ -171,6 +171,7 @@ function validateSubmission({
   word,
   path,
   mode,
+  minimum,
   found,
   customWords,
 }) {
@@ -195,7 +196,7 @@ function validateSubmission({
         ? BASE_WORD_SETS.dirty
         : BASE_WORD_SETS.classic,
     valid =
-      cleanWord.length >= config.min &&
+      cleanWord.length >= (Number.isFinite(minimum) ? minimum : config.min) &&
       lexicon.has(cleanWord) &&
       validPath &&
       !found.has(cleanWord);

@@ -13,7 +13,8 @@
   let socket,
     sessionCode = "",
     endedSessionCode = "",
-    creator = false;
+    creator = false,
+    roomStatus = "";
   const $ = (selector) => document.querySelector(selector);
   const goHome = () =>
     document.querySelector('[data-screen="homeScreen"]')?.click();
@@ -34,6 +35,7 @@
     sessionCode = "";
     window.wordrushSessionCode = "";
     creator = false;
+    roomStatus = "";
     localStorage.removeItem("wordrush-room");
     $("#multiplayerBanner").hidden = true;
     $("#multiplayerBannerText").textContent = "No active session";
@@ -88,6 +90,7 @@
   }
   function showLobby(code, isCreator) {
     sessionCode = code;
+    endedSessionCode = "";
     window.wordrushSessionCode = code;
     creator = isCreator;
     $("#multiplayerBanner").hidden = false;
@@ -142,6 +145,8 @@
         toast("Joined session " + message.code);
       }
       if (message.type === "room_state" && message.code !== endedSessionCode) {
+        roomStatus = message.status;
+        creator = message.creatorId === guestId;
         renderPlayers(message.players);
         if (message.code && !sessionCode)
           showLobby(message.code, message.creatorId === guestId);
@@ -168,6 +173,7 @@
         }
       }
       if (message.type === "round_started") {
+        roomStatus = "playing";
         renderPlayers(message.players);
         window.wordrushOnlineRound?.(
           message.round,
@@ -190,6 +196,7 @@
         toast(message.reason === "path" ? "Invalid path" : "Word rejected");
       }
       if (message.type === "round_finished") {
+        roomStatus = "finished";
         window.wordrushOnlineFinish?.(message.ranking, {
           cooperative: message.cooperative,
           teamScore: message.teamScore,
@@ -213,6 +220,23 @@
   window.wordrushIdentityChanged = () => {
     if (socket?.readyState === 1 && sessionCode)
       socket.send(JSON.stringify({ type: "update_identity", ...identity() }));
+  };
+  window.wordrushStartSessionGame = ({ mode, config, randomRush } = {}) => {
+    if (!sessionCode) return false;
+    if (!creator) {
+      toast("Only the session creator can start a game");
+      return true;
+    }
+    if (roomStatus === "playing") {
+      toast("The multiplayer round is already running");
+      return true;
+    }
+    sendWhenReady({
+      type: "start_game",
+      mode: randomRush ? "random" : mode,
+      config,
+    });
+    return true;
   };
   $("#multiplayerButton")?.addEventListener("click", () => {
     $("#sessionChoices").hidden = false;
@@ -256,4 +280,8 @@
       sessionDialog(false);
     }
   }
+  window.addEventListener("pagehide", () => {
+    if (creator && sessionCode && socket?.readyState === WebSocket.OPEN)
+      socket.send(JSON.stringify({ type: "leave_session" }));
+  });
 })();

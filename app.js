@@ -408,8 +408,28 @@ function stopRush() {
 }
 function start(mode, override = null, adultMode = false, rush = false) {
   if (
-    mode === "dirty" &&
+    (mode === "dirty" || adultMode) &&
     !confirm("Dirty Mode contains adult language. Continue?")
+  )
+    return;
+  if (
+    window.wordrushSessionCode &&
+    window.wordrushStartSessionGame?.({
+      mode,
+      config: override
+        ? {
+            label: override[0],
+            min: override[1],
+            size: override[2],
+            seconds: override[3],
+            rule: override[4],
+            target: override[5]?.target || null,
+            adult: adultMode,
+            sudden: Boolean(override[5]?.sudden),
+          }
+        : null,
+      randomRush: rush,
+    })
   )
     return;
   let m = override || MODE[mode];
@@ -538,7 +558,7 @@ $("#quickPlay").onclick = () => start("classic");
 $("#navStats").onclick = () => show("statsScreen");
 $("#stopRush").onclick = stopRush;
 $("#stopRushResults").onclick = stopRush;
-$("#again").onclick = () => start(s.mode);
+$("#again").onclick = () => start(s.mode, s.customConfig, customAdult);
 $("#endGame").onclick = end;
 document
   .querySelectorAll("[data-mode]")
@@ -581,7 +601,10 @@ $("#customForm")?.addEventListener("submit", (event) => {
       size,
       seconds,
       rule,
-      { target: rules === "first" ? 500 : null },
+      {
+        target: rules === "first" ? 500 : null,
+        sudden: type === "sudden",
+      },
     ],
     type === "dirty",
   );
@@ -616,6 +639,19 @@ window.wordrushOnlineRound = (round, config, mode) => {
     ([, value]) => value[0] === config?.label,
   );
   s.mode = mode || match?.[0] || "classic";
+  customAdult = Boolean(config?.adult);
+  s.customConfig = [
+    config?.label || "MULTIPLAYER",
+    config?.min || 3,
+    round.size,
+    config?.seconds ||
+      Math.max(1, Math.ceil((round.endsAt - Date.now()) / 1000)),
+    config?.rule || "Multiplayer round",
+    {
+      target: config?.target || null,
+      sudden: Boolean(config?.sudden),
+    },
+  ];
   document.body.dataset.mode = s.mode;
   s.n = round.size;
   s.b = round.board;
@@ -644,13 +680,25 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   s.done = 1;
   clearInterval(s.timer);
   const guestId = window.wordrushGuestId;
-  const mine =
-    ranking?.find((player) => player.id === guestId)?.score ?? s.score;
-  const ownWords =
-    ranking?.find((player) => player.id === guestId)?.words?.length || 0;
+  const normalizedRanking = (ranking || []).map((player) => ({
+    ...player,
+    score: Number(player.score) || 0,
+    words: Array.isArray(player.words)
+      ? player.words.map((item) => ({
+          word: String(item.word || ""),
+          points: Number(item.points) || 0,
+        }))
+      : [],
+  }));
+  const ownPlayer = normalizedRanking.find((player) => player.id === guestId);
+  const mine = ownPlayer?.score ?? s.score;
+  const ownWords = ownPlayer?.words || [];
+  s.score = mine;
+  s.found.clear();
+  ownWords.forEach((item) => s.found.add(item.word));
   $("#finalScore").textContent = mine;
-  $("#resultWordCount").textContent = ownWords;
-  renderResults(ranking);
+  $("#resultWordCount").textContent = ownWords.length;
+  renderResults(normalizedRanking);
   $("#resultAchievement").hidden = false;
   $("#resultAchievementTitle").textContent = result.cooperative
     ? "Co-op complete"
@@ -661,14 +709,16 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
       " · " +
       (result.stats?.wordsFound || 0) +
       " shared words."
-    : (ranking?.[0]?.name || "Winner") +
+    : (normalizedRanking[0]?.name || "Winner") +
       " wins · " +
-      (result.stats?.wordsFound || 0) +
-      " words found.";
+      ownWords.length +
+      " word" +
+      (ownWords.length === 1 ? "" : "s") +
+      " found by you.";
   profile.score += mine;
   profile.rounds++;
   profile.totalGameSeconds += (Date.now() - s.startedAt) / 1000;
-  const won = result.cooperative || ranking?.[0]?.id === guestId;
+  const won = result.cooperative || normalizedRanking[0]?.id === guestId;
   profile.gamesWon += won ? 1 : 0;
   profile.gamesLost += won ? 0 : 1;
   profile.multiplayerWins = (profile.multiplayerWins || 0) + (won ? 1 : 0);
@@ -678,7 +728,7 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   updateProfile();
   show("resultsScreen");
   emit("round-complete", {
-    ranking,
+    ranking: normalizedRanking,
     multiplayer: true,
     cooperative: Boolean(result.cooperative),
     result,

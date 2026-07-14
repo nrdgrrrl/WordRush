@@ -144,9 +144,13 @@ test(
       "coop",
       "random",
     ]) {
-      if (!firstRound) await host.locator("#sessionManage").click();
-      await host.locator("#sessionType").selectOption(mode);
-      await host.locator("#sessionStart").click();
+      if (mode === "minimum")
+        await host.locator('#homeScreen [data-mode="minimum"]').click();
+      else {
+        if (!firstRound) await host.locator("#sessionManage").click();
+        await host.locator("#sessionType").selectOption(mode);
+        await host.locator("#sessionStart").click();
+      }
       firstRound = false;
       await Promise.all(
         pages.map((page) => page.waitForSelector("#gameScreen.active")),
@@ -161,6 +165,14 @@ test(
         pages.map((page) => page.waitForSelector("#resultsScreen.active")),
       );
       if (mode === "classic") {
+        for (const page of pages) {
+          assert.ok(
+            Number(await page.locator("#finalScore").textContent()) > 0,
+          );
+          assert.ok(
+            Number(await page.locator("#resultWordCount").textContent()) > 0,
+          );
+        }
         await pages[1].locator("#animatedResultsButton").click();
         await Promise.all(
           pages.map((page) =>
@@ -176,6 +188,19 @@ test(
               document
                 .querySelector('[data-speed="fast"]')
                 .classList.contains("active"),
+            ),
+          ),
+        );
+        await Promise.all(
+          pages.map((page) =>
+            page.waitForFunction(
+              () =>
+                document.querySelectorAll(".reveal-word").length > 0 &&
+                Number(
+                  document
+                    .querySelector("#revealTotal")
+                    .textContent.replaceAll(",", ""),
+                ) > 0,
             ),
           ),
         );
@@ -195,3 +220,32 @@ test(
     await browser.close();
   },
 );
+
+test("refreshing the creator closes the room for connected guests", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const host = await browser.newPage();
+  const guest = await browser.newPage();
+  await Promise.all([host.goto(baseUrl), guest.goto(baseUrl)]);
+  await host.locator("#multiplayerButton").click();
+  await host.locator("#sessionCreate").click();
+  await host.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  const code = await host.locator("#sessionCode").textContent();
+  await guest.locator("#multiplayerButton").click();
+  guest.once("dialog", (dialog) => dialog.accept(code));
+  await guest.locator("#sessionJoin").click();
+  await guest.waitForFunction(() =>
+    document
+      .querySelector("#sessionPlayersText")
+      .textContent.includes("2 player"),
+  );
+  await host.reload();
+  await guest.waitForFunction(
+    () =>
+      document.querySelector("#multiplayerBanner").hidden &&
+      document.querySelector("#homeScreen").classList.contains("active"),
+  );
+  assert.equal(rooms.has(code), false);
+  await browser.close();
+});

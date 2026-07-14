@@ -309,6 +309,47 @@ test("competitive players can score the same word independently", async () => {
     accepted.scores.map((player) => player.score),
     [9, 9],
   );
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  const finished = await finishedPromise;
+  assert.deepEqual(
+    finished.ranking.map((player) => player.words),
+    [[{ word: "CAT", points: 9 }], [{ word: "CAT", points: 9 }]],
+  );
+  host.close();
+  guest.close();
+});
+
+test("creator can start a sanitized custom round for every player", async () => {
+  const host = await client("custom-host");
+  const guest = await client("custom-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+  const hostStarted = next(host, "round_started");
+  const guestStarted = next(guest, "round_started");
+  message(host, "start_game", {
+    mode: "custom",
+    config: {
+      label: "CUSTOM TEST",
+      min: 6,
+      size: 8,
+      seconds: 45,
+      rule: "Minimum 6 letters · 45 seconds",
+    },
+  });
+  const [hostRound, guestRound] = await Promise.all([
+    hostStarted,
+    guestStarted,
+  ]);
+  assert.equal(hostRound.round.board.length, 64);
+  assert.equal(hostRound.config.min, 6);
+  assert.deepEqual(guestRound.round.board, hostRound.round.board);
   host.close();
   guest.close();
 });

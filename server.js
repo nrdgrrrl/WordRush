@@ -38,8 +38,32 @@ function cleanText(value, fallback, max = 20) {
     .slice(0, max)
     .join("");
 }
+function boundedNumber(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed)
+    ? Math.max(minimum, Math.min(maximum, parsed))
+    : fallback;
+}
+function requestedConfig(mode, raw) {
+  if (mode !== "custom") return MODE_CONFIG[mode] || MODE_CONFIG.classic;
+  return {
+    label: cleanText(raw?.label, "CUSTOM", 32),
+    min: boundedNumber(raw?.min, 3, 3, 12),
+    size: boundedNumber(raw?.size, 4, 4, 8),
+    seconds: boundedNumber(raw?.seconds, 120, 15, 600),
+    rule: cleanText(raw?.rule, "Custom multiplayer round", 100),
+    target: raw?.target ? boundedNumber(raw.target, 500, 1, 100000) : null,
+    adult: Boolean(raw?.adult),
+    sudden: Boolean(raw?.sudden),
+  };
+}
 function roomConfig(room) {
-  return MODE_CONFIG[room.mode] || MODE_CONFIG.classic;
+  return (
+    room.round?.config ||
+    room.config ||
+    MODE_CONFIG[room.mode] ||
+    MODE_CONFIG.classic
+  );
 }
 function state(room) {
   return {
@@ -82,26 +106,34 @@ function closeRoom(room, reason) {
     if (memberClient) memberClient.roomCode = null;
     send(member.ws, { type: "session_closed", code: room.code, reason });
   }
+  room.players.clear();
+  room.round = null;
+  room.status = "closed";
 }
 function randomMode(previous) {
   const modes = ["classic", "minimum", "sudden", "race", "coop", "dirty"];
   const choices = modes.filter((mode) => mode !== previous);
   return choices[crypto.randomInt(choices.length)];
 }
-function startRound(room, selected = room.mode) {
+function startRound(room, selected = room.mode, rawConfig = null) {
   clearRoomTimer(room);
-  room.mode = MODE_CONFIG[selected] ? selected : "classic";
-  const config = MODE_CONFIG[room.mode],
+  room.mode =
+    selected === "custom" || MODE_CONFIG[selected] ? selected : "classic";
+  const config = requestedConfig(room.mode, rawConfig),
+    validationMode = config.adult ? "dirty" : room.mode,
     board = generateBoard(
       config.size,
-      createLexicon(room.mode, [...room.customWords]),
+      createLexicon(validationMode, [...room.customWords]),
     );
+  room.config = config;
   room.round = {
     board: board,
     size: config.size,
     found: new Set(),
     endsAt: Date.now() + config.seconds * 1000,
     timer: null,
+    config,
+    validationMode,
   };
   room.status = "playing";
   room.teamScore = 0;
@@ -222,6 +254,7 @@ function handle(ws, message) {
       players: new Map(),
       status: "lobby",
       round: null,
+      config: MODE_CONFIG.classic,
       results: { view: "static", speed: "medium" },
       lastResult: null,
       rushTimer: null,
@@ -303,7 +336,11 @@ function handle(ws, message) {
       return startRound(room, randomMode(room.mode));
     }
     room.randomRush = false;
-    return startRound(room, MODE_CONFIG[requested] ? requested : "classic");
+    return startRound(
+      room,
+      requested === "custom" || MODE_CONFIG[requested] ? requested : "classic",
+      message.config,
+    );
   }
   if (type === "set_results_settings") {
     if (room.status !== "finished")
@@ -325,7 +362,8 @@ function handle(ws, message) {
       ...message,
       board: room.round.board,
       size: room.round.size,
-      mode: room.mode,
+      mode: room.round.validationMode,
+      minimum: roomConfig(room).min,
       found: room.mode === "coop" ? room.round.found : player.found,
       customWords: [...room.customWords],
     });
@@ -336,7 +374,10 @@ function handle(ws, message) {
         word: result.word,
         reason: result.reason,
       });
-      if (room.mode === "sudden" && result.reason !== "duplicate")
+      if (
+        (room.mode === "sudden" || roomConfig(room).sudden) &&
+        result.reason !== "duplicate"
+      )
         finishRound(room, "invalid_word");
       return;
     }
@@ -361,7 +402,11 @@ function handle(ws, message) {
         score: p.score,
       })),
     });
-    if (room.mode === "race" && player.score >= 500) finishRound(room, "race");
+    if (
+      (room.mode === "race" && player.score >= 500) ||
+      (roomConfig(room).target && player.score >= roomConfig(room).target)
+    )
+      finishRound(room, "race");
     return;
   }
   if (type === "end_round") {
@@ -417,6 +462,10 @@ const server = http.createServer((req, res) => {
 });
 const wss = new WebSocketServer({ server });
 wss.on("connection", (ws) => {
+  ws.isAlive = true;
+  ws.on("pong", () => {
+    ws.isAlive = true;
+  });
   ws.on("message", (raw) => {
     try {
       handle(ws, JSON.parse(raw));
@@ -426,6 +475,16 @@ wss.on("connection", (ws) => {
   });
   ws.on("close", () => leave(ws));
 });
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!ws.isAlive) ws.terminate();
+    else {
+      ws.isAlive = false;
+      ws.ping();
+    }
+  }
+}, 15000);
+heartbeat.unref?.();
 if (require.main === module)
   server.listen(PORT, HOST, () =>
     console.log("Wordrush listening on http://" + HOST + ":" + PORT),

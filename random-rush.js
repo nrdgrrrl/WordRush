@@ -38,9 +38,7 @@
   const launch = (event) => {
     if (event.target.closest("#reroll")) return;
     event.preventDefault();
-    if (window.wordrushSessionCode)
-      document.querySelector("#multiplayerDialog").showModal();
-    else window.start(selected.mode, null, false, true);
+    window.start(selected.mode, null, false, true);
   };
   render();
   rerollButton.onclick = reroll;
