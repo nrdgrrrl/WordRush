@@ -623,7 +623,7 @@ test("browser exposes the expanded avatar set and unlocks achievement toasts", a
   );
   await browser.close();
 });
-test("tracing animates selected tiles and clears them with the trace line", async () => {
+test("tracing animates selected tiles while keeping the saved trace line hidden", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
@@ -640,6 +640,12 @@ test("tracing animates selected tiles and clears them with the trace line", asyn
     }));
   await page.mouse.down();
   assert.equal(await page.locator(".tile.selected").count(), 1);
+  assert.equal(
+    await page
+      .locator("#traceLayer")
+      .evaluate((node) => getComputedStyle(node).visibility),
+    "hidden",
+  );
   await page.waitForFunction(() =>
     Boolean(document.querySelector("#tracePath").getAttribute("d")),
   );

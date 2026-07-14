@@ -18,6 +18,13 @@ From this directory run bash serve-lan.sh. The script prints the machine Wi-Fi a
 - Headless multi-client harness: PORT=8000 node headless-client.js --clients 10 --mode race
 - Results, achievements, guest profile shell, and cat artwork
 
+## Maintenance notes
+
+The SVG trace-line code is intentionally retained but visually disabled. Pointer
+tracing still records its path so the trail can be re-enabled later by removing
+`visibility: hidden` from `.trace-layer` in `styles.css`; this is not abandoned
+or dead input code.
+
 ## Tests
 
 Run `npm test` for unit/integration coverage or `npm run test:browser` for browser and multiplayer soak coverage. The tracked `.githooks/pre-commit` hook runs both suites before every commit.

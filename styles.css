@@ -654,6 +654,12 @@ html[data-theme="dark"] nav {
   z-index: 2;
   pointer-events: none;
   overflow: visible;
+  /*
+   * Deliberately hidden for now: app.js still records and smooths trace paths
+   * so the visual trail can be restored without rebuilding input handling.
+   * Use visibility (rather than display) to preserve the SVG's dimensions.
+   */
+  visibility: hidden;
 }
 .trace-layer path {
   fill: none;
