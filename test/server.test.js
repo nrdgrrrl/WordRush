@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const WebSocket = require('ws');
+process.env.RANDOM_RUSH_DELAY = '50';
 const { server, rooms } = require('../server');
 function message(ws, type, payload = {}) { ws.send(JSON.stringify({ type, ...payload })); }
 function next(ws, wanted) { return new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('Timed out waiting for ' + wanted)), 1500); const handler = raw => { const data = JSON.parse(raw); if (data.type === wanted || (wanted === 'error' && data.type === 'error')) { clearTimeout(timer); ws.off('message', handler); resolve(data); } }; ws.on('message', handler); }); }
@@ -75,4 +76,22 @@ test('creator leaving closes the session for every connected player', async () =
   await closedGuest;
   assert.equal(rooms.has(created.code), false);
   host.close(); guest.close();
+});
+
+test('random multiplayer sessions automatically advance to another round', async () => {
+  const ws = await client('random-host');
+  const createdPromise = next(ws, 'room_created');
+  const lobbyPromise = next(ws, 'room_state');
+  message(ws, 'create_room', { name: 'RandomHost' });
+  const created = await createdPromise;
+  await lobbyPromise;
+  const firstRoundPromise = next(ws, 'round_started');
+  message(ws, 'start_game', { mode: 'random' });
+  const first = await firstRoundPromise;
+  const nextRoundPromise = next(ws, 'round_started');
+  message(ws, 'end_round');
+  const second = await nextRoundPromise;
+  assert.notEqual(second.config.label, first.config.label);
+  ws.close();
+  rooms.delete(created.code);
 });

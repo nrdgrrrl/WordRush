@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { chromium } = require('playwright');
+process.env.RANDOM_RUSH_DELAY = '50';
 const { server } = require('../server');
 
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM || '/home/victoria/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome';

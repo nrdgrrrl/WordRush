@@ -34,6 +34,7 @@
     });
     socket.addEventListener('close', () => { window.wordrushSocket = null; }); return socket;
   }
+  window.wordrushIdentityChanged=()=>{if(socket?.readyState===1&&sessionCode)socket.send(JSON.stringify({type:'update_identity',...identity()}))};
   $('#multiplayerButton')?.addEventListener('click', () => { $('#sessionChoices').hidden = false; $('#sessionLobby').hidden = true; sessionDialog(); });
   $('#sessionManage')?.addEventListener('click', () => sessionDialog());
   $('#sessionCreate')?.addEventListener('click', () => { const ws = connect(); sendWhenReady({ type: 'create_room', ...identity() }); });
