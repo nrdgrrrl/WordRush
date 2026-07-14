@@ -47,10 +47,13 @@ test('browser can start, play, persist stats, and toggle dark mode', async () =>
   await page.locator('#navStats').click();
   assert.equal(await page.locator('#statsGrid .stat-card').count(), 12);
   assert.match(await page.locator('[data-stat="averageWordLength"] strong').textContent(), /^\d+\.\d$/);
+  await page.locator('[data-screen="homeScreen"]').first().click();
+  assert.equal(await page.locator('#multiplayerButton').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(245, 243, 238)');
+  assert.equal(await page.locator('#multiplayerButton').evaluate(node => getComputedStyle(node).color), 'rgb(29, 29, 27)');
   await page.locator('#themeToggle').click();
   assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
-  assert.equal(await page.locator('#multiplayerButton').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(200, 243, 106)');
-  assert.equal(await page.locator('#multiplayerButton').evaluate(node => getComputedStyle(node).color), 'rgb(29, 29, 27)');
+  assert.equal(await page.locator('#multiplayerButton').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(17, 19, 17)');
+  assert.equal(await page.locator('#multiplayerButton').evaluate(node => getComputedStyle(node).color), 'rgb(243, 241, 234)');
   assert.deepEqual(errors, []);
   await browser.close();
 });

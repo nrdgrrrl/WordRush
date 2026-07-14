@@ -38,3 +38,7 @@ body[data-mode="dirty"] .tile{background:#f8e2bc}
 
 html[data-theme="dark"] .primary{background:var(--lime);color:#1d1d1b}
 @media(prefers-color-scheme:dark){html:not([data-theme="light"]) .primary{background:var(--lime);color:#1d1d1b}}
+
+#multiplayerButton{background:#f5f3ee;color:#1d1d1b;border:1px solid #c9c7bf}
+html[data-theme="dark"] #multiplayerButton{background:#111311;color:#f3f1ea;border-color:#555b53}
+@media(prefers-color-scheme:dark){html:not([data-theme="light"]) #multiplayerButton{background:#111311;color:#f3f1ea;border-color:#555b53}}
