@@ -253,9 +253,12 @@ test('tracing animates selected tiles and clears them with the trace line', asyn
   const tile = await page.locator('.tile').first().boundingBox();
   const point = { x: tile.x + tile.width / 2, y: tile.y + tile.height / 2 };
   await page.mouse.move(point.x, point.y);
+  const defaultTileStyle = await page.locator('.tile').first().evaluate(node => ({ color: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor }));
   await page.mouse.down();
   assert.equal(await page.locator('.tile.selected').count(), 1);
   await page.waitForFunction(() => Boolean(document.querySelector('#tracePath').getAttribute('d')));
+  assert.equal(await page.locator('.tile').first().evaluate(node => getComputedStyle(node).color), defaultTileStyle.color);
+  assert.notEqual(await page.locator('.tile').first().evaluate(node => getComputedStyle(node).backgroundColor), defaultTileStyle.background);
   assert.notEqual(await page.locator('#tracePath').getAttribute('d'), null);
   await page.mouse.up();
   assert.equal(await page.locator('.tile.selected').count(), 1);
