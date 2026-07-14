@@ -49,6 +49,8 @@ test('browser can start, play, persist stats, and toggle dark mode', async () =>
   assert.match(await page.locator('[data-stat="averageWordLength"] strong').textContent(), /^\d+\.\d$/);
   await page.locator('#themeToggle').click();
   assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
+  assert.equal(await page.locator('#multiplayerButton').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(200, 243, 106)');
+  assert.equal(await page.locator('#multiplayerButton').evaluate(node => getComputedStyle(node).color), 'rgb(29, 29, 27)');
   assert.deepEqual(errors, []);
   await browser.close();
 });
