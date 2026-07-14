@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/core.test.js test/server.test.js",
+    "test": "node --test test/core.test.js test/server.test.js test/leaderboard.test.js",
     "test:browser": "node --test test/browser.test.js test/multiplayer-soak.test.js",
     "headless": "node headless-client.js"
   },

@@ -106,6 +106,26 @@ test('active games hide the title bar and preserve a no-scroll compact layout', 
   await browser.close();
 });
 
+test('global scoreboard lists players and opens their stats', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  const id = 'browser-score-' + Date.now();
+  await page.evaluate(async ({ id }) => fetch('/api/leaderboard/score', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name: 'BoardCat', avatar: '🐯', score: 321, words: 9 }) }), { id });
+  await page.locator('#scoreboardButton').click();
+  await page.waitForSelector('#scoreboardScreen.active');
+  await page.waitForFunction(() => document.querySelector('#scoreboardList').textContent.includes('BoardCat'));
+  assert.equal(await page.locator('.scoreboard-row').first().locator('.scoreboard-avatar').textContent(), '🐯');
+  await page.locator('.scoreboard-row').first().click();
+  assert.equal(await page.locator('#leaderboardProfileDialog').evaluate(dialog => dialog.open), true);
+  assert.match(await page.locator('#leaderboardProfileName').textContent(), /BoardCat/);
+  assert.match(await page.locator('#leaderboardProfileBody').textContent(), /321/);
+  await page.locator('#leaderboardProfileClose').click();
+  await page.locator('[data-period="total"]').click();
+  assert.equal(await page.locator('.scoreboard-tabs [data-period="total"]').evaluate(node => node.classList.contains('active')), true);
+  await browser.close();
+});
+
 test('sudden death can return home from its results screen', async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });

@@ -4,4 +4,16 @@ function handle(ws,message){const type=message?.type;if(type==='hello'){const id
 const server=http.createServer((req,res)=>{if((req.url||'').split('?')[0]==='/dictionary.json'){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'public, max-age=86400'});return res.end(JSON.stringify(createLexicon('classic')))}let requested=decodeURIComponent((req.url||'/').split('?')[0]);if(requested==='/')requested='/index.html';const file=path.join(__dirname,requested);if(!file.startsWith(__dirname)||!fs.existsSync(file)||fs.statSync(file).isDirectory()){res.writeHead(404);return res.end('Not found')}const ext=path.extname(file),types={'.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png'};res.writeHead(200,{'Content-Type':types[ext]||'application/octet-stream'});fs.createReadStream(file).pipe(res)});const wss=new WebSocketServer({server});wss.on('connection',ws=>{ws.on('message',raw=>{try{handle(ws,JSON.parse(raw))}catch{send(ws,{type:'error',code:'BAD_MESSAGE'})}});ws.on('close',()=>leave(ws))});if(require.main===module)server.listen(PORT,HOST,()=>console.log('Wordrush listening on http://'+HOST+':'+PORT));module.exports={server,rooms,handle,MAX_PLAYERS};
 
 
-
+const { Leaderboard } = require('./leaderboard');
+const leaderboard = new Leaderboard();
+function readJson(req) { return new Promise(resolve => { let body = ''; req.on('data', chunk => { body += chunk; if (body.length > 10000) req.destroy(); }); req.on('end', () => { try { resolve(JSON.parse(body || '{}')); } catch { resolve(null); } }); }); }
+async function leaderboardRequest(req, res) {
+  const url = new URL(req.url, 'http://localhost');
+  if (url.pathname === '/api/leaderboard' && req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end(JSON.stringify({ period: url.searchParams.get('period') === 'total' ? 'total' : 'weekly', players: leaderboard.rankings(url.searchParams.get('period')) })); }
+  if (url.pathname.startsWith('/api/leaderboard/') && req.method === 'GET') { const player = leaderboard.profile(decodeURIComponent(url.pathname.slice('/api/leaderboard/'.length))); if (!player) { res.writeHead(404); return res.end(JSON.stringify({ error: 'PLAYER_NOT_FOUND' })); } res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end(JSON.stringify(player)); }
+  if (url.pathname === '/api/leaderboard/score' && req.method === 'POST') { const body = await readJson(req); if (!body || !body.id) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'INVALID_SCORE' })); } res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(leaderboard.recordScore(body))); }
+  return false;
+}
+const originalRequestHandler = server.listeners('request')[0];
+server.removeListener('request', originalRequestHandler);
+server.on('request', async (req, res) => { if (res.writableEnded) return; const handled = await leaderboardRequest(req, res); if (!handled && !res.writableEnded) originalRequestHandler(req, res); });

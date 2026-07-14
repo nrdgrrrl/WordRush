@@ -1,0 +1,19 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { Leaderboard, weekKey } = require('../leaderboard');
+
+test('leaderboard persists scores and separates weekly and total rankings', () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wordrush-leaderboard-')), 'scores.json');
+  const board = new Leaderboard(file);
+  board.recordScore({ id: 'alpha', name: 'Alpha', avatar: '🐱', score: 120, words: 4, at: new Date() });
+  board.recordScore({ id: 'alpha', name: 'Alpha', avatar: '🐱', score: 80, words: 3, at: new Date() });
+  board.recordScore({ id: 'beta', name: 'Beta', avatar: '🦊', score: 150, at: new Date() });
+  assert.deepEqual(board.rankings('weekly').map(player => [player.name, player.score]), [['Alpha', 200], ['Beta', 150]]);
+  assert.equal(board.profile('alpha').totalScore, 200);
+  const reloaded = new Leaderboard(file);
+  assert.equal(reloaded.profile('alpha').totalWords, 7);
+  assert.equal(weekKey(new Date('2026-07-14T12:00:00Z')), '2026-07-13');
+});
