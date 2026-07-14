@@ -1,25 +1,25 @@
 const $ = (s) => document.querySelector(s),
-  MODE = {
-    classic: ["CLASSIC", 3, 4, 120, "Free play · 2 minutes"],
-    minimum: ["MINIMUM WORD", 5, 6, 180, "Minimum 5 letters"],
-    sudden: ["SUDDEN DEATH", 3, 5, 180, "One invalid word ends the round"],
-    race: ["RACE MODE", 3, 4, 240, "First to 500 points wins"],
-    dirty: ["DIRTY MODE · 18+", 3, 5, 180, "Opt-in adult dictionary"],
-  };
-let customConfig = null,
-  customAdult = false;
+  sharedConfig = window.WordrushConfig,
+  MODE = Object.fromEntries(
+    Object.entries(sharedConfig.MODE_CONFIG)
+      .filter(([mode]) => mode !== "coop")
+      .map(([mode, config]) => [
+        mode,
+        [config.label, config.min, config.size, config.seconds, config.rule],
+      ]),
+  );
+let customAdult = false;
+function emit(name, detail = {}) {
+  document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
+}
 const RANDOM_MODES = ["classic", "minimum", "sudden", "race"];
 function nextRandomMode() {
   const choices = RANDOM_MODES.filter((mode) => mode !== s.mode);
   return choices[Math.floor(Math.random() * choices.length)] || RANDOM_MODES[0];
 }
-const common =
-    "STAR START STARE STONE LINE LINES LION PLACE SPACE MOUSE MUSES STREAM WORDS RUSH BRAIN TRACE FIRE FINE SCORE RAIN TRAIN STAIR TONE NOTE RATE PLANE PLANT HEART HOUSE".split(
-      " ",
-    ),
-  adult = "ASS BITCH COCK DAMN DICK HELL PISS SHIT SLUT TIT".split(" "),
-  bag =
-    "EEEEEEEEEEEEAAAAAAAARRRRRRIIIIIIIIOOOOOOOONNNNNNTTTTTTLLLLSSSSUUUUDDDDGGGBBCCMMPPHHFFVVWWYYKJXQZ";
+const common = sharedConfig.COMMON_WORDS,
+  adult = sharedConfig.ADULT_WORDS,
+  bag = sharedConfig.LETTER_BAG;
 let custom = new Set();
 try {
   custom = new Set(
@@ -43,9 +43,12 @@ const s = {
   trace: [],
   traceFrame: 0,
   startedAt: 0,
+  endsAt: 0,
   rush: false,
   rushTimer: 0,
   rushCountdown: 0,
+  roundWordTimes: [],
+  onlineRoundKey: null,
 };
 const avatarOptions = [
     "🐈",
@@ -104,6 +107,7 @@ const avatarOptions = [
     "Tabby",
     "Claw",
   ];
+window.wordrushAvatarOptions = avatarOptions;
 function randomGuestName() {
   return (
     nameAdjectives[Math.floor(Math.random() * nameAdjectives.length)] +
@@ -128,6 +132,10 @@ const profile = (() => {
         totalGameSeconds: 0,
         gamesWon: 0,
         gamesLost: 0,
+        multiplayerWins: 0,
+        multiplayerLosses: 0,
+        speedAchievement: false,
+        maxGridWin: 0,
         days: [],
       },
       JSON.parse(localStorage.getItem("wordrush-profile") || "{}"),
@@ -147,6 +155,10 @@ const profile = (() => {
       totalGameSeconds: 0,
       gamesWon: 0,
       gamesLost: 0,
+      multiplayerWins: 0,
+      multiplayerLosses: 0,
+      speedAchievement: false,
+      maxGridWin: 0,
       days: [],
     };
   }
@@ -171,8 +183,6 @@ function updateIdentity() {
   });
 }
 function updateProfile() {
-  const today = new Date().toISOString().slice(0, 10);
-  if (!profile.days.includes(today)) profile.days.push(today);
   const dates = [...new Set(profile.days)].sort().reverse();
   profile.streak = dates.length ? 1 : 0;
   for (let i = 1; i < dates.length; i++) {
@@ -185,39 +195,50 @@ function updateProfile() {
     $("#homeScore").textContent = profile.score.toLocaleString();
   if ($("#homeWords")) $("#homeWords").textContent = profile.words;
   if ($("#homeStreak")) $("#homeStreak").textContent = profile.streak;
-  const unlocked = {
-    long: profile.longest >= 10,
-    first: profile.words > 0,
-    speed: profile.rounds > 0 && profile.words >= 20,
-    grid: profile.rounds > 0 && profile.maxGrid >= 8,
-  };
-  const count = Object.values(unlocked).filter(Boolean).length;
-  if ($("#achievementCount"))
-    $("#achievementCount").textContent = count + " / 4";
-  if ($("#achievementBar"))
-    $("#achievementBar").style.background =
-      "linear-gradient(90deg,var(--coral) " +
-      (count / 4) * 100 +
-      "%,#e1dfd8 " +
-      (count / 4) * 100 +
-      "%)";
-  document.querySelectorAll("[data-achievement]").forEach((card) => {
-    const done = unlocked[card.dataset.achievement];
-    card.classList.toggle("unlocked", done);
-    const status = card.querySelector("em");
-    if (status) status.textContent = done ? "UNLOCKED" : "LOCKED";
-  });
-  window.wordrushAchievementEvent?.();
+  window.wordrushAchievementEvent?.(profile);
   window.wordrushStatsEvent?.();
+}
+function recordPlayDay() {
+  const now = new Date();
+  const today = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
+  if (!profile.days.includes(today)) profile.days.push(today);
+}
+function recordAcceptedWord(word) {
+  const elapsed = Date.now() - s.startedAt;
+  s.roundWordTimes.push(elapsed);
+  if (s.roundWordTimes.filter((time) => elapsed - time <= 60000).length >= 20)
+    profile.speedAchievement = true;
+  profile.words++;
+  profile.correct++;
+  profile.totalWordLength += word.length;
+  profile.longest = Math.max(profile.longest, word.length);
+}
+function formatTimer(seconds) {
+  const safe = Math.max(0, Math.ceil(Number(seconds) || 0));
+  return (
+    String(Math.floor(safe / 60)).padStart(2, "0") +
+    ":" +
+    String(safe % 60).padStart(2, "0")
+  );
 }
 updateIdentity();
 updateProfile();
+let lexiconCache = null;
+let lexiconCacheKey = "";
 function lex() {
-  return new Set([
+  const key = s.mode + ":" + customAdult + ":" + custom.size;
+  if (lexiconCache && lexiconCacheKey === key) return lexiconCache;
+  lexiconCacheKey = key;
+  lexiconCache = new Set([
     ...common,
     ...custom,
     ...(s.mode === "dirty" || customAdult ? adult : []),
   ]);
+  return lexiconCache;
 }
 function near(i) {
   let r = Math.floor(i / s.n),
@@ -253,23 +274,6 @@ function place(w, c) {
   }
   return null;
 }
-function make() {
-  let c = Array(s.n * s.n).fill(""),
-    all = [...lex()],
-    targets = [3, 4, 5, 6]
-      .map((l, i) => {
-        let a = all.filter((w) => (i === 3 ? w.length >= 6 : w.length === l));
-        return a[Math.floor(Math.random() * a.length)];
-      })
-      .filter(Boolean);
-  targets
-    .sort((a, b) => b.length - a.length)
-    .forEach((w) => {
-      let p = place(w, c);
-      if (p) p.forEach((i, j) => (c[i] = w[j]));
-    });
-  return c.map((x) => x || bag[Math.floor(Math.random() * bag.length)]);
-}
 function path(w) {
   function d(i, k, u) {
     if (k === w.length) return 1;
@@ -295,18 +299,22 @@ function renderResults(ranking) {
     ? ranking
     : [{ name: profile.name, avatar: profile.avatar, score: s.score }];
   $("#resultName").textContent = profile.name + ".";
-  $("#resultPlayers").innerHTML =
-    "<p>PLAYER <b>SCORE</b></p>" +
-    rows
-      .map(
-        (player) =>
-          "<p>" +
-          ((player.avatar || "🐈") + " " + player.name) +
-          " <b>" +
-          player.score +
-          "</b></p>",
-      )
-      .join("");
+  const target = $("#resultPlayers");
+  target.replaceChildren();
+  const header = document.createElement("p");
+  header.append("PLAYER ");
+  const scoreHeading = document.createElement("b");
+  scoreHeading.textContent = "SCORE";
+  header.append(scoreHeading);
+  target.append(header);
+  rows.forEach((player) => {
+    const row = document.createElement("p");
+    row.append((player.avatar || "🐈") + " " + player.name + " ");
+    const score = document.createElement("b");
+    score.textContent = Number(player.score || 0).toLocaleString();
+    row.append(score);
+    target.append(row);
+  });
 }
 function end() {
   if (
@@ -321,7 +329,7 @@ function end() {
   s.done = 1;
   clearInterval(s.timer);
   $("#finalScore").textContent = s.score;
-  $("#bonus").textContent = s.score ? 50 : 0;
+  $("#resultWordCount").textContent = s.found.size;
   renderResults();
   $("#resultAchievement").hidden = !s.found.size;
   $("#resultAchievementTitle").textContent = s.found.size
@@ -335,9 +343,25 @@ function end() {
   profile.totalGameSeconds += (Date.now() - s.startedAt) / 1000;
   profile.gamesWon += s.score > 0 ? 1 : 0;
   profile.gamesLost += s.score > 0 ? 0 : 1;
-  profile.maxGrid = Math.max(profile.maxGrid || 0, s.n);
+  if (s.score > 0) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
+  recordPlayDay();
   updateProfile();
   show("resultsScreen");
+  emit("round-complete", {
+    ranking: [
+      {
+        name: profile.name,
+        avatar: profile.avatar,
+        score: s.score,
+        words: [...s.found].map((word) => ({
+          word,
+          points: word.length * word.length,
+        })),
+      },
+    ],
+    multiplayer: false,
+    cooperative: false,
+  });
   if (s.rush) {
     const rushDelay = window.wordrushRushDelay || 20000;
     $("#stopRushResults").hidden = false;
@@ -367,6 +391,12 @@ function show(id) {
   document
     .querySelectorAll(".screen")
     .forEach((x) => x.classList.toggle("active", x.id === id));
+  document
+    .querySelectorAll("nav [data-screen]")
+    .forEach((button) =>
+      button.classList.toggle("active", button.dataset.screen === id),
+    );
+  emit("screen-change", { id });
 }
 function stopRush() {
   s.rush = false;
@@ -383,7 +413,6 @@ function start(mode, override = null, adultMode = false, rush = false) {
   )
     return;
   let m = override || MODE[mode];
-  customConfig = override;
   customAdult = adultMode || mode === "dirty";
   s.customConfig = override;
   s.rush = rush;
@@ -391,39 +420,36 @@ function start(mode, override = null, adultMode = false, rush = false) {
   clearInterval(s.rushCountdown);
   s.target = override?.[5]?.target || null;
   s.mode = mode;
+  s.onlineRoundKey = null;
   document.body.dataset.mode = mode;
   s.n = m[2];
   s.time = m[3];
   s.score = 0;
   s.found.clear();
+  s.roundWordTimes = [];
   s.pick = [];
   s.done = 0;
   s.startedAt = Date.now();
+  s.endsAt = s.startedAt + s.time * 1000;
   s.b = make();
   $("#gameMode").textContent = m[0];
   $("#gameTitle").textContent = "Round 01 · " + s.n + "×" + s.n;
   $("#ruleBanner").textContent = m[4];
   $("#gameHint").textContent = "Minimum " + m[1] + " letters";
   $("#gameScore").textContent = 0;
+  $("#timer").textContent = formatTimer(s.time);
   $("#stopRush").hidden = !s.rush;
+  $("#endGame").hidden = false;
   $("#stopRushResults").hidden = true;
   render();
   show("gameScreen");
+  emit("round-started");
   clearInterval(s.timer);
   s.timer = setInterval(() => {
-    s.time--;
-    $("#timer").textContent =
-      String(Math.floor(s.time / 60)).padStart(2, "0") +
-      ":" +
-      String(s.time % 60).padStart(2, "0");
+    s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
+    $("#timer").textContent = formatTimer(s.time);
     if (s.time <= 0) end();
-  }, 1000);
-}
-function clearPick() {
-  document
-    .querySelectorAll(".selected")
-    .forEach((x) => x.classList.remove("selected"));
-  s.pick = [];
+  }, 250);
 }
 function submit() {
   let trace = s.pick.slice(),
@@ -438,16 +464,15 @@ function submit() {
   let m = s.customConfig || MODE[s.mode],
     ok = w.length >= m[1] && lex().has(w) && path(w);
   if (ok && !s.found.has(w)) {
+    const points = w.length * w.length;
     s.found.add(w);
-    s.score += w.length * w.length;
-    profile.words++;
-    profile.correct++;
-    profile.totalWordLength += w.length;
-    profile.longest = Math.max(profile.longest, w.length);
+    s.score += points;
+    recordAcceptedWord(w);
     updateProfile();
     $("#gameScore").textContent = s.score;
-    $("#preview").textContent = w + " +" + w.length * w.length;
+    $("#preview").textContent = w + " +" + points;
     $("#preview").classList.add("found");
+    emit("word-accepted", { word: w, points });
     if ((s.mode === "race" || s.target) && s.score >= 500) end();
   } else if (s.found.has(w)) {
     profile.incorrect++;
@@ -503,104 +528,18 @@ function clearTrace() {
   s.trace = [];
   $("#tracePath").removeAttribute("d");
 }
-function tileCenter(tile) {
-  const r = tile.getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-}
-function candidateAt(x, y) {
-  const tiles = [...document.querySelectorAll(".tile")];
-  let best = null,
-    distance = Infinity;
-  for (const tile of tiles) {
-    const center = tileCenter(tile),
-      d = Math.hypot(x - center.x, y - center.y);
-    if (d < distance) {
-      distance = d;
-      best = { tile, center, d };
-    }
-  }
-  const radius = (best?.tile.getBoundingClientRect().width || 0) * 0.38;
-  return best && best.d <= radius ? best : null;
-}
 function pick(t) {
   if (!t || s.pick.includes(+t.dataset.i)) return;
   s.pick.push(+t.dataset.i);
   t.classList.add("selected");
   $("#preview").textContent = s.pick.map((i) => s.b[i]).join("");
 }
-function moveTrace(x, y) {
-  tracePoint(x, y);
-  const candidate = candidateAt(x, y);
-  if (!candidate) return;
-  const index = +candidate.tile.dataset.i;
-  if (s.pick.length && !near(index).includes(s.pick.at(-1))) return;
-  pick(candidate.tile);
-}
-$("#grid").onpointerdown = (e) => {
-  const candidate = candidateAt(e.clientX, e.clientY);
-  if (!candidate) return;
-  s.drag = 1;
-  s.pointerId = e.pointerId;
-  clearPick();
-  clearTrace();
-  pick(candidate.tile);
-  tracePoint(e.clientX, e.clientY);
-  e.currentTarget.setPointerCapture?.(e.pointerId);
-  e.preventDefault();
-};
-$("#grid").onpointermove = (e) => {
-  if (s.drag && e.pointerId === s.pointerId) moveTrace(e.clientX, e.clientY);
-};
-$("#grid").onpointerup = (e) => {
-  if (!s.drag || e.pointerId !== s.pointerId) return;
-  s.drag = 0;
-  try {
-    e.currentTarget.releasePointerCapture(e.pointerId);
-  } catch {}
-  submit();
-  setTimeout(clearTrace, 250);
-};
-$("#grid").onpointercancel = (e) => {
-  if (s.drag) {
-    s.drag = 0;
-    clearPick();
-    clearTrace();
-  }
-};
-document
-  .querySelectorAll("[data-screen]")
-  .forEach((x) => (x.onclick = () => show(x.dataset.screen)));
-const launchRandom = () =>
-  window.wordrushSessionCode
-    ? $("#multiplayerDialog").showModal()
-    : start(nextRandomMode(), null, false, true);
-$("#randomPanel").onpointerup = (e) => {
-  if (e.target.closest("#reroll")) return;
-  e.preventDefault();
-  launchRandom();
-};
-$("#randomPanel").onkeydown = (e) => {
-  if ((e.key === "Enter" || e.key === " ") && !e.target.closest("#reroll")) {
-    e.preventDefault();
-    launchRandom();
-  }
-};
 $("#quickPlay").onclick = () => start("classic");
 $("#navStats").onclick = () => show("statsScreen");
 $("#stopRush").onclick = stopRush;
 $("#stopRushResults").onclick = stopRush;
 $("#again").onclick = () => start(s.mode);
 $("#endGame").onclick = end;
-$("#reroll").onclick = (e) => {
-  e.stopPropagation();
-  let a = [
-    ["Minimum 4 · Sudden death", "3 minutes · 5×5 grid"],
-    ["Race to 500 · 4×4 grid", "First player to 500"],
-    ["Classic free play · 6×6 grid", "2 minutes · 6×6 grid"],
-  ][Math.floor(Math.random() * 3)];
-  $("#randomPreview").textContent = a[0];
-  $("#randomPreviewSub").textContent = a[1];
-};
 document
   .querySelectorAll("[data-mode]")
   .forEach((x) => (x.onclick = () => start(x.dataset.mode)));
@@ -657,18 +596,22 @@ document.addEventListener("click", (event) => {
   if (target) show(target.dataset.screen);
 });
 
-window.wordrushRecordOnlineWord = (word) => {
-  profile.words++;
-  profile.correct++;
-  profile.totalWordLength += word.length;
-  profile.longest = Math.max(profile.longest, word.length);
+window.wordrushRecordOnlineWord = (word, points) => {
+  recordAcceptedWord(word);
   updateProfile();
+  emit("word-accepted", {
+    word,
+    points: Number(points) || word.length * word.length,
+  });
 };
 window.wordrushRecordOnlineIncorrect = () => {
   profile.incorrect++;
   updateProfile();
 };
 window.wordrushOnlineRound = (round, config, mode) => {
+  const roundKey = round.endsAt + ":" + round.board.join("");
+  if (s.onlineRoundKey === roundKey && !s.done) return;
+  s.onlineRoundKey = roundKey;
   const match = Object.entries(MODE).find(
     ([, value]) => value[0] === config?.label,
   );
@@ -678,19 +621,35 @@ window.wordrushOnlineRound = (round, config, mode) => {
   s.b = round.board;
   s.score = 0;
   s.found.clear();
+  s.roundWordTimes = [];
   s.done = 0;
+  s.startedAt = Date.now();
   $("#gameMode").textContent = config?.label || "MULTIPLAYER";
   $("#gameTitle").textContent = "Round 01 · " + round.size + "×" + round.size;
   $("#ruleBanner").textContent = config?.rule || "";
+  $("#gameHint").textContent = "Minimum " + (config?.min || 3) + " letters";
+  const updateOnlineTimer = () => {
+    s.time = Math.max(0, Math.ceil((round.endsAt - Date.now()) / 1000));
+    $("#timer").textContent = formatTimer(s.time);
+  };
+  clearInterval(s.timer);
+  updateOnlineTimer();
+  s.timer = setInterval(updateOnlineTimer, 250);
   render();
   show("gameScreen");
+  emit("round-started");
 };
 window.wordrushOnlineFinish = (ranking, result = {}) => {
+  if (s.done) return;
+  s.done = 1;
   clearInterval(s.timer);
+  const guestId = window.wordrushGuestId;
   const mine =
-    ranking?.find((player) => player.name === profile.name)?.score ?? s.score;
+    ranking?.find((player) => player.id === guestId)?.score ?? s.score;
+  const ownWords =
+    ranking?.find((player) => player.id === guestId)?.words?.length || 0;
   $("#finalScore").textContent = mine;
-  $("#bonus").textContent = mine ? 50 : 0;
+  $("#resultWordCount").textContent = ownWords;
   renderResults(ranking);
   $("#resultAchievement").hidden = false;
   $("#resultAchievementTitle").textContent = result.cooperative
@@ -709,11 +668,21 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   profile.score += mine;
   profile.rounds++;
   profile.totalGameSeconds += (Date.now() - s.startedAt) / 1000;
-  const won = result.cooperative || ranking?.[0]?.name === profile.name;
+  const won = result.cooperative || ranking?.[0]?.id === guestId;
   profile.gamesWon += won ? 1 : 0;
   profile.gamesLost += won ? 0 : 1;
+  profile.multiplayerWins = (profile.multiplayerWins || 0) + (won ? 1 : 0);
+  profile.multiplayerLosses = (profile.multiplayerLosses || 0) + (won ? 0 : 1);
+  if (won) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
+  recordPlayDay();
   updateProfile();
   show("resultsScreen");
+  emit("round-complete", {
+    ranking,
+    multiplayer: true,
+    cooperative: Boolean(result.cooperative),
+    result,
+  });
 };
 
 const themePreference = localStorage.getItem("wordrush-theme");
@@ -729,17 +698,6 @@ $("#profileButton")?.addEventListener("click", () => {
   updateIdentity();
   $("#profileDialog").showModal();
 });
-document.querySelectorAll("[data-avatar]").forEach((button) =>
-  button.addEventListener("click", () => {
-    profile.avatar = button.dataset.avatar;
-    document
-      .querySelectorAll("[data-avatar]")
-      .forEach((x) =>
-        x.classList.toggle("chosen", x.dataset.avatar === profile.avatar),
-      );
-    if ($("#profileButton")) $("#profileButton").textContent = profile.avatar;
-  }),
-);
 $("#avatarPicker")?.addEventListener("click", (event) => {
   const button = event.target.closest?.("[data-avatar]");
   if (!button) return;
@@ -759,7 +717,6 @@ const saveProfile = () => {
   window.wordrushIdentityChanged?.();
 };
 $("#profileForm")?.addEventListener("submit", saveProfile);
-$("#profileForm .dialog-save")?.addEventListener("click", saveProfile);
 function make() {
   let all = [...lex()],
     dirty = s.mode === "dirty" || customAdult;

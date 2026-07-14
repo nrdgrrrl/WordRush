@@ -9,6 +9,7 @@
       ? crypto.randomUUID()
       : "guest-" + Math.random().toString(36).slice(2));
   localStorage.setItem("wordrush-guest-id", guestId);
+  window.wordrushGuestId = guestId;
   let socket,
     sessionCode = "",
     endedSessionCode = "",
@@ -41,22 +42,26 @@
     $("#roomTitle").textContent = "No active session";
     $("#roomSubtitle").textContent = "Create or join a multiplayer session";
     $("#sessionPlayersText").textContent = "1 player connected";
+    $("#livePlayers").replaceChildren();
   }
   function renderPlayers(players) {
     const target = $("#livePlayers");
     if (!target) return;
-    target.innerHTML = (players || [])
-      .map(
-        (player) =>
-          '<div class="live-player"><span class="player-avatar">' +
-          (player.avatar || "🐈") +
-          '</span><span class="player-name">' +
-          player.name +
-          "</span><b>" +
-          player.score +
-          "</b></div>",
-      )
-      .join("");
+    target.replaceChildren();
+    (players || []).forEach((player) => {
+      const row = document.createElement("div");
+      row.className = "live-player";
+      const avatar = document.createElement("span");
+      avatar.className = "player-avatar";
+      avatar.textContent = player.avatar || "🐈";
+      const name = document.createElement("span");
+      name.className = "player-name";
+      name.textContent = player.name;
+      const score = document.createElement("b");
+      score.textContent = Number(player.score || 0).toLocaleString();
+      row.append(avatar, name, score);
+      target.append(row);
+    });
     if (sessionCode) {
       $("#multiplayerBanner").hidden = false;
       $("#multiplayerBannerText").textContent =
@@ -91,6 +96,7 @@
     $("#sessionCode").textContent = code;
     $("#sessionStart").hidden = !creator;
     $("#sessionType").disabled = !creator;
+    $("#endGame").hidden = !creator;
     sessionDialog();
   }
   function sendWhenReady(payload) {
@@ -107,7 +113,12 @@
       socket.send(JSON.stringify({ type: "hello", guestId, ...identity() })),
     );
     socket.addEventListener("message", (event) => {
-      const message = JSON.parse(event.data);
+      let message;
+      try {
+        message = JSON.parse(event.data);
+      } catch {
+        return toast("Received an invalid server message");
+      }
       if (message.type === "session_closed") {
         clearSession(message.code);
         goHome();
@@ -137,11 +148,24 @@
         if (message.round && message.status === "playing")
           window.wordrushOnlineRound?.(
             message.round,
-            { label: message.mode.toUpperCase(), rule: "Multiplayer round" },
+            message.config || {
+              label: message.mode.toUpperCase(),
+              rule: "Multiplayer round",
+            },
             message.mode,
           );
         if (message.status === "finished" && message.results)
           window.wordrushResultsSettings?.(message.results);
+        if (
+          message.status === "finished" &&
+          message.lastResult?.ranking?.some((player) => player.id === guestId)
+        ) {
+          sessionDialog(false);
+          window.wordrushOnlineFinish?.(
+            message.lastResult.ranking,
+            message.lastResult,
+          );
+        }
       }
       if (message.type === "round_started") {
         renderPlayers(message.players);
@@ -157,9 +181,7 @@
         if (message.playerId === guestId)
           window.wordrushRecordOnlineWord?.(message.word, message.points);
         renderPlayers(message.scores);
-        const own = message.scores.find(
-          (score) => score.id === message.playerId,
-        );
+        const own = message.scores.find((score) => score.id === guestId);
         if (own && $("#gameScore")) $("#gameScore").textContent = own.score;
       }
       if (message.type === "word_rejected") {

@@ -1,103 +1,190 @@
 (() => {
   const $ = (selector) => document.querySelector(selector);
-  const speeds = { slow: 1800, medium: 900, fast: 350 };
-  let localWords = [], revealTimer = 0, revealToken = 0, lastApplied = "", wasGame = false;
-  let results = { view: localStorage.getItem("wordrush-results-view") || "static", speed: localStorage.getItem("wordrush-results-speed") || "medium" };
-  let multiplayerWords = null;
+  const SPEEDS = { slow: 1800, medium: 900, fast: 350 };
+  const storedView = localStorage.getItem("wordrush-results-view");
+  const storedSpeed = localStorage.getItem("wordrush-results-speed");
+  let settings = {
+    view: ["static", "reveal"].includes(storedView) ? storedView : "static",
+    speed: Object.hasOwn(SPEEDS, storedSpeed) ? storedSpeed : "medium",
+  };
+  let localWords = [];
+  let resultRows = [];
+  let revealTimer = null;
+  let revealToken = 0;
 
-  function sendSettings(next) {
-    results = { ...results, ...next };
-    localStorage.setItem("wordrush-results-view", results.view);
-    localStorage.setItem("wordrush-results-speed", results.speed);
-    if (window.wordrushSessionCode && window.wordrushSocket?.readyState === 1)
-      window.wordrushSocket.send(JSON.stringify({ type: "set_results_settings", view: results.view, speed: results.speed }));
-    applyResults();
+  function localRow() {
+    const profile = window.wordrushProfile?.() || {
+      name: "Player",
+      avatar: "🐈",
+    };
+    return {
+      ...profile,
+      score: localWords.reduce((sum, item) => sum + item.points, 0),
+      words: localWords,
+    };
   }
 
   function rows() {
-    if (multiplayerWords) return multiplayerWords;
-    const name = window.wordrushProfile?.().name || "Player";
-    return [{ name, avatar: window.wordrushProfile?.().avatar || "🐈", score: localWords.reduce((sum, item) => sum + item.points, 0), words: localWords }];
+    return resultRows.length ? resultRows : [localRow()];
+  }
+
+  function makePlayerCard(player) {
+    const card = document.createElement("article");
+    card.className = "reveal-player";
+    const heading = document.createElement("header");
+    const identity = document.createElement("span");
+    identity.textContent = (player.avatar || "🐈") + " " + player.name;
+    const score = document.createElement("b");
+    score.className = "reveal-player-total";
+    score.textContent = "0";
+    heading.append(identity, score);
+    const list = document.createElement("div");
+    list.className = "reveal-word-list";
+    card.append(heading, list);
+    return card;
+  }
+
+  function appendWord(card, item) {
+    const line = document.createElement("div");
+    line.className = "reveal-word reveal-in";
+    const word = document.createElement("span");
+    word.textContent = item.word;
+    const points = document.createElement("b");
+    points.textContent = "+" + item.points;
+    line.append(word, points);
+    card.querySelector(".reveal-word-list").append(line);
   }
 
   function renderReveal() {
     const host = $("#revealPlayers");
     if (!host) return;
-    host.innerHTML = rows().map((player) => `<article class="reveal-player"><header><span>${player.avatar || "🐈"} ${player.name}</span><b class="reveal-player-total">0</b></header><div class="reveal-word-list"></div></article>`).join("");
+    clearTimeout(revealTimer);
     revealToken++;
     const token = revealToken;
-    clearInterval(revealTimer);
-    const delay = speeds[results.speed] || speeds.medium;
-    let total = 0;
+    const players = rows();
+    const cards = players.map(makePlayerCard);
+    host.replaceChildren(...cards);
     $("#revealTotal").textContent = "0";
-    const items = [];
-    [...host.querySelectorAll(".reveal-player")].forEach((card, playerIndex) => {
-      const player = rows()[playerIndex];
-      (player.words || []).forEach((item) => items.push({ card, item }));
-    });
-    let index = 0;
-    const revealNext = () => {
-      if (token !== revealToken || index >= items.length) return;
-      const { card, item } = items[index++];
-      const line = document.createElement("div");
-      line.className = "reveal-word reveal-in";
-      line.innerHTML = `<span>${item.word}</span><b>+${item.points}</b>`;
-      card.querySelector(".reveal-word-list").append(line);
-      const playerTotal = [...card.querySelectorAll(".reveal-word b")].reduce((sum, el) => sum + Number(el.textContent.slice(1)), 0);
-      card.querySelector(".reveal-player-total").textContent = playerTotal;
-      total += item.points;
+    const playerTotals = players.map(() => 0);
+    const maximumWords = Math.max(
+      0,
+      ...players.map((player) => player.words?.length || 0),
+    );
+    let wordIndex = 0;
+    let total = 0;
+
+    const revealNextGroup = () => {
+      if (token !== revealToken || wordIndex >= maximumWords) return;
+      players.forEach((player, playerIndex) => {
+        const item = player.words?.[wordIndex];
+        if (!item) return;
+        appendWord(cards[playerIndex], item);
+        playerTotals[playerIndex] += Number(item.points) || 0;
+        cards[playerIndex].querySelector(".reveal-player-total").textContent =
+          playerTotals[playerIndex].toLocaleString();
+        total += Number(item.points) || 0;
+      });
       const totalEl = $("#revealTotal");
-      totalEl.textContent = total;
+      totalEl.textContent = total.toLocaleString();
       totalEl.classList.remove("score-pop");
       void totalEl.offsetWidth;
       totalEl.classList.add("score-pop");
-      revealTimer = setTimeout(revealNext, delay);
+      wordIndex++;
+      revealTimer = setTimeout(
+        revealNextGroup,
+        SPEEDS[settings.speed] || SPEEDS.medium,
+      );
     };
-    revealNext();
+
+    revealNextGroup();
   }
 
   function applyResults() {
-    const reveal = results.view === "reveal";
-    const key = results.view + ":" + results.speed;
-    if (reveal && key === lastApplied) return;
-    lastApplied = key;
+    const reveal = settings.view === "reveal";
     $("#staticResultsView").hidden = reveal;
     $("#animatedResultsView").hidden = !reveal;
     $("#staticResultsButton").classList.toggle("active", !reveal);
+    $("#staticResultsButton").setAttribute("aria-pressed", String(!reveal));
     $("#animatedResultsButton").classList.toggle("active", reveal);
-    document.querySelectorAll("[data-speed]").forEach((button) => button.classList.toggle("active", button.dataset.speed === results.speed));
+    $("#animatedResultsButton").setAttribute("aria-pressed", String(reveal));
+    document.querySelectorAll("[data-speed]").forEach((button) => {
+      const active = button.dataset.speed === settings.speed;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
     if (reveal) renderReveal();
+    else {
+      revealToken++;
+      clearTimeout(revealTimer);
+    }
   }
 
-  const originalOnlineFinish = window.wordrushOnlineFinish;
-  function finish(ranking, result = {}) {
-    originalOnlineFinish?.(ranking, result);
-    multiplayerWords = ranking?.map((player) => ({ ...player, words: player.words || [] })) || null;
-    if (result.results) results = { ...results, ...result.results };
+  function setSettings(next, broadcast = false) {
+    settings = {
+      view:
+        next.view === "reveal"
+          ? "reveal"
+          : next.view === "static"
+            ? "static"
+            : settings.view,
+      speed: Object.hasOwn(SPEEDS, next.speed) ? next.speed : settings.speed,
+    };
+    localStorage.setItem("wordrush-results-view", settings.view);
+    localStorage.setItem("wordrush-results-speed", settings.speed);
+    if (
+      broadcast &&
+      window.wordrushSessionCode &&
+      window.wordrushSocket?.readyState === WebSocket.OPEN
+    ) {
+      window.wordrushSocket.send(
+        JSON.stringify({ type: "set_results_settings", ...settings }),
+      );
+    }
     applyResults();
   }
 
-  window.wordrushOnlineFinish = finish;
-  window.wordrushResultsSettings = (next) => { results = { ...results, ...next }; applyResults(); };
-  const originalOnlineRound = window.wordrushOnlineRound;
-  window.wordrushOnlineRound = (...args) => { localWords = []; multiplayerWords = null; return originalOnlineRound?.(...args); };
-  const originalRecord = window.wordrushRecordOnlineWord;
-  window.wordrushRecordOnlineWord = (word, points) => { localWords.push({ word, points: points || word.length * word.length }); originalRecord?.(word); };
-
-  $("#staticResultsButton")?.addEventListener("click", () => sendSettings({ view: "static" }));
-  $("#animatedResultsButton")?.addEventListener("click", () => sendSettings({ view: "reveal" }));
-  document.querySelectorAll("[data-speed]").forEach((button) => button.addEventListener("click", () => sendSettings({ speed: button.dataset.speed })));
-  const observer = new MutationObserver(() => {
-    const gameActive = $("#gameScreen")?.classList.contains("active");
-    if (gameActive && !wasGame) { localWords = []; multiplayerWords = null; lastApplied = ""; }
-    wasGame = gameActive;
-    const preview = $("#preview");
-    if (preview?.classList.contains("found")) {
-      const match = preview.textContent.match(/^(.+) \+(\d+)$/);
-      if (match && !localWords.some((item) => item.word === match[1])) localWords.push({ word: match[1], points: Number(match[2]) });
-    }
-    if ($("#resultsScreen")?.classList.contains("active")) applyResults();
+  document.addEventListener("wordrush:round-started", () => {
+    localWords = [];
+    resultRows = [];
+    revealToken++;
+    clearTimeout(revealTimer);
   });
-  observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["class"] });
+  document.addEventListener("wordrush:screen-change", ({ detail }) => {
+    if (detail.id !== "resultsScreen") {
+      revealToken++;
+      clearTimeout(revealTimer);
+    }
+  });
+  document.addEventListener("wordrush:word-accepted", ({ detail }) => {
+    if (!localWords.some((item) => item.word === detail.word))
+      localWords.push({
+        word: detail.word,
+        points: Number(detail.points) || 0,
+      });
+  });
+  document.addEventListener("wordrush:round-complete", ({ detail }) => {
+    resultRows = (detail.ranking || []).map((player) => ({
+      ...player,
+      words: player.words || [],
+    }));
+    if (detail.result?.results)
+      settings = { ...settings, ...detail.result.results };
+    applyResults();
+  });
+
+  window.wordrushResultsSettings = (next) => setSettings(next, false);
+  $("#staticResultsButton")?.addEventListener("click", () =>
+    setSettings({ view: "static" }, true),
+  );
+  $("#animatedResultsButton")?.addEventListener("click", () =>
+    setSettings({ view: "reveal" }, true),
+  );
+  document
+    .querySelectorAll("[data-speed]")
+    .forEach((button) =>
+      button.addEventListener("click", () =>
+        setSettings({ speed: button.dataset.speed }, true),
+      ),
+    );
   applyResults();
 })();
