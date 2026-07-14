@@ -30,6 +30,17 @@ function code() {
 function send(ws, message) {
   if (ws.readyState === 1) ws.send(JSON.stringify(message));
 }
+function cleanText(value, fallback, max = 20) {
+  const cleaned = String(value ?? fallback)
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .trim();
+  return Array.from(cleaned || fallback)
+    .slice(0, max)
+    .join("");
+}
+function roomConfig(room) {
+  return MODE_CONFIG[room.mode] || MODE_CONFIG.classic;
+}
 function state(room) {
   return {
     type: "room_state",
@@ -39,12 +50,13 @@ function state(room) {
     mode: room.mode,
     status: room.status,
     results: room.results,
+    config: roomConfig(room),
+    lastResult: room.status === "finished" ? room.lastResult : null,
     players: [...room.players.values()].map((p) => ({
       id: p.id,
       name: p.name,
       avatar: p.avatar || "🐈",
       score: p.score,
-      connected: p.connected,
     })),
     round: room.round
       ? {
@@ -58,12 +70,26 @@ function state(room) {
 function broadcast(room, message) {
   for (const player of room.players.values()) send(player.ws, message);
 }
+function clearRoomTimer(room) {
+  clearTimeout(room.round?.timer);
+  clearTimeout(room.rushTimer);
+}
+function closeRoom(room, reason) {
+  clearRoomTimer(room);
+  rooms.delete(room.code);
+  for (const member of room.players.values()) {
+    const memberClient = clients.get(member.ws);
+    if (memberClient) memberClient.roomCode = null;
+    send(member.ws, { type: "session_closed", code: room.code, reason });
+  }
+}
 function randomMode(previous) {
   const modes = ["classic", "minimum", "sudden", "race", "coop", "dirty"];
   const choices = modes.filter((mode) => mode !== previous);
   return choices[crypto.randomInt(choices.length)];
 }
 function startRound(room, selected = room.mode) {
+  clearRoomTimer(room);
   room.mode = MODE_CONFIG[selected] ? selected : "classic";
   const config = MODE_CONFIG[room.mode],
     board = generateBoard(
@@ -75,21 +101,29 @@ function startRound(room, selected = room.mode) {
     size: config.size,
     found: new Set(),
     endsAt: Date.now() + config.seconds * 1000,
+    timer: null,
   };
   room.status = "playing";
   room.teamScore = 0;
   room.results = { view: "static", speed: "medium" };
+  room.lastResult = null;
   for (const player of room.players.values()) {
     player.score = 0;
     player.words = [];
+    player.found = new Set();
   }
+  room.round.timer = setTimeout(
+    () => finishRound(room, "timeout"),
+    config.seconds * 1000,
+  );
+  room.round.timer.unref?.();
   broadcast(room, { ...state(room), type: "round_started", config });
 }
 function finishRound(room, reason = "complete") {
   if (!room.round || room.status !== "playing") return;
+  clearTimeout(room.round.timer);
   room.status = "finished";
-  broadcast(room, {
-    type: "round_finished",
+  const result = {
     cooperative: room.mode === "coop",
     teamScore: room.teamScore,
     stats: { wordsFound: room.round.found.size },
@@ -104,12 +138,49 @@ function finishRound(room, reason = "complete") {
         score: p.score,
         words: p.words || [],
       })),
-  });
-  if (room.randomRush)
-    setTimeout(() => {
+  };
+  room.lastResult = result;
+  const gameSeconds = Math.min(
+    roomConfig(room).seconds,
+    Math.max(
+      0,
+      (Date.now() - (room.round.endsAt - roomConfig(room).seconds * 1000)) /
+        1000,
+    ),
+  );
+  try {
+    leaderboard.recordScores(
+      result.ranking.map((rankedPlayer, index) => {
+        const words = rankedPlayer.words || [];
+        return {
+          id: rankedPlayer.id,
+          name: rankedPlayer.name,
+          avatar: rankedPlayer.avatar,
+          score: rankedPlayer.score,
+          words: words.length,
+          correct: words.length,
+          longest: Math.max(0, ...words.map((item) => item.word.length)),
+          totalWordLength: words.reduce(
+            (sum, item) => sum + item.word.length,
+            0,
+          ),
+          gameSeconds,
+          multiplayer: true,
+          multiplayerWin: result.cooperative || index === 0,
+        };
+      }),
+    );
+  } catch {
+    // A leaderboard write must never prevent the round result broadcast.
+  }
+  broadcast(room, { type: "round_finished", ...result });
+  if (room.randomRush) {
+    room.rushTimer = setTimeout(() => {
       if (room.randomRush && room.status === "finished")
         startRound(room, randomMode(room.mode));
     }, RANDOM_RUSH_DELAY);
+    room.rushTimer.unref?.();
+  }
 }
 function leave(ws) {
   const info = clients.get(ws);
@@ -118,15 +189,7 @@ function leave(ws) {
   const room = rooms.get(info.roomCode);
   if (!room) return;
   if (info.id === room.creatorId) {
-    for (const member of room.players.values()) {
-      const memberClient = clients.get(member.id);
-      if (memberClient) memberClient.roomCode = null;
-      send(member.ws, {
-        type: "session_closed",
-        reason: "creator_disconnected",
-      });
-    }
-    return rooms.delete(room.code);
+    return closeRoom(room, "creator_disconnected");
   }
   room.players.delete(info.id);
   if (!room.players.size) return rooms.delete(room.code);
@@ -138,8 +201,8 @@ function handle(ws, message) {
     const id = String(message.guestId || crypto.randomUUID());
     clients.set(ws, {
       id,
-      name: String(message.name || "Guest").slice(0, 20),
-      avatar: String(message.avatar || "🐈").slice(0, 4),
+      name: cleanText(message.name, "Guest"),
+      avatar: cleanText(message.avatar, "🐈", 2),
       roomCode: null,
     });
     return send(ws, { type: "hello_ack", id });
@@ -147,38 +210,57 @@ function handle(ws, message) {
   const client = clients.get(ws);
   if (!client) return send(ws, { type: "error", code: "HELLO_REQUIRED" });
   if (type === "create_room") {
-    const mode = MODE_CONFIG[message.mode] ? message.mode : "classic",
-      room = {
-        code: code(),
-        mode: "classic",
-        creatorId: null,
-        randomRush: false,
-        teamScore: 0,
-        customWords: new Set(normalizeWords(message.customWords)),
-        players: new Map(),
-        status: "lobby",
-        round: null,
-        results: { view: "static", speed: "medium" },
-      };
+    if (client.roomCode && rooms.has(client.roomCode))
+      return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
+    const room = {
+      code: code(),
+      mode: "classic",
+      creatorId: null,
+      randomRush: false,
+      teamScore: 0,
+      customWords: new Set(normalizeWords(message.customWords)),
+      players: new Map(),
+      status: "lobby",
+      round: null,
+      results: { view: "static", speed: "medium" },
+      lastResult: null,
+      rushTimer: null,
+    };
     rooms.set(room.code, room);
     client.roomCode = room.code;
     room.creatorId = client.id;
-    client.name = String(message.name || client.name).slice(0, 20);
-    client.avatar = String(message.avatar || client.avatar || "🐈").slice(0, 4);
-    room.players.set(client.id, { ...client, ws, score: 0, connected: true });
+    client.name = cleanText(message.name, client.name);
+    client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
+    room.players.set(client.id, {
+      ...client,
+      ws,
+      score: room.mode === "coop" ? room.teamScore : 0,
+      words: [],
+      found: new Set(),
+    });
     send(ws, { type: "room_created", code: room.code });
     broadcast(room, state(room));
     return;
   }
   if (type === "join_room") {
+    if (client.roomCode && rooms.has(client.roomCode))
+      return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
     const room = rooms.get(String(message.code || "").toUpperCase());
     if (!room) return send(ws, { type: "error", code: "ROOM_NOT_FOUND" });
     if (room.players.size >= MAX_PLAYERS)
       return send(ws, { type: "error", code: "ROOM_FULL" });
+    if (room.players.has(client.id))
+      return send(ws, { type: "error", code: "ALREADY_JOINED" });
     client.roomCode = room.code;
-    client.name = String(message.name || client.name).slice(0, 20);
-    client.avatar = String(message.avatar || client.avatar || "🐈").slice(0, 4);
-    room.players.set(client.id, { ...client, ws, score: 0, connected: true });
+    client.name = cleanText(message.name, client.name);
+    client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
+    room.players.set(client.id, {
+      ...client,
+      ws,
+      score: room.mode === "coop" ? room.teamScore : 0,
+      words: [],
+      found: new Set(),
+    });
     send(ws, { type: "joined_room", code: room.code });
     broadcast(room, state(room));
     return;
@@ -186,8 +268,8 @@ function handle(ws, message) {
   const room = rooms.get(client.roomCode);
   if (!room) return send(ws, { type: "error", code: "NOT_IN_ROOM" });
   if (type === "update_identity") {
-    client.name = String(message.name || client.name).slice(0, 20);
-    client.avatar = String(message.avatar || client.avatar || "🐈").slice(0, 4);
+    client.name = cleanText(message.name, client.name);
+    client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
     const identityRoom = rooms.get(client.roomCode);
     if (identityRoom && identityRoom.players.has(client.id)) {
       const player = identityRoom.players.get(client.id);
@@ -201,11 +283,7 @@ function handle(ws, message) {
     const leavingRoom = rooms.get(client.roomCode);
     if (!leavingRoom) return send(ws, { type: "error", code: "NOT_IN_ROOM" });
     if (client.id === leavingRoom.creatorId) {
-      for (const member of leavingRoom.players.values()) {
-        member.roomCode = null;
-        send(member.ws, { type: "session_closed", reason: "creator_left" });
-      }
-      rooms.delete(leavingRoom.code);
+      closeRoom(leavingRoom, "creator_left");
     } else {
       leavingRoom.players.delete(client.id);
       client.roomCode = null;
@@ -228,22 +306,27 @@ function handle(ws, message) {
     return startRound(room, MODE_CONFIG[requested] ? requested : "classic");
   }
   if (type === "set_results_settings") {
-    if (room.status !== "finished") return send(ws, { type: "error", code: "RESULTS_NOT_READY" });
+    if (room.status !== "finished")
+      return send(ws, { type: "error", code: "RESULTS_NOT_READY" });
     const view = message.view === "reveal" ? "reveal" : "static";
-    const speed = ["slow", "medium", "fast"].includes(message.speed) ? message.speed : room.results.speed;
+    const speed = ["slow", "medium", "fast"].includes(message.speed)
+      ? message.speed
+      : room.results.speed;
     room.results = { view, speed };
+    if (room.lastResult) room.lastResult.results = room.results;
     return broadcast(room, { type: "results_settings", results: room.results });
   }
   if (type === "submit_word") {
     if (room.status !== "playing" || !room.round)
       return send(ws, { type: "error", code: "ROUND_NOT_PLAYING" });
     if (Date.now() >= room.round.endsAt) return finishRound(room, "timeout");
+    const player = room.players.get(client.id);
     const result = validateSubmission({
       ...message,
       board: room.round.board,
       size: room.round.size,
       mode: room.mode,
-      found: room.round.found,
+      found: room.mode === "coop" ? room.round.found : player.found,
       customWords: [...room.customWords],
     });
     if (!result.valid) {
@@ -258,7 +341,7 @@ function handle(ws, message) {
       return;
     }
     room.round.found.add(result.word);
-    const player = room.players.get(client.id);
+    player.found.add(result.word);
     if (room.mode === "coop") {
       room.teamScore += result.points;
       for (const teammate of room.players.values())
@@ -281,25 +364,39 @@ function handle(ws, message) {
     if (room.mode === "race" && player.score >= 500) finishRound(room, "race");
     return;
   }
-  if (type === "end_round") finishRound(room, "manual");
+  if (type === "end_round") {
+    if (client.id !== room.creatorId)
+      return send(ws, { type: "error", code: "CREATOR_ONLY" });
+    finishRound(room, "manual");
+  }
 }
 const server = http.createServer((req, res) => {
-  if ((req.url || "").split("?")[0] === "/dictionary.json") {
+  let pathname;
+  try {
+    pathname = decodeURIComponent(
+      new URL(req.url || "/", "http://localhost").pathname,
+    );
+  } catch {
+    res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+    return res.end("Bad request");
+  }
+  if (pathname === "/dictionary.json") {
     res.writeHead(200, {
-      "Content-Type": "application/json",
+      "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "public, max-age=86400",
     });
     return res.end(JSON.stringify(createLexicon("classic")));
   }
-  let requested = decodeURIComponent((req.url || "/").split("?")[0]);
+  let requested = pathname;
   if (requested === "/") requested = "/index.html";
-  const file = path.join(__dirname, requested);
+  const root = path.resolve(__dirname);
+  const file = path.resolve(root, "." + requested);
   if (
-    !file.startsWith(__dirname) ||
+    !file.startsWith(root + path.sep) ||
     !fs.existsSync(file) ||
     fs.statSync(file).isDirectory()
   ) {
-    res.writeHead(404);
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     return res.end("Not found");
   }
   const ext = path.extname(file),
@@ -308,9 +405,13 @@ const server = http.createServer((req, res) => {
       ".js": "text/javascript",
       ".css": "text/css",
       ".png": "image/png",
+      ".svg": "image/svg+xml",
     };
   res.writeHead(200, {
-    "Content-Type": types[ext] || "application/octet-stream",
+    "Content-Type":
+      (types[ext] || "application/octet-stream") +
+      (types[ext]?.startsWith("text/") ? "; charset=utf-8" : ""),
+    "X-Content-Type-Options": "nosniff",
   });
   fs.createReadStream(file).pipe(res);
 });
@@ -336,11 +437,17 @@ const leaderboard = new Leaderboard();
 function readJson(req) {
   return new Promise((resolve) => {
     let body = "";
+    let done = false;
     req.on("data", (chunk) => {
+      if (done) return;
       body += chunk;
-      if (body.length > 10000) req.destroy();
+      if (body.length > 10000) {
+        done = true;
+        resolve(null);
+      }
     });
     req.on("end", () => {
+      if (done) return;
       try {
         resolve(JSON.parse(body || "{}"));
       } catch {
@@ -396,7 +503,14 @@ async function leaderboardRequest(req, res) {
 const originalRequestHandler = server.listeners("request")[0];
 server.removeListener("request", originalRequestHandler);
 server.on("request", async (req, res) => {
-  if (res.writableEnded) return;
-  const handled = await leaderboardRequest(req, res);
-  if (!handled && !res.writableEnded) originalRequestHandler(req, res);
+  try {
+    if (res.writableEnded) return;
+    const handled = await leaderboardRequest(req, res);
+    if (!handled && !res.writableEnded) originalRequestHandler(req, res);
+  } catch {
+    if (!res.writableEnded) {
+      res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "INTERNAL_ERROR" }));
+    }
+  }
 });
