@@ -1,42 +1,40 @@
 (() => {
   const socketUrl = location.protocol === 'https:' ? 'wss://' + location.host : 'ws://' + location.host;
-  let socket;
   const guestId = localStorage.getItem('wordrush-guest-id') || (crypto.randomUUID ? crypto.randomUUID() : 'guest-' + Math.random().toString(36).slice(2));
   localStorage.setItem('wordrush-guest-id', guestId);
-  const identity = () => window.wordrushProfile ? window.wordrushProfile() : { name: 'Guest', avatar: '🐈' };function renderPlayers(players){const target=document.querySelector('#livePlayers');if(!target)return;target.innerHTML=(players||[]).map(player=>'<div class="live-player"><span class="player-avatar">'+(player.avatar||'🐈')+'</span><span class="player-name">'+player.name+'</span><b>'+player.score+'</b></div>').join('');}
-  const toast = message => { const el = document.querySelector('#toast'); if (!el) return; el.textContent = message; el.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 1800); };
+  let socket, sessionCode = '', creator = false;
+  const $ = selector => document.querySelector(selector);
+  const identity = () => window.wordrushProfile ? window.wordrushProfile() : { name: 'Guest', avatar: '🐈' };
+  const toast = message => { const el = $('#toast'); if (!el) return; el.textContent = message; el.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 1800); };
+  function renderPlayers(players) {
+    const target = $('#livePlayers'); if (!target) return;
+    target.innerHTML = (players || []).map(player => '<div class="live-player"><span class="player-avatar">' + (player.avatar || '🐈') + '</span><span class="player-name">' + player.name + '</span><b>' + player.score + '</b></div>').join('');
+    if (sessionCode) { $('#randomPreview').textContent = 'MULTIPLAYER'; $('#randomPreviewSub').textContent = (players || []).length + ' player' + ((players || []).length === 1 ? '' : 's') + ' in session'; $('#roomTitle').textContent = 'Multiplayer · ' + sessionCode; $('#roomSubtitle').textContent = (players || []).length + ' player' + ((players || []).length === 1 ? '' : 's') + ' connected'; $('#sessionPlayersText').textContent = (players || []).length + ' player' + ((players || []).length === 1 ? '' : 's') + ' connected'; }
+  }
+  function sessionDialog(open = true) { if (open) $('#multiplayerDialog').showModal(); else $('#multiplayerDialog').close(); }
+  function showLobby(code, isCreator) { sessionCode = code; window.wordrushSessionCode = code; creator = isCreator; $('#sessionChoices').hidden = true; $('#sessionLobby').hidden = false; $('#sessionCode').textContent = code; $('#sessionStart').hidden = !creator; $('#sessionType').disabled = !creator; sessionDialog(); }
+  function sendWhenReady(payload) { const send = () => socket.send(JSON.stringify(payload)); socket.readyState === 1 ? send() : socket.addEventListener('open', send, { once: true }); }
   function connect() {
     if (socket && socket.readyState <= 1) return socket;
-    socket = new WebSocket(socketUrl);
-    window.wordrushSocket = socket;
+    socket = new WebSocket(socketUrl); window.wordrushSocket = socket;
     socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'hello', guestId, ...identity() })));
     socket.addEventListener('message', event => {
       const message = JSON.parse(event.data);
-      if (message.type === 'room_created') { localStorage.setItem('wordrush-room', message.code); toast('Room ' + message.code + ' created'); }
-      if (message.type === 'joined_room') { localStorage.setItem('wordrush-room', message.code); toast('Joined room ' + message.code); }
-      if (message.type === 'round_started') { renderPlayers(message.players); window.wordrushOnlineRound?.(message.round, message.config, message.mode); toast('Round started · ' + message.players.length + ' players'); } if (message.type === 'room_state') renderPlayers(message.players); if (message.type === 'room_state' && message.round && message.status === 'playing') { window.wordrushOnlineRound?.(message.round, { label: message.mode.toUpperCase(), rule: 'Multiplayer round' }, message.mode); }
-      if (message.type === 'word_accepted') { if(message.playerId===guestId) window.wordrushRecordOnlineWord?.(message.word); renderPlayers(message.scores); document.querySelector('#gameScore').textContent = message.scores.find(score => score.id === message.playerId)?.score || document.querySelector('#gameScore').textContent; }
-      if (message.type === 'word_rejected') { if(message.playerId===guestId) window.wordrushRecordOnlineIncorrect?.(); toast(message.reason === 'path' ? 'Invalid path' : 'Word rejected'); }
-      if (message.type === 'round_finished') { window.wordrushOnlineFinish?.(message.ranking); toast('Round complete'); } 
+      if (message.type === 'room_created') { localStorage.setItem('wordrush-room', message.code); showLobby(message.code, true); toast('Session ' + message.code + ' created'); }
+      if (message.type === 'joined_room') { localStorage.setItem('wordrush-room', message.code); showLobby(message.code, false); toast('Joined session ' + message.code); }
+      if (message.type === 'room_state') { renderPlayers(message.players); if (message.code && !sessionCode) showLobby(message.code, message.creatorId === guestId); if (message.round && message.status === 'playing') window.wordrushOnlineRound?.(message.round, { label: message.mode.toUpperCase(), rule: 'Multiplayer round' }, message.mode); }
+      if (message.type === 'round_started') { renderPlayers(message.players); window.wordrushOnlineRound?.(message.round, message.config, message.mode); sessionDialog(false); toast('Round started · ' + message.players.length + ' players'); }
+      if (message.type === 'word_accepted') { if (message.playerId === guestId) window.wordrushRecordOnlineWord?.(message.word); renderPlayers(message.scores); const own = message.scores.find(score => score.id === message.playerId); if (own && $('#gameScore')) $('#gameScore').textContent = own.score; }
+      if (message.type === 'word_rejected') { if (message.playerId === guestId) window.wordrushRecordOnlineIncorrect?.(); toast(message.reason === 'path' ? 'Invalid path' : 'Word rejected'); }
+      if (message.type === 'round_finished') { window.wordrushOnlineFinish?.(message.ranking,{cooperative:message.cooperative,teamScore:message.teamScore,stats:message.stats}); toast(message.cooperative ? 'Team round complete' : 'Round complete'); }
       if (message.type === 'error') toast(message.code.replaceAll('_', ' ').toLowerCase());
     });
-    socket.addEventListener('close', () => { window.wordrushSocket = null; });
-    return socket;
+    socket.addEventListener('close', () => { window.wordrushSocket = null; }); return socket;
   }
-  document.querySelector('#createRoom')?.addEventListener('click', () => {
-    const ws = connect();
-    const requested = (prompt('Mode: classic, minimum, sudden, race, or dirty', 'classic') || 'classic').trim().toLowerCase(); const mode = ['classic','minimum','sudden','race','dirty'].includes(requested) ? requested : 'classic'; const send = () => ws.send(JSON.stringify({ type: 'create_room', mode, ...identity() }));
-    ws.readyState === 1 ? send() : ws.addEventListener('open', send, { once: true });
-  });
-  document.querySelector('#joinFeatured')?.addEventListener('click', () => {
-    const code = prompt('Enter room code')?.trim().toUpperCase();
-    if (!code) return;
-    const ws = connect();
-    const send = () => ws.send(JSON.stringify({ type: 'join_room', code, ...identity() }));
-    ws.readyState === 1 ? send() : ws.addEventListener('open', send, { once: true });
-  });
+  $('#multiplayerButton')?.addEventListener('click', () => { $('#sessionChoices').hidden = false; $('#sessionLobby').hidden = true; sessionDialog(); });
+  $('#sessionManage')?.addEventListener('click', () => sessionDialog());
+  $('#sessionCreate')?.addEventListener('click', () => { const ws = connect(); sendWhenReady({ type: 'create_room', ...identity() }); });
+  $('#sessionJoin')?.addEventListener('click', () => { const code = prompt('Enter the 5-letter session code')?.trim().toUpperCase(); if (!/^[A-Z]{5}$/.test(code || '')) return toast('Enter a 5-letter code'); socket = connect(); sendWhenReady({ type: 'join_room', code, ...identity() }); });
+  $('#sessionStart')?.addEventListener('click', () => { const mode = $('#sessionType').value; sendWhenReady({ type: 'start_game', mode }); });
+  $('#sessionLeave')?.addEventListener('click', () => { sessionCode = ''; window.wordrushSessionCode = ''; creator = false; $('#sessionChoices').hidden = false; $('#sessionLobby').hidden = true; $('#roomTitle').textContent = 'No active session'; $('#roomSubtitle').textContent = 'Create or join a multiplayer session'; sessionDialog(false); });
 })();
-
-
-
-

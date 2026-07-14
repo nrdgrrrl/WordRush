@@ -57,7 +57,7 @@ test('random rush starts by touch and the board stays inside the phone viewport'
   for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }]) {
     const page = await browser.newPage({ viewport });
     await page.goto(baseUrl);
-    await page.locator('#randomPlay').click();
+    await page.locator('#randomPanel').click();
     assert.equal(await page.locator('#gameScreen').evaluate(node => node.classList.contains('active')), true);
     const layout = await page.evaluate(() => {
       const grid = document.querySelector('.grid').getBoundingClientRect();
@@ -111,7 +111,7 @@ test('random rush rolls into a different game and can be stopped', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   await page.evaluate(() => { window.wordrushRushDelay = 50; });
-  await page.locator('#randomPlay').click();
+  await page.locator('#randomPanel').click();
   const firstMode = await page.locator('#gameMode').textContent();
   await page.locator('#endGame').click();
   await page.waitForTimeout(120);
@@ -133,6 +133,22 @@ test('the Random Rush preview panel starts the rush while reload only rerolls it
   assert.ok(after.length > 0);
   await page.locator('#randomPanel').click();
   assert.equal(await page.locator('#gameScreen').evaluate(node => node.classList.contains('active')), true);
+  await browser.close();
+});
+
+test('multiplayer creates a five-letter session and launches co-op', async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator('#multiplayerButton').click();
+  await page.locator('#sessionCreate').click();
+  await page.waitForFunction(() => /^[A-Z]{5}$/.test(document.querySelector('#sessionCode').textContent));
+  assert.equal(await page.locator('#sessionCode').textContent().then(code => code.length), 5);
+  await page.locator('#sessionType').selectOption('coop');
+  await page.locator('#sessionStart').click();
+  await page.waitForSelector('#gameScreen.active');
+  assert.equal(await page.locator('#gameMode').textContent(), 'CO-OP');
+  assert.equal(await page.locator('#livePlayers .live-player').count(), 1);
   await browser.close();
 });
 
