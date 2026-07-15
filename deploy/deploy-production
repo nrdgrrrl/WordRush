@@ -61,7 +61,9 @@ printf 'Checking revision %s (%s) locally...\n' "$SHORT_REVISION" "$REVISION"
   cd "$WORKTREE"
   npm ci --ignore-scripts
   npm run check
-  npm run test:all
+  # A broken browser/soak worker must fail closed before any upload or service
+  # action, rather than leaving an unattended deploy waiting forever.
+  timeout --preserve-status 5m npm run test:all
 )
 
 REMOTE_MARKER="$(ssh -o BatchMode=yes "$HOST" "test -r '$APP/.wordrush-release' && head -n1 '$APP/.wordrush-release' || true")"
