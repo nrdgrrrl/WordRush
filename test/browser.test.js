@@ -645,6 +645,66 @@ test("a room deep link joins through the normal multiplayer flow", async () => {
   await browser.close();
 });
 
+test("two-player lobby synchronizes roles and guest exit leaves the host room open", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const guest = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await host.goto(baseUrl);
+  await host.locator("#sessionManage").click();
+  await host.locator("#sessionCreate").click();
+  await host.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  const code = await host.locator("#sessionCode").textContent();
+
+  await guest.goto(baseUrl + "/?join=" + code);
+  await Promise.all([
+    host.waitForFunction(() =>
+      document.querySelectorAll("#lobbyPlayers .live-player").length === 2,
+    ),
+    guest.waitForFunction(() =>
+      document.querySelectorAll("#lobbyPlayers .live-player").length === 2,
+    ),
+  ]);
+
+  assert.equal(await host.locator("#sessionHostControls").isVisible(), true);
+  assert.equal(await guest.locator("#sessionHostControls").isHidden(), true);
+  assert.equal(await guest.locator("#sessionStart").isVisible(), false);
+  assert.match(
+    await guest.locator("#lobbyStatus").textContent(),
+    /waiting for the host/i,
+  );
+  assert.equal(await host.locator("#lobbyPlayers .lobby-player-role").count(), 1);
+  assert.equal(await guest.locator("#lobbyPlayers .lobby-player-role").count(), 1);
+  assert.equal(await guest.locator("#lobbyPlayers .lobby-player-you").count(), 1);
+
+  await guest.locator("#sessionLeave").click();
+  await Promise.all([
+    guest.waitForFunction(
+      () => document.querySelector("#multiplayerBanner").hidden,
+    ),
+    host.waitForFunction(() =>
+      document.querySelectorAll("#lobbyPlayers .live-player").length === 1,
+    ),
+  ]);
+  assert.equal(await host.locator("#multiplayerBanner").isHidden(), false);
+  assert.equal(await host.locator("#sessionCode").textContent(), code);
+  assert.equal(await host.locator("#sessionHostControls").isVisible(), true);
+  assert.equal(
+    await guest
+      .locator("#homeScreen")
+      .evaluate((node) => node.classList.contains("active")),
+    true,
+  );
+
+  host.once("dialog", (dialog) => dialog.accept());
+  await host.locator("#sessionLeave").click();
+  await host.waitForFunction(
+    () => document.querySelector("#multiplayerBanner").hidden,
+  );
+  await browser.close();
+});
+
 test("multiplayer banner disappears when its connection is lost", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });

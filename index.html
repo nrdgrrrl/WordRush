@@ -282,20 +282,41 @@
             </button>
           </div>
           <div id="sessionLobby" class="waiting-lobby" hidden>
+            <div class="lobby-sparkles" aria-hidden="true">✦ 🎉 ✦</div>
             <p class="session-code-label">YOUR PARTY LOBBY</p>
             <strong class="session-code" id="sessionCode">-----</strong>
-            <p id="sessionPlayersText">1 player connected</p><p class="lobby-status" id="lobbyStatus">Waiting for the host to start</p>
-            <div class="lobby-players" id="lobbyPlayers" aria-label="Players in this lobby"></div>
-            <label for="sessionType">Game type (creator only)</label
-            ><select id="sessionType">
-              <option value="classic">Classic</option>
-              <option value="minimum">Minimum word</option>
-              <option value="sudden">Sudden death</option>
-              <option value="race">Race mode</option>
-              <option value="dirty">Dirty mode</option>
-              <option value="coop">Co-op</option>
-              <option value="random">Random Rush</option></select
-            ><div class="cast-control" id="castControl" hidden>
+            <p class="lobby-share-hint">Share this code with your players</p>
+            <p id="sessionPlayersText">1 player connected</p>
+            <p class="lobby-status" id="lobbyStatus" role="status" aria-live="polite">
+              Waiting for the host to start
+            </p>
+            <div
+              class="lobby-players"
+              id="lobbyPlayers"
+              role="list"
+              aria-label="Players in this lobby"
+              aria-live="polite"
+            ></div>
+            <div class="lobby-host-controls" id="sessionHostControls" hidden>
+              <label for="sessionType">Choose the first game</label>
+              <select id="sessionType">
+                <option value="classic">Classic</option>
+                <option value="minimum">Minimum word</option>
+                <option value="sudden">Sudden death</option>
+                <option value="race">Race mode</option>
+                <option value="dirty">Dirty mode</option>
+                <option value="coop">Co-op</option>
+                <option value="random">Random Rush</option>
+              </select>
+              <button
+                type="button"
+                class="primary dialog-action"
+                id="sessionStart"
+              >
+                Start game →
+              </button>
+            </div>
+            <div class="cast-control" id="castControl" hidden>
               <div>
                 <small>TV COMPANION</small>
                 <strong id="castStatus" aria-live="polite">Checking Cast support…</strong>
@@ -310,13 +331,7 @@
                 Cast to TV
               </button>
             </div>
-            ><button
-              type="button"
-              class="primary dialog-action"
-              id="sessionStart"
-            >
-              Start game →</button
-            ><button
+            <button
               type="button"
               class="secondary dialog-action"
               id="sessionLeave"

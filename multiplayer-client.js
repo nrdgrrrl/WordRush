@@ -14,6 +14,7 @@
     sessionCode = "",
     endedSessionCode = "",
     creator = false,
+    creatorId = "",
     roomStatus = "";
   let displayTokenRequest = null;
   const $ = (selector) => document.querySelector(selector);
@@ -36,6 +37,7 @@
     sessionCode = "";
     window.wordrushSessionCode = "";
     creator = false;
+    creatorId = "";
     roomStatus = "";
     localStorage.removeItem("wordrush-room");
     $("#multiplayerBanner").hidden = true;
@@ -46,29 +48,63 @@
     $("#roomSubtitle").textContent = "Create or join a multiplayer session";
     $("#sessionPlayersText").textContent = "1 player connected";
     $("#livePlayers").replaceChildren();
+    $("#lobbyPlayers").replaceChildren();
+    $("#sessionHostControls").hidden = true;
+    $("#sessionType").disabled = false;
     window.dispatchEvent(new CustomEvent("wordrush:room-change"));
   }
+  function playerIdentity(player) {
+    const fragment = document.createDocumentFragment();
+    const avatar = document.createElement("span");
+    avatar.className = "player-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.textContent = player.avatar || "🐈";
+    const name = document.createElement("span");
+    name.className = "player-name";
+    name.textContent = player.name;
+    fragment.append(avatar, name);
+    return fragment;
+  }
   function renderPlayers(players) {
-    const renderList = (target) => {
-      if (!target) return;
-      target.replaceChildren();
-      (players || []).forEach((player) => {
+    const list = players || [];
+    const livePlayers = $("#livePlayers");
+    livePlayers?.replaceChildren();
+    list.forEach((player) => {
+      if (livePlayers) {
+        const row = document.createElement("div");
+        row.className = "live-player";
+        const score = document.createElement("b");
+        score.textContent = Number(player.score || 0).toLocaleString();
+        row.append(playerIdentity(player), score);
+        livePlayers.append(row);
+      }
+    });
+    const lobbyPlayers = $("#lobbyPlayers");
+    lobbyPlayers?.replaceChildren();
+    list.forEach((player) => {
+      if (!lobbyPlayers) return;
       const row = document.createElement("div");
       row.className = "live-player";
-      const avatar = document.createElement("span");
-      avatar.className = "player-avatar";
-      avatar.textContent = player.avatar || "🐈";
-      const name = document.createElement("span");
-      name.className = "player-name";
-      name.textContent = player.name;
-      const score = document.createElement("b");
-      score.textContent = Number(player.score || 0).toLocaleString();
-      row.append(avatar, name, score);
-      target.append(row);
-      });
-    };
-    renderList($("#livePlayers"));
-    renderList($("#lobbyPlayers"));
+      row.setAttribute("role", "listitem");
+      if (player.id === creatorId) row.classList.add("is-host");
+      row.append(playerIdentity(player));
+      const badges = document.createElement("span");
+      badges.className = "lobby-player-badges";
+      if (player.id === guestId) {
+        const you = document.createElement("span");
+        you.className = "lobby-player-you";
+        you.textContent = "You";
+        badges.append(you);
+      }
+      if (player.id === creatorId) {
+        const host = document.createElement("span");
+        host.className = "lobby-player-role";
+        host.textContent = "♛ Host";
+        badges.append(host);
+      }
+      row.append(badges);
+      lobbyPlayers.append(row);
+    });
     if (sessionCode) {
       $("#multiplayerBanner").hidden = false;
       $("#multiplayerBannerText").textContent =
@@ -89,6 +125,15 @@
         " connected";
     }
   }
+  function updateLobbyControls() {
+    creator = creatorId === guestId;
+    $("#sessionHostControls").hidden = !creator;
+    $("#sessionType").disabled = !creator;
+    $("#lobbyStatus").textContent = creator
+      ? "You’re the host — pick a game and start when everybody’s ready!"
+      : "Waiting for the host to start. Get your fingers ready!";
+    $("#endGame").hidden = !creator;
+  }
   function sessionDialog(open = true) {
     if (open) $("#multiplayerDialog").showModal();
     else $("#multiplayerDialog").close();
@@ -98,16 +143,12 @@
     endedSessionCode = "";
     window.wordrushSessionCode = code;
     creator = isCreator;
+    if (isCreator) creatorId = guestId;
     $("#multiplayerBanner").hidden = false;
     $("#sessionChoices").hidden = true;
     $("#sessionLobby").hidden = false;
     $("#sessionCode").textContent = code;
-    $("#sessionStart").hidden = !creator;
-    $("#sessionType").disabled = !creator;
-    $("#lobbyStatus").textContent = isCreator
-      ? "You’re the host — choose a game and start when everyone’s ready."
-      : "Waiting for the host to start. Get your fingers ready!";
-    $("#endGame").hidden = !creator;
+    updateLobbyControls();
     window.dispatchEvent(new CustomEvent("wordrush:room-change"));
     sessionDialog();
   }
@@ -155,11 +196,12 @@
       }
       if (message.type === "room_state" && message.code !== endedSessionCode) {
         roomStatus = message.status;
-        creator = message.creatorId === guestId;
+        creatorId = message.creatorId;
+        updateLobbyControls();
         renderPlayers(message.players);
         if (message.code && !sessionCode)
           showLobby(message.code, message.creatorId === guestId);
-        if (message.round && message.status === "playing")
+        if (message.round && message.status === "playing") {
           window.wordrushOnlineRound?.(
             message.round,
             message.config || {
@@ -168,6 +210,8 @@
             },
             message.mode,
           );
+          sessionDialog(false);
+        }
         if (message.status === "finished" && message.results)
           window.wordrushResultsSettings?.(message.results);
         if (
@@ -183,6 +227,8 @@
       }
       if (message.type === "round_started") {
         roomStatus = "playing";
+        creatorId = message.creatorId || creatorId;
+        updateLobbyControls();
         renderPlayers(message.players);
         window.wordrushOnlineRound?.(
           message.round,
@@ -307,15 +353,17 @@
     const mode = $("#sessionType").value;
     sendWhenReady({ type: "start_game", mode });
   });
-  $("#sessionLeave")?.addEventListener("click", () => leaveSession());
-  $("#exitMultiplayer")?.addEventListener("click", () => {
+  function requestLeave() {
     if (
-      confirm(
-        creator
-          ? "Exit multiplayer mode? This will end the session for everyone."
-          : "Exit multiplayer mode?",
-      )
+      creator &&
+      !confirm("Close this multiplayer session for everyone?")
     )
+      return;
+    leaveSession();
+  }
+  $("#sessionLeave")?.addEventListener("click", requestLeave);
+  $("#exitMultiplayer")?.addEventListener("click", () => {
+    if (!creator || confirm("Close this multiplayer session for everyone?"))
       leaveSession();
   });
   function leaveSession() {
