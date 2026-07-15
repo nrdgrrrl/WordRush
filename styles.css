@@ -458,42 +458,6 @@ nav small {
   font-size: 25px;
   color: var(--coral);
 }
-.mode-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 9px;
-  margin-bottom: 30px;
-}
-.mode-grid button {
-  text-align: left;
-  border: 1px solid var(--line);
-  padding: 13px;
-  background: #efede7;
-  min-height: 92px;
-}
-.mode-grid button:hover {
-  border-color: var(--coral);
-  transform: translateY(-2px);
-}
-.mode-grid b {
-  display: block;
-  color: var(--coral);
-  font-size: 21px;
-  margin-bottom: 10px;
-}
-.mode-grid strong,
-.mode-grid small {
-  display: block;
-}
-.mode-grid strong {
-  font-size: 12px;
-}
-.mode-grid small {
-  font-size: 10px;
-  color: var(--muted);
-  margin-top: 4px;
-}
-
 .random-start {
   font: 700 11px monospace;
   color: var(--ink) !important;
@@ -571,6 +535,8 @@ nav small {
 .mode-dirty { --mode-start: #e9b7ff; --mode-end: #d77bc7; --mode-edge: #f8dbff; --mode-shadow: #985184; }
 .mode-race { --mode-start: #ffb0bc; --mode-end: #ff6f81; --mode-edge: #ffe0e5; --mode-shadow: #bd4b60; }
 .mode-minimum { --mode-start: #b7f0d0; --mode-end: #67d5cf; --mode-edge: #ddfff1; --mode-shadow: #459c9a; }
+.mode-custom { --mode-start: #c3c8ff; --mode-end: #8e93f5; --mode-edge: #ebecff; --mode-shadow: #6368b9; }
+.mode-dictionary { --mode-start: #ffd3a8; --mode-end: #f7a568; --mode-edge: #ffebd6; --mode-shadow: #bd7140; }
 .mode-random #reroll {
   width: 40px;
   height: 40px;
@@ -618,8 +584,7 @@ html[data-theme="dark"] .secondary {
   border-color: #555b53;
 }
 html[data-theme="dark"] .room,
-html[data-theme="dark"] .chips article,
-html[data-theme="dark"] .mode-grid button {
+html[data-theme="dark"] .chips article {
   background: #242823;
   border-color: #3b4239;
 }
@@ -672,8 +637,7 @@ html[data-theme="dark"] nav {
     border-color: #555b53;
   }
   html:not([data-theme="light"]) .room,
-  html:not([data-theme="light"]) .chips article,
-  html:not([data-theme="light"]) .mode-grid button {
+  html:not([data-theme="light"]) .chips article {
     background: #242823;
     border-color: #3b4239;
   }
@@ -1012,23 +976,6 @@ html[data-theme="dark"] .primary {
   }
 }
 
-#multiplayerButton {
-  background: #f5f3ee;
-  color: #1d1d1b;
-  border: 1px solid #c9c7bf;
-}
-html[data-theme="dark"] #multiplayerButton {
-  background: #111311;
-  color: #f3f1ea;
-  border-color: #555b53;
-}
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) #multiplayerButton {
-    background: #111311;
-    color: #f3f1ea;
-    border-color: #555b53;
-  }
-}
 .tile {
   transition:
     background-color 0.2s ease,

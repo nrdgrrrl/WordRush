@@ -115,14 +115,14 @@ test(
       }),
     );
     const host = pages[0];
-    await host.locator("#multiplayerButton").click();
+    await host.locator("#sessionManage").click();
     await host.locator("#sessionCreate").click();
     await host.waitForFunction(() =>
       /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
     );
     const code = await host.locator("#sessionCode").textContent();
     for (const guest of pages.slice(1)) {
-      await guest.locator("#multiplayerButton").click();
+      await guest.locator("#sessionManage").click();
       guest.once("dialog", (dialog) => dialog.accept(code));
       await guest.locator("#sessionJoin").click();
       await guest.waitForFunction(
@@ -226,13 +226,13 @@ test("refreshing the creator closes the room for connected guests", async () => 
   const host = await browser.newPage();
   const guest = await browser.newPage();
   await Promise.all([host.goto(baseUrl), guest.goto(baseUrl)]);
-  await host.locator("#multiplayerButton").click();
+  await host.locator("#sessionManage").click();
   await host.locator("#sessionCreate").click();
   await host.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
   );
   const code = await host.locator("#sessionCode").textContent();
-  await guest.locator("#multiplayerButton").click();
+  await guest.locator("#sessionManage").click();
   guest.once("dialog", (dialog) => dialog.accept(code));
   await guest.locator("#sessionJoin").click();
   await guest.waitForFunction(() =>

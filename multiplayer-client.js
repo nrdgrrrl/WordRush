@@ -280,11 +280,6 @@
     });
     return true;
   };
-  $("#multiplayerButton")?.addEventListener("click", () => {
-    $("#sessionChoices").hidden = false;
-    $("#sessionLobby").hidden = true;
-    sessionDialog();
-  });
   $("#sessionManage")?.addEventListener("click", () => sessionDialog());
   $("#sessionCreate")?.addEventListener("click", () => {
     const ws = connect();

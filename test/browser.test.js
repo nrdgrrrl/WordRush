@@ -182,32 +182,8 @@ test("browser can start, play, persist stats, and toggle dark mode", async () =>
     /^\d+\.\d$/,
   );
   await page.locator('[data-screen="homeScreen"]').first().click();
-  assert.equal(
-    await page
-      .locator("#multiplayerButton")
-      .evaluate((node) => getComputedStyle(node).backgroundColor),
-    "rgb(245, 243, 238)",
-  );
-  assert.equal(
-    await page
-      .locator("#multiplayerButton")
-      .evaluate((node) => getComputedStyle(node).color),
-    "rgb(29, 29, 27)",
-  );
   await page.locator("#themeToggle").click();
   assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
-  assert.equal(
-    await page
-      .locator("#multiplayerButton")
-      .evaluate((node) => getComputedStyle(node).backgroundColor),
-    "rgb(17, 19, 17)",
-  );
-  assert.equal(
-    await page
-      .locator("#multiplayerButton")
-      .evaluate((node) => getComputedStyle(node).color),
-    "rgb(243, 241, 234)",
-  );
   assert.deepEqual(errors, []);
   await browser.close();
 });
@@ -521,7 +497,7 @@ test("a pointer-traced Party Mode multiplayer word is accepted", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator("#multiplayerButton").click();
+  await page.locator("#sessionManage").click();
   await page.locator("#sessionCreate").click();
   await page.waitForFunction(() => /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent));
   await page.locator('#multiplayerDialog button[value="cancel"]').click();
@@ -594,7 +570,7 @@ test("multiplayer creates a five-letter session and launches co-op", async () =>
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator("#multiplayerButton").click();
+  await page.locator("#sessionManage").click();
   await page.locator("#sessionCreate").click();
   await page.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
@@ -633,7 +609,7 @@ test("Cast control stays disabled on an insecure origin", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator("#multiplayerButton").click();
+  await page.locator("#sessionManage").click();
   await page.locator("#sessionCreate").click();
   await page.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
@@ -651,7 +627,7 @@ test("a room deep link joins through the normal multiplayer flow", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await host.goto(baseUrl);
-  await host.locator("#multiplayerButton").click();
+  await host.locator("#sessionManage").click();
   await host.locator("#sessionCreate").click();
   await host.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
@@ -673,7 +649,7 @@ test("multiplayer banner disappears when its connection is lost", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator("#multiplayerButton").click();
+  await page.locator("#sessionManage").click();
   assert.equal(
     await page
       .locator("#multiplayerBanner")
@@ -702,7 +678,7 @@ test("banner X exits a newly created session from the landing page", async () =>
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator("#multiplayerButton").click();
+  await page.locator("#sessionManage").click();
   assert.equal(
     await page
       .locator("#multiplayerBanner")
