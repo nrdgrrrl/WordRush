@@ -59,27 +59,42 @@ configuration change, always run `sudo apache2ctl configtest` before
 
 ## Deploy and rollback
 
+Production is currently deployed manually to the RackNerd host, available as
+the `racknerd` SSH target. The live directory is an unpacked release rather
+than a Git checkout, so deploy from a clean, committed local checkout. Do not
+run broad commands against `/home/victoria/sites`—that parent contains other
+sites.
+
 Before updating the app, create a dated sibling backup such as
 `/home/victoria/sites/rush/wordrush.rollback-YYYYMMDDHHMMSS`; keep at least the
-most recent known-good backup. Install production dependencies, then restart
-only the Wordrush service:
+most recent known-good backup. Sync only the Wordrush source, preserving the
+server's runtime data and its external `/etc/wordrush/rush.env` configuration:
 
 ```sh
-cd /home/victoria/sites/rush/wordrush
-PATH=/opt/node/bin:$PATH npm ci --omit=dev
-sudo systemctl restart wordrush
-sudo systemctl is-active wordrush
+ssh racknerd 'set -eu; stamp=$(date +%Y%m%d%H%M%S); cp -a /home/victoria/sites/rush/wordrush /home/victoria/sites/rush/wordrush.rollback-$stamp; echo "Backup: /home/victoria/sites/rush/wordrush.rollback-$stamp"'
+rsync -a \
+  --exclude='.git/' \
+  --exclude='.env' \
+  --exclude='node_modules/' \
+  --exclude='data/' \
+  --exclude='*.log' \
+  ./ racknerd:/home/victoria/sites/rush/wordrush/
 ```
 
-If the release fails, stop the service, restore the prior backup into the
-`wordrush` directory, reinstall its production dependencies if needed, and
-restart:
+Install production dependencies, then restart only the Wordrush service:
 
 ```sh
-sudo systemctl stop wordrush
-# Restore the selected known-good wordrush.rollback-<timestamp> directory.
-sudo systemctl start wordrush
-sudo systemctl is-active wordrush
+ssh racknerd 'set -eu; cd /home/victoria/sites/rush/wordrush; PATH=/opt/node/bin:$PATH npm ci --omit=dev; sudo systemctl restart wordrush; sudo systemctl is-active --quiet wordrush'
+curl -I https://rush.nrdgrrrl.com/
+```
+
+Do not use `rsync --delete` for this manual deployment: the host retains
+runtime data in the release directory. If the release fails, stop only the
+Wordrush service, move the failed release aside, restore the selected backup,
+and restart:
+
+```sh
+ssh racknerd 'set -eu; sudo systemctl stop wordrush; mv /home/victoria/sites/rush/wordrush /home/victoria/sites/rush/wordrush.failed-$(date +%Y%m%d%H%M%S); mv /home/victoria/sites/rush/wordrush.rollback-<timestamp> /home/victoria/sites/rush/wordrush; sudo systemctl start wordrush; sudo systemctl is-active --quiet wordrush'
 ```
 
 Verify the service, HTTPS redirect, and intended authenticated browser flow
