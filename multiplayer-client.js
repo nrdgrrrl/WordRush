@@ -1,8 +1,8 @@
 (() => {
   const socketUrl =
-    location.protocol === "https:"
+    (location.protocol === "https:"
       ? "wss://" + location.host
-      : "ws://" + location.host;
+      : "ws://" + location.host) + "/ws";
   const guestId =
     localStorage.getItem("wordrush-guest-id") ||
     (crypto.randomUUID
@@ -15,6 +15,7 @@
     endedSessionCode = "",
     creator = false,
     roomStatus = "";
+  let displayTokenRequest = null;
   const $ = (selector) => document.querySelector(selector);
   const goHome = () =>
     document.querySelector('[data-screen="homeScreen"]')?.click();
@@ -45,12 +46,13 @@
     $("#roomSubtitle").textContent = "Create or join a multiplayer session";
     $("#sessionPlayersText").textContent = "1 player connected";
     $("#livePlayers").replaceChildren();
+    window.dispatchEvent(new CustomEvent("wordrush:room-change"));
   }
   function renderPlayers(players) {
-    const target = $("#livePlayers");
-    if (!target) return;
-    target.replaceChildren();
-    (players || []).forEach((player) => {
+    const renderList = (target) => {
+      if (!target) return;
+      target.replaceChildren();
+      (players || []).forEach((player) => {
       const row = document.createElement("div");
       row.className = "live-player";
       const avatar = document.createElement("span");
@@ -63,7 +65,10 @@
       score.textContent = Number(player.score || 0).toLocaleString();
       row.append(avatar, name, score);
       target.append(row);
-    });
+      });
+    };
+    renderList($("#livePlayers"));
+    renderList($("#lobbyPlayers"));
     if (sessionCode) {
       $("#multiplayerBanner").hidden = false;
       $("#multiplayerBannerText").textContent =
@@ -99,7 +104,11 @@
     $("#sessionCode").textContent = code;
     $("#sessionStart").hidden = !creator;
     $("#sessionType").disabled = !creator;
+    $("#lobbyStatus").textContent = isCreator
+      ? "You’re the host — choose a game and start when everyone’s ready."
+      : "Waiting for the host to start. Get your fingers ready!";
     $("#endGame").hidden = !creator;
+    window.dispatchEvent(new CustomEvent("wordrush:room-change"));
     sessionDialog();
   }
   function sendWhenReady(payload) {
@@ -193,7 +202,19 @@
       if (message.type === "word_rejected") {
         if (message.playerId === guestId)
           window.wordrushRecordOnlineIncorrect?.();
-        toast(message.reason === "path" ? "Invalid path" : "Word rejected");
+        const rejection = {
+          minimum: `Need at least ${message.minimum || 3} letters`,
+          path: "Tiles must connect in order",
+          duplicate: "Already found that word",
+          dictionary: `${message.word || "That word"} is not in the Wordrush dictionary`,
+        };
+        toast(rejection[message.reason] || "Word rejected");
+      }
+      if (message.type === "display_token" && displayTokenRequest) {
+        const request = displayTokenRequest;
+        displayTokenRequest = null;
+        clearTimeout(request.timer);
+        request.resolve(message);
       }
       if (message.type === "round_finished") {
         roomStatus = "finished";
@@ -208,6 +229,13 @@
       if (message.type === "results_settings")
         window.wordrushResultsSettings?.(message.results);
       if (message.type === "error")
+        if (displayTokenRequest) {
+          const request = displayTokenRequest;
+          displayTokenRequest = null;
+          clearTimeout(request.timer);
+          request.reject(new Error(message.code || "DISPLAY_TOKEN_FAILED"));
+        }
+      if (message.type === "error")
         toast(message.code.replaceAll("_", " ").toLowerCase());
     });
     socket.addEventListener("close", () => {
@@ -220,6 +248,20 @@
   window.wordrushIdentityChanged = () => {
     if (socket?.readyState === 1 && sessionCode)
       socket.send(JSON.stringify({ type: "update_identity", ...identity() }));
+  };
+  window.wordrushRequestDisplayToken = () => {
+    if (!sessionCode || !socket || socket.readyState !== WebSocket.OPEN)
+      return Promise.reject(new Error("NO_ACTIVE_ROOM"));
+    if (displayTokenRequest) return Promise.reject(new Error("DISPLAY_TOKEN_PENDING"));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (displayTokenRequest?.timer !== timer) return;
+        displayTokenRequest = null;
+        reject(new Error("DISPLAY_TOKEN_TIMEOUT"));
+      }, 10_000);
+      displayTokenRequest = { resolve, reject, timer };
+      socket.send(JSON.stringify({ type: "create_display_token" }));
+    });
   };
   window.wordrushStartSessionGame = ({ mode, config, randomRush } = {}) => {
     if (!sessionCode) return false;
@@ -256,6 +298,16 @@
     socket = connect();
     sendWhenReady({ type: "join_room", code, ...identity() });
   });
+  const joinFromLink = new URLSearchParams(location.search).get("join")
+    ?.trim()
+    .toUpperCase();
+  if (joinFromLink) {
+    history.replaceState({}, "", location.pathname + location.hash);
+    if (/^[A-Z]{5}$/.test(joinFromLink)) {
+      socket = connect();
+      sendWhenReady({ type: "join_room", code: joinFromLink, ...identity() });
+    } else toast("That room code is invalid");
+  }
   $("#sessionStart")?.addEventListener("click", () => {
     const mode = $("#sessionType").value;
     sendWhenReady({ type: "start_game", mode });

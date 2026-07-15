@@ -6,11 +6,15 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/core.test.js test/server.test.js test/leaderboard.test.js",
+    "test": "node --test test/auth.test.js test/core.test.js test/server.test.js test/leaderboard.test.js",
     "test:browser": "node --test test/browser.test.js test/multiplayer-soak.test.js",
     "test:all": "npm test && npm run test:browser",
     "check": "node --check game-config.js && node --check app.js && node --check server.js && node --check multiplayer-client.js && node --check results.js",
     "headless": "node headless-client.js"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "playwright": "^1.61.1"

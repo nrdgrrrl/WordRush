@@ -4,12 +4,14 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const WebSocket = require("ws");
+const { COMMON_WORDS, ADULT_WORDS } = require("../game-config");
+const { neighbors } = require("../game-core");
 process.env.RANDOM_RUSH_DELAY = "50";
 process.env.WORDRUSH_LEADERBOARD_FILE = path.join(
   fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-server-")),
   "leaderboard.json",
 );
-const { server, rooms } = require("../server");
+const { server, rooms, displayTokens } = require("../server");
 function message(ws, type, payload = {}) {
   ws.send(JSON.stringify({ type, ...payload }));
 }
@@ -60,6 +62,32 @@ function client(name) {
     });
   });
 }
+function displayClient() {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(
+      "ws://127.0.0.1:" + server.address().port + "/display",
+    );
+    ws.once("error", reject);
+    ws.once("open", () => resolve(ws));
+  });
+}
+function wordPath(board, size, word) {
+  function walk(index, offset, used, path) {
+    if (offset === word.length) return path;
+    for (const next of neighbors(index, size)) {
+      if (used.has(next) || board[next] !== word[offset]) continue;
+      const result = walk(next, offset + 1, new Set([...used, next]), [...path, next]);
+      if (result) return result;
+    }
+    return null;
+  }
+  for (let index = 0; index < board.length; index++)
+    if (board[index] === word[0]) {
+      const result = walk(index, 1, new Set([index]), [index]);
+      if (result) return result;
+    }
+  return null;
+}
 test.before(
   () => new Promise((resolve) => server.listen(0, "127.0.0.1", resolve)),
 );
@@ -68,7 +96,9 @@ test.after(
     new Promise((resolve) => {
       for (const room of rooms.values())
         room.players.forEach((player) => player.ws.close());
+      for (const room of rooms.values()) room.displays.forEach((ws) => ws.close());
       rooms.clear();
+      displayTokens.clear();
       server.close(resolve);
     }),
 );
@@ -115,6 +145,113 @@ test("rejects the eleventh player", async () => {
   players.forEach((ws) => ws.close());
 });
 
+test("display tokens grant one room-scoped, read-only connection", async () => {
+  const host = await client("display-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room", { name: "Display Host" });
+  const created = await createdPromise;
+  await lobbyPromise;
+
+  const tokenPromise = next(host, "display_token");
+  message(host, "create_display_token");
+  const token = await tokenPromise;
+  assert.equal(typeof token.token, "string");
+  assert.ok(token.expiresAt > Date.now());
+
+  const display = await displayClient();
+  const displayState = next(display, "display_state");
+  message(display, "display_hello", { token: token.token });
+  const initial = await displayState;
+  assert.equal(initial.event, "display_connected");
+  assert.equal(initial.state.code, created.code);
+  assert.equal(initial.state.players.length, 1);
+  assert.equal("creatorId" in initial.state, false);
+  assert.equal("id" in initial.state.players[0], false);
+  assert.equal(rooms.get(created.code).players.size, 1);
+  assert.equal(rooms.get(created.code).displays.size, 1);
+
+  const denied = next(display, "error");
+  message(display, "start_game", { mode: "classic" });
+  assert.equal((await denied).code, "DISPLAY_READ_ONLY");
+  assert.equal(rooms.get(created.code).status, "lobby");
+
+  const roundState = nextMatching(
+    display,
+    "display_state",
+    (update) => update.event === "round_started",
+  );
+  message(host, "start_game", { mode: "classic" });
+  assert.equal((await roundState).state.status, "playing");
+
+  const closed = next(display, "session_closed");
+  message(host, "leave_session");
+  assert.equal((await closed).code, created.code);
+  host.close();
+  display.close();
+});
+
+test("display tokens reject invalid, expired, replayed, and cross-room access", async () => {
+  const host = await client("token-host");
+  const otherHost = await client("other-token-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const otherCreatedPromise = next(otherHost, "room_created");
+  const otherLobbyPromise = next(otherHost, "room_state");
+  message(otherHost, "create_room");
+  const otherCreated = await otherCreatedPromise;
+  await otherLobbyPromise;
+
+  const invalid = await displayClient();
+  const invalidError = next(invalid, "error");
+  message(invalid, "display_hello", { token: "not-a-token" });
+  assert.equal((await invalidError).code, "INVALID_DISPLAY_TOKEN");
+  invalid.close();
+
+  const expiredTokenPromise = next(host, "display_token");
+  message(host, "create_display_token");
+  const expiredToken = await expiredTokenPromise;
+  displayTokens.get(expiredToken.token).expiresAt = Date.now() - 1;
+  const expired = await displayClient();
+  const expiredError = next(expired, "error");
+  message(expired, "display_hello", { token: expiredToken.token });
+  assert.equal((await expiredError).code, "INVALID_DISPLAY_TOKEN");
+  expired.close();
+
+  const firstTokenPromise = next(host, "display_token");
+  message(host, "create_display_token");
+  const firstToken = await firstTokenPromise;
+  const secondTokenPromise = next(otherHost, "display_token");
+  message(otherHost, "create_display_token");
+  const secondToken = await secondTokenPromise;
+  const display = await displayClient();
+  const initial = next(display, "display_state");
+  message(display, "display_hello", { token: firstToken.token });
+  assert.equal((await initial).state.code, created.code);
+
+  const reused = await displayClient();
+  const reusedError = next(reused, "error");
+  message(reused, "display_hello", { token: firstToken.token });
+  assert.equal((await reusedError).code, "INVALID_DISPLAY_TOKEN");
+  reused.close();
+
+  const crossRoom = next(display, "error");
+  message(display, "display_hello", { token: secondToken.token });
+  assert.equal((await crossRoom).code, "DISPLAY_ALREADY_AUTHENTICATED");
+  assert.equal(displaysForRoom(created.code), 1);
+  assert.equal(displaysForRoom(otherCreated.code), 0);
+  host.close();
+  otherHost.close();
+  display.close();
+});
+
+function displaysForRoom(code) {
+  return rooms.get(code)?.displays.size || 0;
+}
+
 test("authoritatively accepts a valid path and rejects an invalid word", async () => {
   const ws = await client("scorer");
   const createdPromise = next(ws, "room_created");
@@ -138,6 +275,43 @@ test("authoritatively accepts a valid path and rejects an invalid word", async (
   const result = await next(ws, "word_rejected");
   assert.equal(result.type, "word_rejected");
   assert.equal(created.code.length, 5);
+  ws.close();
+});
+
+test("every built-in multiplayer mode accepts a generated board word", async () => {
+  const ws = await client("generated-word-scorer");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room", { mode: "classic" });
+  await createdPromise;
+  await lobbyPromise;
+  for (const mode of ["classic", "minimum", "sudden", "race", "coop", "dirty"]) {
+    const startedPromise = next(ws, "round_started");
+    message(ws, "start_game", { mode });
+    const started = await startedPromise;
+    const candidates = mode === "dirty"
+      ? [...COMMON_WORDS, ...ADULT_WORDS]
+      : COMMON_WORDS;
+    const word = candidates.find(
+      (candidate) =>
+        candidate.length >= started.config.min &&
+        wordPath(started.round.board, started.round.size, candidate),
+    );
+    assert.ok(word, `${mode} board has a submit-ready word`);
+    const accepted = nextMatching(
+      ws,
+      "word_accepted",
+      (event) => event.playerId === "generated-word-scorer" && event.word === word,
+    );
+    message(ws, "submit_word", {
+      word,
+      path: wordPath(started.round.board, started.round.size, word),
+    });
+    await accepted;
+    const finished = next(ws, "round_finished");
+    message(ws, "end_round");
+    await finished;
+  }
   ws.close();
 });
 

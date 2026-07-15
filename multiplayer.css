@@ -32,3 +32,40 @@
 .multiplayer-banner button:hover {
   color: var(--coral);
 }
+.cast-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 20px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.cast-control[hidden] {
+  display: none;
+}
+.cast-control small,
+.cast-control strong {
+  display: block;
+}
+.cast-control small {
+  color: var(--muted);
+  font: 10px monospace;
+  letter-spacing: 1px;
+}
+.cast-control strong {
+  max-width: 156px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.cast-control button {
+  flex: 0 0 auto;
+  padding: 9px 10px;
+}
+.waiting-lobby { text-align:center; padding:.3rem 0 .6rem; }
+.waiting-lobby .session-code { display:block; margin:.25rem 0 .5rem; color:#f6c85f; text-shadow:.08em .08em 0 #35203f; }
+.lobby-status { margin:.5rem auto 1rem; max-width:28ch; color:#f6c85f; font-weight:800; }
+.lobby-players { display:grid; gap:.45rem; max-height:32vh; overflow:auto; text-align:left; margin:1rem 0; padding:.65rem; border:2px dashed rgba(246,200,95,.55); border-radius:1rem; background:rgba(91,45,127,.16); }
+.lobby-players .live-player { display:flex; align-items:center; gap:.55rem; padding:.55rem .7rem; border-radius:.7rem; background:rgba(255,255,255,.07); }
+.lobby-players .live-player b { margin-left:auto; }

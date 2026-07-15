@@ -165,6 +165,12 @@ function createLexicon(mode, customWords = []) {
   const base = mode === "dirty" ? BASE_DIRTY_WORDS : BASE_WORDS;
   return customWords.length ? normalizeWords([...base, ...customWords]) : base;
 }
+function isDictionaryWord(word, mode = "classic") {
+  const cleanWord = String(word || "").trim().toUpperCase();
+  return (mode === "dirty" ? BASE_WORD_SETS.dirty : BASE_WORD_SETS.classic).has(
+    cleanWord,
+  );
+}
 function validateSubmission({
   board,
   size,
@@ -204,11 +210,16 @@ function validateSubmission({
     valid,
     word: cleanWord,
     points: valid ? cleanWord.length * cleanWord.length : 0,
-    reason: validPath
-      ? found.has(cleanWord)
-        ? "duplicate"
-        : "dictionary"
-      : "path",
+    reason:
+      cleanWord.length < (Number.isFinite(minimum) ? minimum : config.min)
+        ? "minimum"
+        : !validPath
+          ? "path"
+          : found.has(cleanWord)
+            ? "duplicate"
+            : !lexicon.has(cleanWord)
+              ? "dictionary"
+              : "unknown",
   };
 }
 module.exports = {
@@ -220,5 +231,6 @@ module.exports = {
   hasPath,
   generateBoard,
   createLexicon,
+  isDictionaryWord,
   validateSubmission,
 };

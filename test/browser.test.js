@@ -26,6 +26,64 @@ test.before(
 );
 test.after(() => new Promise((resolve) => server.close(resolve)));
 
+test("receiver preview is public and awaits Cast room context", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  const response = await page.goto(baseUrl + "/receiver/");
+  assert.equal(response.status(), 200);
+  assert.match(await page.locator("h1").textContent(), /Cast a room/);
+  assert.match(await page.locator("#connection").textContent(), /Receiver preview|Waiting/);
+  await browser.close();
+});
+
+test("receiver renders room states and clears stale scores after a dropped connection", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  await page.route("**/cast_receiver_framework.js", (route) =>
+    route.fulfill({ status: 200, contentType: "text/javascript", body: "" }),
+  );
+  await page.addInitScript(() => {
+    class FakeWebSocket {
+      constructor(url) {
+        this.url = url;
+        this.listeners = new Map();
+        window.__receiverSocket = this;
+        queueMicrotask(() => this.emit("open"));
+      }
+      addEventListener(type, handler) {
+        this.listeners.set(type, [...(this.listeners.get(type) || []), handler]);
+      }
+      emit(type, event = {}) {
+        for (const handler of this.listeners.get(type) || []) handler(event);
+      }
+      send(message) { window.__receiverMessages = [...(window.__receiverMessages || []), message]; }
+      close() { this.emit("close"); }
+    }
+    window.WebSocket = FakeWebSocket;
+    window.cast = { framework: { CastReceiverContext: { getInstance: () => ({
+      addCustomMessageListener: (_namespace, handler) => { window.__receiverHandler = handler; },
+      getSenders: () => [], sendCustomMessage: () => {}, start: () => {},
+    }) } } };
+  });
+  await page.goto(baseUrl + "/receiver/");
+  await page.evaluate(() => window.__receiverHandler({ data: { type: "display_token", token: "test-token" } }));
+  await page.waitForFunction(() => window.__receiverMessages?.length === 1);
+  await page.evaluate(() => window.__receiverSocket.emit("message", { data: JSON.stringify({
+    type: "display_state", state: {
+      status: "playing", code: "ABCDE", config: { label: "CLASSIC" },
+      players: Array.from({ length: 10 }, (_, index) => ({
+        name: "Very long player name " + index, avatar: "🐈", score: 100 - index,
+      })),
+    },
+  }) }));
+  assert.equal(await page.locator(".score-card").count(), 10);
+  assert.match(await page.locator("#eyebrow").textContent(), /LIVE SCOREBOARD/);
+  await page.evaluate(() => window.__receiverSocket.emit("close"));
+  assert.match(await page.locator("h1").textContent(), /Cast a room/);
+  assert.match(await page.locator("#connection").textContent(), /ended/);
+  await browser.close();
+});
+
 test("browser can start, play, persist stats, and toggle dark mode", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -95,7 +153,17 @@ test("browser can start, play, persist stats, and toggle dark mode", async () =>
     if (index === path.trail[0]) await page.mouse.down();
   }
   await page.mouse.up();
-  assert.ok(Number(await page.locator("#gameScore").textContent()) > 0);
+  await page.waitForFunction(
+    () => Number(document.querySelector("#gameScore").textContent) > 0,
+  );
+  assert.equal(await page.locator(".tile.word-correct").count(), path.trail.length);
+  assert.equal(
+    await page
+      .locator(".tile.word-correct")
+      .first()
+      .evaluate((node) => getComputedStyle(node).animationName),
+    "word-correct",
+  );
   await page.locator("#endGame").click();
   await page.locator('[data-screen="homeScreen"]').last().click();
   assert.ok(Number(await page.locator("#homeWords").textContent()) > 0);
@@ -141,6 +209,80 @@ test("browser can start, play, persist stats, and toggle dark mode", async () =>
     "rgb(243, 241, 234)",
   );
   assert.deepEqual(errors, []);
+  await browser.close();
+});
+
+test("solo play validates a traced word without downloading the dictionary", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const dictionaryRequests = [];
+  const wordCheckRequests = [];
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === "/dictionary.json") dictionaryRequests.push(request.url());
+    if (pathname === "/api/word-check") wordCheckRequests.push(request.url());
+  });
+  await page.goto(baseUrl);
+  await page.locator("#quickPlay").click();
+  const found = await page.evaluate(() => {
+    const words = window.WordrushConfig.COMMON_WORDS;
+    const letters = [...document.querySelectorAll(".tile")].map(
+      (tile) => tile.textContent,
+    );
+    const size = Math.sqrt(letters.length);
+    const near = (index) =>
+      Array.from({ length: letters.length }, (_, next) => next).filter(
+        (next) =>
+          next !== index &&
+          Math.abs(Math.floor(next / size) - Math.floor(index / size)) <= 1 &&
+          Math.abs((next % size) - (index % size)) <= 1,
+      );
+    const find = (word) => {
+      const walk = (trail) => {
+        if (trail.length === word.length) return trail;
+        for (const next of near(trail.at(-1))) {
+          if (trail.includes(next) || letters[next] !== word[trail.length]) continue;
+          const result = walk([...trail, next]);
+          if (result) return result;
+        }
+        return null;
+      };
+      for (let index = 0; index < letters.length; index++) {
+        if (letters[index] !== word[0]) continue;
+        const trail = walk([index]);
+        if (trail) return { word, trail };
+      }
+      return null;
+    };
+    for (const word of words) {
+      const result = find(word);
+      if (result) return result;
+    }
+    return null;
+  });
+  assert.ok(found, "generated board should contain a seeded common word");
+  const traceWord = async () => {
+    const boxes = await Promise.all(
+      found.trail.map((index) => page.locator(".tile").nth(index).boundingBox()),
+    );
+    await page.mouse.move(
+      boxes[0].x + boxes[0].width / 2,
+      boxes[0].y + boxes[0].height / 2,
+    );
+    await page.mouse.down();
+    for (const box of boxes.slice(1))
+      await page.mouse.move(
+        box.x + box.width / 2,
+        box.y + box.height / 2,
+      );
+    await page.mouse.up();
+  };
+  await traceWord();
+  await page.waitForFunction(() => Number(document.querySelector("#gameScore").textContent) > 0);
+  await traceWord();
+  await page.waitForTimeout(50);
+  assert.equal(dictionaryRequests.length, 0);
+  assert.equal(wordCheckRequests.length, 1, "duplicate word should use local state");
   await browser.close();
 });
 
@@ -354,6 +496,71 @@ test("random rush rolls into a different game and can be stopped", async () => {
   await browser.close();
 });
 
+test("Party Mode keeps selected rules for the next solo round", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator("#partyMode").click();
+  await page.locator('[data-party-size="5"]').click();
+  await page.locator('[data-party-min="4"]').click();
+  await page.locator('[data-party-time="90"]').click();
+  await page.locator("#partyForm button[value=start]").click();
+  assert.equal(await page.locator(".tile").count(), 25);
+  assert.equal(await page.locator("#gameHint").textContent(), "Minimum 4 letters");
+  await page.locator("#endGame").click();
+  assert.match(await page.locator("#again").textContent(), /Continue party mode/);
+  assert.equal(await page.locator("#exitParty").isHidden(), false);
+  await page.locator("#again").click();
+  assert.equal(await page.locator('[data-party-size="5"]').evaluate((node) => node.classList.contains("active")), true);
+  assert.equal(await page.locator('[data-party-min="4"]').evaluate((node) => node.classList.contains("active")), true);
+  assert.equal(await page.locator('[data-party-time="90"]').evaluate((node) => node.classList.contains("active")), true);
+  await browser.close();
+});
+
+test("a pointer-traced Party Mode multiplayer word is accepted", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator("#multiplayerButton").click();
+  await page.locator("#sessionCreate").click();
+  await page.waitForFunction(() => /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent));
+  await page.locator('#multiplayerDialog button[value="cancel"]').click();
+  await page.locator("#partyMode").click();
+  await page.locator('[data-party-size="4"]').click();
+  await page.locator('[data-party-min="3"]').click();
+  await page.locator('[data-party-time="60"]').click();
+  await page.locator("#partyForm button[value=start]").click();
+  await page.waitForSelector("#gameScreen.active");
+  const trail = await page.evaluate(async () => {
+    const words = new Set(await (await fetch("/dictionary.json")).json());
+    const letters = [...document.querySelectorAll(".tile")].map((tile) => tile.textContent);
+    const size = Math.sqrt(letters.length);
+    const near = (index) => Array.from({ length: letters.length }, (_, next) => next).filter((next) => next !== index && Math.abs(Math.floor(next / size) - Math.floor(index / size)) <= 1 && Math.abs(next % size - index % size) <= 1);
+    const walk = (index, word, used, path) => {
+      if (word.length >= 3 && words.has(word)) return path;
+      if (word.length >= 8) return null;
+      for (const next of near(index)) if (!used.has(next)) {
+        const found = walk(next, word + letters[next], new Set([...used, next]), [...path, next]);
+        if (found) return found;
+      }
+      return null;
+    };
+    for (let index = 0; index < letters.length; index++) {
+      const found = walk(index, letters[index], new Set([index]), [index]);
+      if (found) return found;
+    }
+    return null;
+  });
+  assert.ok(trail);
+  const boxes = await Promise.all(trail.map((index) => page.locator(".tile").nth(index).boundingBox()));
+  await page.mouse.move(boxes[0].x + boxes[0].width / 2, boxes[0].y + boxes[0].height / 2);
+  await page.mouse.down();
+  for (const box of boxes.slice(1)) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.up();
+  await page.waitForFunction(() => Number(document.querySelector("#gameScore").textContent) > 0);
+  await browser.close();
+});
+
 test("the Random Rush preview panel starts the rush while reload only rerolls it", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -400,6 +607,8 @@ test("multiplayer creates a five-letter session and launches co-op", async () =>
     5,
   );
   assert.equal(await page.locator("#multiplayerBanner").isHidden(), false);
+  assert.equal(await page.locator("#lobbyPlayers .live-player").count(), 1);
+  assert.match(await page.locator("#lobbyStatus").textContent(), /host/i);
   await page.locator("#sessionType").selectOption("coop");
   await page.locator("#sessionStart").click();
   await page.waitForSelector("#gameScreen.active");
@@ -417,6 +626,46 @@ test("multiplayer creates a five-letter session and launches co-op", async () =>
       .evaluate((node) => node.classList.contains("active")),
     true,
   );
+  await browser.close();
+});
+
+test("Cast control stays disabled on an insecure origin", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator("#multiplayerButton").click();
+  await page.locator("#sessionCreate").click();
+  await page.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  assert.equal(await page.locator("#castControl").isHidden(), false);
+  assert.equal(await page.locator("#castButton").isDisabled(), true);
+  assert.match(
+    await page.locator("#castStatus").textContent(),
+    /secure Wordrush only/,
+  );
+  await browser.close();
+});
+
+test("a room deep link joins through the normal multiplayer flow", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await host.goto(baseUrl);
+  await host.locator("#multiplayerButton").click();
+  await host.locator("#sessionCreate").click();
+  await host.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  const code = await host.locator("#sessionCode").textContent();
+  const guest = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await guest.goto(baseUrl + "/?join=" + code);
+  await guest.waitForFunction(
+    (roomCode) => document.querySelector("#sessionCode").textContent === roomCode,
+    code,
+  );
+  assert.equal(await guest.locator("#multiplayerDialog").evaluate((node) => node.open), true);
+  assert.equal(await guest.locator("#sessionCode").textContent(), code);
+  assert.equal(await guest.evaluate(() => location.search), "");
   await browser.close();
 });
 
@@ -600,11 +849,12 @@ test("browser exposes the expanded avatar set and unlocks achievement toasts", a
     const board = document.querySelector(".board").getBoundingClientRect();
     return {
       top: toast.top,
+      configuredTop: getComputedStyle(node).top,
       boardTop: board.top,
       clearOfBoard: toast.bottom <= board.top,
     };
   });
-  assert.ok(Math.abs(inGameToast.top - 10) < 1);
+  assert.equal(inGameToast.configuredTop, "10px");
   assert.equal(inGameToast.clearOfBoard, true);
   await page.waitForTimeout(3500);
   assert.equal(
@@ -642,12 +892,24 @@ test("tracing animates selected tiles while keeping the saved trace line hidden"
   assert.equal(await page.locator(".tile.selected").count(), 1);
   assert.equal(
     await page
+      .locator(".tile.selected")
+      .evaluate((node) => getComputedStyle(node).animationName),
+    "tile-selected",
+  );
+  assert.equal(
+    await page
       .locator("#traceLayer")
       .evaluate((node) => getComputedStyle(node).visibility),
     "hidden",
   );
   await page.waitForFunction(() =>
     Boolean(document.querySelector("#tracePath").getAttribute("d")),
+  );
+  await page.waitForFunction(
+    (background) =>
+      getComputedStyle(document.querySelector(".tile.selected")).backgroundColor !==
+      background,
+    defaultTileStyle.background,
   );
   assert.equal(
     await page

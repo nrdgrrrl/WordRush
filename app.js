@@ -28,6 +28,28 @@ try {
     ),
   );
 } catch {}
+const wordCheckCache = new Map();
+async function isServerDictionaryWord(word, adultMode) {
+  const key = (adultMode ? "dirty:" : "classic:") + word;
+  if (wordCheckCache.has(key)) return wordCheckCache.get(key);
+  const check = fetch(
+    "/api/word-check?word=" +
+      encodeURIComponent(word) +
+      "&adult=" +
+      (adultMode ? "1" : "0"),
+  )
+    .then((response) => {
+      if (!response.ok) throw new Error("Word check failed");
+      return response.json();
+    })
+    .then((result) => result.valid === true)
+    .catch(() => {
+      wordCheckCache.delete(key);
+      return lex().has(word);
+    });
+  wordCheckCache.set(key, check);
+  return check;
+}
 const s = {
   mode: "classic",
   n: 4,
@@ -49,6 +71,8 @@ const s = {
   rushCountdown: 0,
   roundWordTimes: [],
   onlineRoundKey: null,
+  pendingOnlineTrace: null,
+  party: false,
 };
 const avatarOptions = [
     "🐈",
@@ -346,6 +370,8 @@ function end() {
   if (s.score > 0) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
   recordPlayDay();
   updateProfile();
+  $("#again").textContent = s.party ? "Continue party mode →" : "Play again →";
+  $("#exitParty").hidden = !s.party;
   show("resultsScreen");
   emit("round-complete", {
     ranking: [
@@ -406,7 +432,7 @@ function stopRush() {
   $("#stopRushResults").hidden = true;
   show("homeScreen");
 }
-function start(mode, override = null, adultMode = false, rush = false) {
+async function start(mode, override = null, adultMode = false, rush = false) {
   if (
     (mode === "dirty" || adultMode) &&
     !confirm("Dirty Mode contains adult language. Continue?")
@@ -440,7 +466,9 @@ function start(mode, override = null, adultMode = false, rush = false) {
   clearInterval(s.rushCountdown);
   s.target = override?.[5]?.target || null;
   s.mode = mode;
+  s.party = Boolean(override?.[0] === "PARTY MODE");
   s.onlineRoundKey = null;
+  s.pendingOnlineTrace = null;
   document.body.dataset.mode = mode;
   s.n = m[2];
   s.time = m[3];
@@ -471,10 +499,25 @@ function start(mode, override = null, adultMode = false, rush = false) {
     if (s.time <= 0) end();
   }, 250);
 }
-function submit() {
+function pickedPathIsValid(trace, word) {
+  return (
+    trace.length === word.length &&
+    trace.every(
+      (index, position) =>
+        Number.isInteger(index) &&
+        index >= 0 &&
+        index < s.b.length &&
+        s.b[index] === word[position] &&
+        trace.indexOf(index) === position &&
+        (position === 0 || near(trace[position - 1]).includes(index)),
+    )
+  );
+}
+async function submit() {
   let trace = s.pick.slice(),
     w = s.pick.map((i) => s.b[i]).join("");
   if (window.wordrushSocket && window.wordrushSocket.readyState === 1) {
+    s.pendingOnlineTrace = { word: w, trace };
     window.wordrushSocket.send(
       JSON.stringify({ type: "submit_word", word: w, path: trace }),
     );
@@ -482,7 +525,16 @@ function submit() {
     return;
   }
   let m = s.customConfig || MODE[s.mode],
-    ok = w.length >= m[1] && lex().has(w) && path(w);
+    validPath = pickedPathIsValid(trace, w),
+    duplicate = s.found.has(w),
+    roundStartedAt = s.startedAt;
+  clearPick();
+  const inDictionary =
+    w.length >= m[1] && validPath && !duplicate
+      ? custom.has(w) || await isServerDictionaryWord(w, customAdult)
+      : false;
+  if (s.done || s.startedAt !== roundStartedAt) return;
+  const ok = w.length >= m[1] && validPath && inDictionary;
   if (ok && !s.found.has(w)) {
     const points = w.length * w.length;
     s.found.add(w);
@@ -492,9 +544,10 @@ function submit() {
     $("#gameScore").textContent = s.score;
     $("#preview").textContent = w + " +" + points;
     $("#preview").classList.add("found");
+    pulseAcceptedWord(trace);
     emit("word-accepted", { word: w, points });
     if ((s.mode === "race" || s.target) && s.score >= 500) end();
-  } else if (s.found.has(w)) {
+  } else if (duplicate || s.found.has(w)) {
     profile.incorrect++;
     updateProfile();
     toast("Already found");
@@ -504,13 +557,12 @@ function submit() {
     toast(
       w.length < m[1]
         ? "Need " + m[1] + " letters"
-        : !path(w)
+        : !validPath
           ? "Tiles must connect"
           : "Not in dictionary",
     );
     if (s.mode === "sudden") setTimeout(end, 300);
   }
-  clearPick();
   setTimeout(() => {
     $("#preview").classList.remove("found");
     $("#preview").textContent = "Trace a word";
@@ -554,11 +606,43 @@ function pick(t) {
   t.classList.add("selected");
   $("#preview").textContent = s.pick.map((i) => s.b[i]).join("");
 }
+function pulseAcceptedWord(trace) {
+  const tiles = trace
+    .map((index) => document.querySelector('.tile[data-i="' + index + '"]'))
+    .filter(Boolean);
+  tiles.forEach((tile) => {
+    tile.classList.remove("word-correct");
+    // Restart the animation when a player finds another word before the
+    // previous completion animation has fully finished.
+    void tile.offsetWidth;
+    tile.classList.add("word-correct");
+  });
+  setTimeout(() => {
+    tiles.forEach((tile) => tile.classList.remove("word-correct"));
+  }, 480);
+}
 $("#quickPlay").onclick = () => start("classic");
 $("#navStats").onclick = () => show("statsScreen");
 $("#stopRush").onclick = stopRush;
 $("#stopRushResults").onclick = stopRush;
-$("#again").onclick = () => start(s.mode, s.customConfig, customAdult);
+let partyConfig = { size: 4, min: 3, seconds: 120 };
+function syncPartyOptions() {
+  document.querySelectorAll("[data-party-size]").forEach((button) => button.classList.toggle("active", +button.dataset.partySize === partyConfig.size));
+  document.querySelectorAll("[data-party-min]").forEach((button) => button.classList.toggle("active", +button.dataset.partyMin === partyConfig.min));
+  document.querySelectorAll("[data-party-time]").forEach((button) => button.classList.toggle("active", +button.dataset.partyTime === partyConfig.seconds));
+}
+function openParty() { syncPartyOptions(); $("#partyDialog").showModal(); }
+$("#partyMode").onclick = openParty;
+document.querySelectorAll("[data-party-size]").forEach((button) => button.onclick = () => { partyConfig.size = +button.dataset.partySize; syncPartyOptions(); });
+document.querySelectorAll("[data-party-min]").forEach((button) => button.onclick = () => { partyConfig.min = +button.dataset.partyMin; syncPartyOptions(); });
+document.querySelectorAll("[data-party-time]").forEach((button) => button.onclick = () => { partyConfig.seconds = +button.dataset.partyTime; syncPartyOptions(); });
+$("#partyForm").addEventListener("submit", (event) => {
+  if (event.submitter?.value !== "start") return;
+  const config = ["PARTY MODE", partyConfig.min, partyConfig.size, partyConfig.seconds, `Party round · minimum ${partyConfig.min} letters`, { party: true }];
+  start("custom", config);
+});
+$("#again").onclick = () => s.party ? openParty() : start(s.mode, s.customConfig, customAdult);
+$("#exitParty").onclick = () => { s.party = false; $("#exitParty").hidden = true; $("#again").textContent = "Play again →"; show("homeScreen"); };
 $("#endGame").onclick = end;
 document
   .querySelectorAll("[data-mode]")
@@ -609,10 +693,6 @@ $("#customForm")?.addEventListener("submit", (event) => {
     type === "dirty",
   );
 });
-fetch("/dictionary.json")
-  .then((response) => (response.ok ? response.json() : []))
-  .then((words) => words.forEach((word) => custom.add(word)))
-  .catch(() => {});
 show("homeScreen");
 document.addEventListener("click", (event) => {
   const target = event.target.closest?.("[data-screen]");
@@ -620,6 +700,10 @@ document.addEventListener("click", (event) => {
 });
 
 window.wordrushRecordOnlineWord = (word, points) => {
+  if (s.pendingOnlineTrace?.word === word) {
+    pulseAcceptedWord(s.pendingOnlineTrace.trace);
+  }
+  s.pendingOnlineTrace = null;
   recordAcceptedWord(word);
   updateProfile();
   emit("word-accepted", {
@@ -628,6 +712,7 @@ window.wordrushRecordOnlineWord = (word, points) => {
   });
 };
 window.wordrushRecordOnlineIncorrect = () => {
+  s.pendingOnlineTrace = null;
   profile.incorrect++;
   updateProfile();
 };
@@ -639,6 +724,8 @@ window.wordrushOnlineRound = (round, config, mode) => {
     ([, value]) => value[0] === config?.label,
   );
   s.mode = mode || match?.[0] || "classic";
+  s.party = config?.label === "PARTY MODE";
+  s.pendingOnlineTrace = null;
   customAdult = Boolean(config?.adult);
   s.customConfig = [
     config?.label || "MULTIPLAYER",
@@ -727,6 +814,8 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   recordPlayDay();
   updateProfile();
   show("resultsScreen");
+  $("#again").textContent = s.party ? "Continue party mode →" : "Play again →";
+  $("#exitParty").hidden = !s.party;
   emit("round-complete", {
     ranking: normalizedRanking,
     multiplayer: true,
@@ -831,7 +920,17 @@ function safeCandidateAt(x, y, target = null, starting = false) {
     direct =
       target?.closest?.(".tile") ||
       document.elementFromPoint(x, y)?.closest?.(".tile");
-  if (starting) return direct && grid.contains(direct) ? direct : null;
+  if (starting) {
+    if (direct && grid.contains(direct)) return direct;
+    // Rounded tile corners can make the browser report the board as the
+    // target. Keep the full tile rectangle touchable at the start of a trace.
+    return (
+      [...grid.querySelectorAll(".tile")].find((candidate) => {
+        const rect = candidate.getBoundingClientRect();
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+      }) || null
+    );
+  }
   const gridRect = grid.getBoundingClientRect(),
     tile = [...grid.querySelectorAll(".tile")].find((candidate) => {
       const left = gridRect.left + candidate.offsetLeft,

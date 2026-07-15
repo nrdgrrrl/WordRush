@@ -5,9 +5,17 @@ const {
   ADULT_WORDS,
   generateBoard,
   createLexicon,
+  isDictionaryWord,
   hasPath,
   validateSubmission,
 } = require("../game-core");
+test("dictionary membership uses the shared server lexicon", () => {
+  assert.equal(isDictionaryWord("tea"), true);
+  assert.equal(isDictionaryWord("CAR"), true);
+  assert.equal(isDictionaryWord("WORDRUSHISNOTAWORD"), false);
+  assert.equal(isDictionaryWord("SHIT"), false);
+  assert.equal(isDictionaryWord("SHIT", "dirty"), true);
+});
 test("configured boards are full and pathable", () => {
   for (const [mode, config] of Object.entries(MODE_CONFIG)) {
     const board = generateBoard(config.size, createLexicon(mode));

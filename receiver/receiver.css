@@ -1,0 +1,25 @@
+:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 100vw; min-height: 100vh; overflow: hidden; background: #14111d; color: #fff9f0; }
+.receiver-shell { min-height: 100vh; padding: 5.2vh 6.5vw 4vh; display: grid; grid-template-rows: auto 1fr auto; background: radial-gradient(circle at 80% 15%, #5b2d7f, transparent 36%), radial-gradient(circle at 10% 85%, #dd5f58, transparent 32%), #14111d; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 2rem; }
+.brand { font-size: clamp(1.3rem, 2.2vw, 2.5rem); font-weight: 900; letter-spacing: .07em; }
+.brand b { display: inline-grid; width: 1.25em; height: 1.25em; place-items: center; border-radius: .26em; background: #f6c85f; color: #2c1c37; margin-right: .32em; }
+#eyebrow, .kicker { margin: 0; color: #f6c85f; font-size: clamp(.8rem, 1.45vw, 1.45rem); font-weight: 800; letter-spacing: .14em; }
+.screen { align-self: center; }
+h1 { margin: .35em 0; max-width: 16ch; font-size: clamp(3.2rem, 7.2vw, 8.2rem); line-height: .94; letter-spacing: -.065em; }
+.message { max-width: 38ch; color: #e3d8eb; font-size: clamp(1.2rem, 2vw, 2.3rem); line-height: 1.35; }
+footer { color: #d1c1d8; font-size: clamp(.9rem, 1.35vw, 1.35rem); }
+.room-code { font-size: clamp(5.5rem, 16vw, 17rem); letter-spacing: .08em; line-height: .9; color: #f6c85f; text-shadow: .06em .06em 0 #35203f; overflow-wrap: anywhere; }
+.join-url { font-size: clamp(1.1rem, 2vw, 2rem); color: #e3d8eb; }
+.lobby-join { display: flex; align-items: center; gap: clamp(1.5rem, 4vw, 5rem); margin: 1.5rem 0 2.5rem; }
+.join-qr { width: clamp(13rem, 23vw, 26rem); height: clamp(13rem, 23vw, 26rem); padding: 1rem; border-radius: 1rem; background: #fff9f0; image-rendering: pixelated; }
+.scoreboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(30%, 16rem), 1fr)); gap: 1.1rem; max-width: 100%; }
+.score-card { min-width: 0; padding: 1.25rem 1.5rem; border-radius: 1.15rem; background: #2a2038; border: 2px solid rgba(255,255,255,.1); }
+.score-card:first-child { border-color: #f6c85f; background: #3b2949; }
+.score-card .name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: clamp(1.2rem, 2vw, 2.2rem); font-weight: 800; }
+.score-card .score { display: block; margin-top: .1em; color: #f6c85f; font-size: clamp(2rem, 4.3vw, 5rem); font-weight: 900; line-height: 1; }
+.finished h1 { font-size: clamp(2.8rem, 5.5vw, 6.5rem); }
+.closed { text-align: center; }
+.closed h1 { margin-inline: auto; }
+@media (max-width: 900px) { .receiver-shell { padding: 4vh 5vw; } .scoreboard { grid-template-columns: repeat(2, 1fr); } .lobby-join { gap: 1.5rem; } }

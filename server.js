@@ -3,19 +3,289 @@ const http = require("node:http"),
   fs = require("node:fs"),
   path = require("node:path"),
   crypto = require("node:crypto"),
+  QRCode = require("qrcode"),
   { WebSocketServer } = require("ws");
 const {
   MODE_CONFIG,
+  COMMON_WORDS,
   createLexicon,
   generateBoard,
+  isDictionaryWord,
   validateSubmission,
   normalizeWords,
 } = require("./game-core");
 const PORT = Number(process.env.PORT || 8000),
-  HOST = process.env.HOST || "0.0.0.0",
+  HOST = process.env.HOST || "127.0.0.1",
   MAX_PLAYERS = 10,
   rooms = new Map(),
-  clients = new Map();
+  clients = new Map(),
+  displays = new Map();
+const IS_LOOPBACK = ["127.0.0.1", "::1", "localhost"].includes(HOST);
+const LAN_MODE = process.env.WORDRUSH_LAN_MODE === "1";
+const PASSWORD_HASH = process.env.WORDRUSH_BETA_PASSWORD_HASH || "";
+const AUTH_REQUIRED = Boolean(PASSWORD_HASH) && !LAN_MODE;
+const SESSION_TTL_MS = Number(process.env.WORDRUSH_SESSION_TTL_MS || 8 * 60 * 60 * 1000);
+const SESSION_FILE = process.env.WORDRUSH_SESSION_FILE || "";
+const DISPLAY_TOKEN_TTL_MS = Number(
+  process.env.WORDRUSH_DISPLAY_TOKEN_TTL_MS || 5 * 60 * 1000,
+);
+const MAX_HTTP_BODY = 10_000;
+const MAX_WS_CONNECTIONS_PER_IP = Number(process.env.WORDRUSH_MAX_WS_PER_IP || 60);
+const MAX_WS_MESSAGES_PER_WINDOW = Number(
+  process.env.WORDRUSH_MAX_WS_MESSAGES_PER_WINDOW || 60,
+);
+const RATE_WINDOW_MS = 60_000;
+const sessions = new Map();
+const displayTokens = new Map();
+const rateLimits = new Map();
+const configuredOrigins = (process.env.WORDRUSH_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const configuredHosts = (process.env.WORDRUSH_ALLOWED_HOSTS || "")
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
+
+function persistSessions() {
+  if (!SESSION_FILE) return;
+  try {
+    fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true, mode: 0o700 });
+    const now = Date.now();
+    const entries = [...sessions.entries()]
+      .filter(([, session]) => session.expiresAt > now)
+      .map(([token, session]) => [token, { expiresAt: session.expiresAt }]);
+    const temporary = SESSION_FILE + ".tmp";
+    fs.writeFileSync(temporary, JSON.stringify(entries), { mode: 0o600 });
+    fs.renameSync(temporary, SESSION_FILE);
+  } catch (error) {
+    console.error("Could not persist beta sessions", error.message);
+  }
+}
+function loadSessions() {
+  if (!SESSION_FILE) return;
+  try {
+    const entries = JSON.parse(fs.readFileSync(SESSION_FILE, "utf8"));
+    const now = Date.now();
+    for (const [token, session] of Array.isArray(entries) ? entries : [])
+      if (/^[A-Za-z0-9_-]{32,}$/.test(token) && Number(session?.expiresAt) > now)
+        sessions.set(token, { expiresAt: Number(session.expiresAt) });
+  } catch (error) {
+    if (error.code !== "ENOENT") console.error("Could not load beta sessions", error.message);
+  }
+}
+loadSessions();
+
+if (!IS_LOOPBACK && !LAN_MODE && !PASSWORD_HASH)
+  throw new Error(
+    "WORDRUSH_BETA_PASSWORD_HASH is required when binding Wordrush beyond loopback",
+  );
+if (process.env.NODE_ENV === "production" && !LAN_MODE && !PASSWORD_HASH)
+  throw new Error("WORDRUSH_BETA_PASSWORD_HASH is required in production");
+if (process.env.NODE_ENV === "production" && !LAN_MODE && !configuredOrigins.length)
+  throw new Error("WORDRUSH_ALLOWED_ORIGINS is required in production");
+if (
+  process.env.NODE_ENV === "production" &&
+  !LAN_MODE &&
+  !["/usr/share/dict/american-english", "/usr/share/dict/words"].some(fs.existsSync)
+)
+  throw new Error(
+    "A system word list is required in production (install wamerican)",
+  );
+
+function clientIp(req) {
+  // Apache is trusted only when Node is bound to loopback. Configure it to pass
+  // X-Forwarded-For; the first value is the original client.
+  return String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")
+    .split(",")[0]
+    .trim();
+}
+function rateLimit(key, limit, window = RATE_WINDOW_MS) {
+  const now = Date.now();
+  const current = rateLimits.get(key);
+  if (!current || current.expiresAt <= now) {
+    rateLimits.set(key, { count: 1, expiresAt: now + window });
+    return true;
+  }
+  current.count += 1;
+  return current.count <= limit;
+}
+function parseCookies(req) {
+  return Object.fromEntries(
+    String(req.headers.cookie || "")
+      .split(";")
+      .map((part) => part.trim().split(/=(.*)/s, 2))
+      .filter(([name]) => name)
+      .map(([name, value]) => [name, decodeURIComponent(value || "")]),
+  );
+}
+function sessionFor(req) {
+  const token = parseCookies(req).wordrush_session;
+  const session = token && sessions.get(token);
+  if (!session || session.expiresAt <= Date.now()) {
+    if (token) { sessions.delete(token); persistSessions(); }
+    return null;
+  }
+  return session;
+}
+function setSessionCookie(res, token, expiresAt) {
+  const secure = process.env.WORDRUSH_SESSION_COOKIE_SECURE !== "0" &&
+    (process.env.NODE_ENV === "production" || process.env.WORDRUSH_SESSION_COOKIE_SECURE === "1");
+  res.setHeader(
+    "Set-Cookie",
+    `wordrush_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor((expiresAt - Date.now()) / 1000)}${secure ? "; Secure" : ""}`,
+  );
+}
+function passwordMatches(password) {
+  // Format: scrypt$N$r$p$base64-salt$base64-derived-key
+  const parts = PASSWORD_HASH.split("$");
+  if (parts.length !== 6 || parts[0] !== "scrypt") return false;
+  try {
+    const [_, N, r, p, salt, expected] = parts;
+    const derived = crypto.scryptSync(String(password), Buffer.from(salt, "base64"), Buffer.from(expected, "base64").length, {
+      N: Number(N), r: Number(r), p: Number(p), maxmem: 64 * 1024 * 1024,
+    });
+    const expectedBuffer = Buffer.from(expected, "base64");
+    return derived.length === expectedBuffer.length && crypto.timingSafeEqual(derived, expectedBuffer);
+  } catch {
+    return false;
+  }
+}
+function allowedHost(req) {
+  const host = String(req.headers.host || "").toLowerCase();
+  if (!host) return false;
+  if (configuredHosts.length) return configuredHosts.includes(host);
+  return IS_LOOPBACK || LAN_MODE || host === `localhost:${PORT}` || host === `127.0.0.1:${PORT}`;
+}
+function allowedOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) return IS_LOOPBACK || LAN_MODE;
+  if (configuredOrigins.length) return configuredOrigins.includes(origin);
+  return IS_LOOPBACK || LAN_MODE;
+}
+function deny(res, status, code) {
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  res.end(JSON.stringify({ error: code }));
+}
+function securityHeaders(res) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "same-origin");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' https://www.gstatic.com; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+}
+function safeReturnPath(value) {
+  const candidate = String(value || "");
+  return candidate.startsWith("/") && !candidate.startsWith("//") ? candidate : "/";
+}
+function loginPage(res, returnPath = "/") {
+  const loginAction = "/auth/login" +
+    (returnPath === "/" ? "" : "?return=" + encodeURIComponent(returnPath));
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  res.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wordrush beta</title><style>body{font:16px system-ui;margin:0;min-height:100vh;display:grid;place-items:center;background:#15131c;color:#fff}main{width:min(26rem,90vw)}input,button{box-sizing:border-box;width:100%;padding:.8rem;margin:.4rem 0;font:inherit}button{cursor:pointer}</style><main><h1>Wordrush private beta</h1><p>Enter your beta password to play.</p><form method="post" action="${loginAction}"><label>Password<input name="password" type="password" autocomplete="current-password" required autofocus></label><button>Continue</button></form></main></html>`);
+}
+function readForm(req) {
+  return new Promise((resolve) => {
+    let body = "";
+    let done = false;
+    req.on("data", (chunk) => {
+      if (done) return;
+      body += chunk;
+      if (Buffer.byteLength(body) > MAX_HTTP_BODY) {
+        done = true;
+        resolve(null);
+      }
+    });
+    req.on("end", () => {
+      if (done) return;
+      resolve(new URLSearchParams(body));
+    });
+    req.on("error", () => resolve(null));
+  });
+}
+async function authorizeRequest(req, res) {
+  securityHeaders(res);
+  if (!allowedHost(req)) {
+    deny(res, 421, "HOST_NOT_ALLOWED");
+    return false;
+  }
+  const pathname = new URL(req.url || "/", "http://localhost").pathname;
+  const requestUrl = new URL(req.url || "/", "http://localhost");
+  if (pathname === "/qr.svg" && req.method === "GET") {
+    const join = String(requestUrl.searchParams.get("join") || "").trim().toUpperCase();
+    if (!/^[A-Z]{5}$/.test(join)) return deny(res, 400, "INVALID_ROOM_CODE");
+    const origin = (req.headers["x-forwarded-proto"] || "https") + "://" + req.headers.host;
+    const payload = `${origin}/?join=${join}`;
+    const svg = await QRCode.toString(payload, {
+      type: "svg", width: 512, margin: 1,
+      color: { dark: "#14111d", light: "#fff9f0" },
+    });
+    res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=300" });
+    res.end(svg);
+    return false;
+  }
+  if (pathname === "/receiver" || pathname.startsWith("/receiver/")) {
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self'; script-src 'self' https://www.gstatic.com; base-uri 'none'; frame-ancestors 'none'",
+    );
+    return true;
+  }
+  if (!AUTH_REQUIRED) return true;
+  if (pathname === "/auth/login" && req.method === "GET") {
+    loginPage(res, safeReturnPath(requestUrl.searchParams.get("return")));
+    return false;
+  }
+  if (pathname === "/auth/login" && req.method === "POST") {
+    if (!allowedOrigin(req) || !rateLimit(`login:${clientIp(req)}`, 8)) {
+      deny(res, 429, "LOGIN_RATE_LIMITED");
+      return false;
+    }
+    const form = await readForm(req);
+    if (!form || !passwordMatches(form.get("password") || "")) {
+      deny(res, 401, "INVALID_LOGIN");
+      return false;
+    }
+    const token = crypto.randomBytes(32).toString("base64url");
+    const expiresAt = Date.now() + SESSION_TTL_MS;
+    sessions.set(token, { expiresAt });
+    persistSessions();
+    setSessionCookie(res, token, expiresAt);
+    res.writeHead(303, {
+      Location: safeReturnPath(requestUrl.searchParams.get("return")),
+      "Cache-Control": "no-store",
+    });
+    res.end();
+    return false;
+  }
+  if (pathname === "/auth/logout" && req.method === "POST") {
+    if (!allowedOrigin(req)) {
+      deny(res, 403, "ORIGIN_NOT_ALLOWED");
+      return false;
+    }
+    const token = parseCookies(req).wordrush_session;
+    if (token) sessions.delete(token);
+    persistSessions();
+    res.setHeader("Set-Cookie", "wordrush_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+    res.writeHead(204, { "Cache-Control": "no-store" });
+    res.end();
+    return false;
+  }
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && !allowedOrigin(req)) {
+    deny(res, 403, "ORIGIN_NOT_ALLOWED");
+    return false;
+  }
+  if (!sessionFor(req)) {
+    if (pathname.startsWith("/api/")) deny(res, 401, "AUTH_REQUIRED");
+    else {
+      const returnPath = req.url && req.url !== "/" ? `?return=${encodeURIComponent(req.url)}` : "";
+      res.writeHead(303, { Location: "/auth/login" + returnPath, "Cache-Control": "no-store" });
+      res.end();
+    }
+    return false;
+  }
+  return true;
+}
 function code() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ";
   let value;
@@ -91,8 +361,34 @@ function state(room) {
       : null,
   };
 }
+function displayState(room) {
+  return {
+    code: room.code,
+    mode: room.mode,
+    status: room.status,
+    results: room.results,
+    config: roomConfig(room),
+    lastResult: room.status === "finished" ? room.lastResult : null,
+    players: [...room.players.values()].map((p) => ({
+      name: p.name,
+      avatar: p.avatar || "🐈",
+      score: p.score,
+    })),
+    round: room.round
+      ? {
+          board: room.round.board,
+          size: room.round.size,
+          endsAt: room.round.endsAt,
+        }
+      : null,
+  };
+}
+function displayUpdate(room, event) {
+  return { type: "display_state", event, state: displayState(room) };
+}
 function broadcast(room, message) {
   for (const player of room.players.values()) send(player.ws, message);
+  for (const ws of room.displays) send(ws, displayUpdate(room, message.type));
 }
 function clearRoomTimer(room) {
   clearTimeout(room.round?.timer);
@@ -106,6 +402,12 @@ function closeRoom(room, reason) {
     if (memberClient) memberClient.roomCode = null;
     send(member.ws, { type: "session_closed", code: room.code, reason });
   }
+  for (const ws of room.displays) {
+    displays.delete(ws);
+    send(ws, { type: "session_closed", code: room.code, reason });
+    ws.close(1000, "room closed");
+  }
+  room.displays.clear();
   room.players.clear();
   room.round = null;
   room.status = "closed";
@@ -124,6 +426,9 @@ function startRound(room, selected = room.mode, rawConfig = null) {
     board = generateBoard(
       config.size,
       createLexicon(validationMode, [...room.customWords]),
+      // Keep multiplayer boards discoverable from the shared browser vocabulary
+      // even when a server happens to have a larger system dictionary installed.
+      { preferredWords: COMMON_WORDS },
     );
   room.config = config;
   room.round = {
@@ -214,9 +519,37 @@ function finishRound(room, reason = "complete") {
     room.rushTimer.unref?.();
   }
 }
+function issueDisplayToken(room, client) {
+  const token = crypto.randomBytes(32).toString("base64url");
+  const expiresAt = Date.now() + DISPLAY_TOKEN_TTL_MS;
+  displayTokens.set(token, {
+    roomCode: room.code,
+    issuedBy: client.id,
+    expiresAt,
+  });
+  return { token, expiresAt };
+}
+function consumeDisplayToken(value) {
+  const token = typeof value === "string" ? value : "";
+  const record = displayTokens.get(token);
+  if (!record) return null;
+  // Tokens are single-use even if they have expired or their room disappeared.
+  displayTokens.delete(token);
+  if (record.expiresAt <= Date.now()) return null;
+  const room = rooms.get(record.roomCode);
+  if (!room || room.status === "closed") return null;
+  return room;
+}
+function leaveDisplay(ws) {
+  const display = displays.get(ws);
+  if (!display) return;
+  displays.delete(ws);
+  const room = rooms.get(display.roomCode);
+  room?.displays.delete(ws);
+}
 function leave(ws) {
   const info = clients.get(ws);
-  if (!info) return;
+  if (!info) return leaveDisplay(ws);
   clients.delete(ws);
   const room = rooms.get(info.roomCode);
   if (!room) return;
@@ -229,6 +562,17 @@ function leave(ws) {
 }
 function handle(ws, message) {
   const type = message?.type;
+  if (ws.connectionRole === "display") {
+    if (type !== "display_hello")
+      return send(ws, { type: "error", code: "DISPLAY_READ_ONLY" });
+    if (displays.has(ws))
+      return send(ws, { type: "error", code: "DISPLAY_ALREADY_AUTHENTICATED" });
+    const room = consumeDisplayToken(message.token);
+    if (!room) return send(ws, { type: "error", code: "INVALID_DISPLAY_TOKEN" });
+    displays.set(ws, { roomCode: room.code });
+    room.displays.add(ws);
+    return send(ws, displayUpdate(room, "display_connected"));
+  }
   if (type === "hello") {
     const id = String(message.guestId || crypto.randomUUID());
     clients.set(ws, {
@@ -252,6 +596,7 @@ function handle(ws, message) {
       teamScore: 0,
       customWords: new Set(normalizeWords(message.customWords)),
       players: new Map(),
+      displays: new Set(),
       status: "lobby",
       round: null,
       config: MODE_CONFIG.classic,
@@ -300,6 +645,10 @@ function handle(ws, message) {
   }
   const room = rooms.get(client.roomCode);
   if (!room) return send(ws, { type: "error", code: "NOT_IN_ROOM" });
+  if (type === "create_display_token") {
+    const displayToken = issueDisplayToken(room, client);
+    return send(ws, { type: "display_token", ...displayToken });
+  }
   if (type === "update_identity") {
     client.name = cleanText(message.name, client.name);
     client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
@@ -368,11 +717,18 @@ function handle(ws, message) {
       customWords: [...room.customWords],
     });
     if (!result.valid) {
+      console.warn("Wordrush rejected submission", JSON.stringify({
+        word: result.word,
+        reason: result.reason,
+        validationMode: room.round.validationMode,
+        minimum: roomConfig(room).min,
+      }));
       send(ws, {
         type: "word_rejected",
         playerId: client.id,
         word: result.word,
         reason: result.reason,
+        minimum: roomConfig(room).min,
       });
       if (
         (room.mode === "sudden" || roomConfig(room).sudden) &&
@@ -434,6 +790,8 @@ const server = http.createServer((req, res) => {
   }
   let requested = pathname;
   if (requested === "/") requested = "/index.html";
+  if (requested === "/receiver" || requested === "/receiver/")
+    requested = "/receiver/index.html";
   const root = path.resolve(__dirname);
   const file = path.resolve(root, "." + requested);
   if (
@@ -447,7 +805,7 @@ const server = http.createServer((req, res) => {
   const ext = path.extname(file),
     types = {
       ".html": "text/html",
-      ".js": "text/javascript",
+      ".js": "application/javascript",
       ".css": "text/css",
       ".png": "image/png",
       ".svg": "image/svg+xml",
@@ -460,13 +818,24 @@ const server = http.createServer((req, res) => {
   });
   fs.createReadStream(file).pipe(res);
 });
-const wss = new WebSocketServer({ server });
-wss.on("connection", (ws) => {
+const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: 16 * 1024 });
+wss.on("connection", (ws, req) => {
+  ws.connectionRole =
+    new URL(req.url || "/", "http://localhost").pathname === "/display"
+      ? "display"
+      : "player";
   ws.isAlive = true;
+  ws.messageWindow = { startedAt: Date.now(), count: 0 };
   ws.on("pong", () => {
     ws.isAlive = true;
   });
   ws.on("message", (raw) => {
+    const now = Date.now();
+    if (now - ws.messageWindow.startedAt >= RATE_WINDOW_MS)
+      ws.messageWindow = { startedAt: now, count: 0 };
+    ws.messageWindow.count += 1;
+    if (ws.messageWindow.count > MAX_WS_MESSAGES_PER_WINDOW)
+      return ws.close(1008, "message rate limit exceeded");
     try {
       handle(ws, JSON.parse(raw));
     } catch {
@@ -475,7 +844,23 @@ wss.on("connection", (ws) => {
   });
   ws.on("close", () => leave(ws));
 });
+server.on("upgrade", (req, socket, head) => {
+  if (!allowedHost(req) || !allowedOrigin(req)) return socket.destroy();
+  const ip = clientIp(req);
+  if (!rateLimit(`ws:${ip}`, MAX_WS_CONNECTIONS_PER_IP)) return socket.destroy();
+  const pathname = new URL(req.url || "/", "http://localhost").pathname;
+  if (AUTH_REQUIRED && pathname !== "/display" && !sessionFor(req))
+    return socket.destroy();
+  wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+});
 const heartbeat = setInterval(() => {
+  const now = Date.now();
+  for (const [token, display] of displayTokens)
+    if (display.expiresAt <= now) displayTokens.delete(token);
+  let expiredSession = false;
+  for (const [token, session] of sessions)
+    if (session.expiresAt <= now) { sessions.delete(token); expiredSession = true; }
+  if (expiredSession) persistSessions();
   for (const ws of wss.clients) {
     if (!ws.isAlive) ws.terminate();
     else {
@@ -489,7 +874,7 @@ if (require.main === module)
   server.listen(PORT, HOST, () =>
     console.log("Wordrush listening on http://" + HOST + ":" + PORT),
   );
-module.exports = { server, rooms, handle, MAX_PLAYERS };
+module.exports = { server, rooms, handle, MAX_PLAYERS, displayTokens };
 
 const { Leaderboard } = require("./leaderboard");
 const leaderboard = new Leaderboard();
@@ -517,6 +902,33 @@ function readJson(req) {
 }
 async function leaderboardRequest(req, res) {
   const url = new URL(req.url, "http://localhost");
+  if (url.pathname === "/api/word-check" && req.method === "GET") {
+    const word = String(url.searchParams.get("word") || "")
+      .trim()
+      .toUpperCase();
+    if (!/^[A-Z]{3,36}$/.test(word)) {
+      res.writeHead(400, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      return res.end(JSON.stringify({ error: "INVALID_WORD" }));
+    }
+    const mode = url.searchParams.get("adult") === "1" ? "dirty" : "classic";
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "private, max-age=86400",
+    });
+    return res.end(JSON.stringify({ valid: isDictionaryWord(word, mode) }));
+  }
+  if (url.pathname === "/api/cast-config" && req.method === "GET") {
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    return res.end(
+      JSON.stringify({ applicationId: process.env.WORDRUSH_CAST_APPLICATION_ID || null }),
+    );
+  }
   if (url.pathname === "/api/leaderboard" && req.method === "GET") {
     const period = [
       "weekly",
@@ -564,6 +976,7 @@ server.removeListener("request", originalRequestHandler);
 server.on("request", async (req, res) => {
   try {
     if (res.writableEnded) return;
+    if (!(await authorizeRequest(req, res))) return;
     const handled = await leaderboardRequest(req, res);
     if (!handled && !res.writableEnded) originalRequestHandler(req, res);
   } catch {

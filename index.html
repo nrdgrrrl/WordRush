@@ -39,6 +39,9 @@
             ×
           </button>
         </div>
+        <button class="party-panel" id="partyMode" type="button">
+          <span>🎉</span><div><small>PARTY MODE</small><strong>Build the next round together</strong><em>Pick grid · words · time</em></div><b>→</b>
+        </button>
         <div
           class="mode-panel"
           id="randomPanel"
@@ -209,7 +212,8 @@
             >
           </div>
         </div>
-        <button class="primary" id="again">Play again →</button
+        <button class="primary" id="again">Play again →</button>
+        <button class="secondary" id="exitParty" hidden>Exit party mode</button>
         ><button class="secondary" id="stopRushResults" hidden>Stop rush</button
         ><button class="secondary" data-screen="homeScreen">
           Back to home
@@ -303,10 +307,11 @@
               Join with code
             </button>
           </div>
-          <div id="sessionLobby" hidden>
-            <p class="session-code-label">SESSION CODE</p>
+          <div id="sessionLobby" class="waiting-lobby" hidden>
+            <p class="session-code-label">YOUR PARTY LOBBY</p>
             <strong class="session-code" id="sessionCode">-----</strong>
-            <p id="sessionPlayersText">1 player connected</p>
+            <p id="sessionPlayersText">1 player connected</p><p class="lobby-status" id="lobbyStatus">Waiting for the host to start</p>
+            <div class="lobby-players" id="lobbyPlayers" aria-label="Players in this lobby"></div>
             <label for="sessionType">Game type (creator only)</label
             ><select id="sessionType">
               <option value="classic">Classic</option>
@@ -316,6 +321,21 @@
               <option value="dirty">Dirty mode</option>
               <option value="coop">Co-op</option>
               <option value="random">Random Rush</option></select
+            ><div class="cast-control" id="castControl" hidden>
+              <div>
+                <small>TV COMPANION</small>
+                <strong id="castStatus" aria-live="polite">Checking Cast support…</strong>
+              </div>
+              <button
+                type="button"
+                class="secondary"
+                id="castButton"
+                disabled
+                aria-describedby="castStatus"
+              >
+                Cast to TV
+              </button>
+            </div>
             ><button
               type="button"
               class="primary dialog-action"
@@ -327,7 +347,7 @@
               class="secondary dialog-action"
               id="sessionLeave"
             >
-              Leave session
+              Exit lobby
             </button>
           </div>
         </form>
@@ -380,6 +400,16 @@
           </button>
         </form>
       </dialog>
+      <dialog id="partyDialog">
+        <form method="dialog" id="partyForm">
+          <div class="dialog-head"><div><p class="eyebrow">🎉 PARTY MODE</p><h2>Make it your round</h2></div><button value="cancel" aria-label="Close">×</button></div>
+          <p class="party-prompt">Tap your rules, then let the word battle begin.</p>
+          <fieldset class="party-options"><legend>Grid size</legend><div><button type="button" data-party-size="4">4×4</button><button type="button" data-party-size="5">5×5</button><button type="button" data-party-size="6">6×6</button></div></fieldset>
+          <fieldset class="party-options"><legend>Minimum word</legend><div><button type="button" data-party-min="3">3</button><button type="button" data-party-min="4">4</button><button type="button" data-party-min="5">5</button></div></fieldset>
+          <fieldset class="party-options"><legend>Time limit</legend><div class="party-times"><button type="button" data-party-time="30">0:30</button><button type="button" data-party-time="60">1:00</button><button type="button" data-party-time="90">1:30</button><button type="button" data-party-time="120">2:00</button><button type="button" data-party-time="150">2:30</button><button type="button" data-party-time="180">3:00</button><button type="button" data-party-time="210">3:30</button><button type="button" data-party-time="240">4:00</button><button type="button" data-party-time="270">4:30</button><button type="button" data-party-time="300">5:00</button></div></fieldset>
+          <button class="primary dialog-save" value="start">Start party →</button>
+        </form>
+      </dialog>
       <dialog id="profileDialog">
         <form method="dialog" id="profileForm">
           <div class="dialog-head">
@@ -410,6 +440,7 @@
     <script src="stats.js"></script>
     <script src="achievements.js"></script>
     <script src="multiplayer-client.js"></script>
+    <script src="cast-sender.js"></script>
     <script src="leaderboard-client.js"></script>
     <script src="random-rush.js"></script>
     <script src="results.js"></script>
