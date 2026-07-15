@@ -59,9 +59,46 @@ configuration change, always run `sudo apache2ctl configtest` before
 
 ## Deploy and rollback
 
-Production is currently deployed manually to the RackNerd host, available as
-the `racknerd` SSH target. The live directory is an unpacked release rather
-than a Git checkout, so deploy from a clean, committed local checkout. Do not
+Production is deployed through `deploy/deploy-production`, using the
+`racknerd` SSH target. The live directory is an unpacked release rather than a
+Git checkout, so the tool deploys an explicit committed revision. It targets
+only `/home/victoria/sites/rush/wordrush` and the `wordrush` service; it does
+not modify Apache, certificates, or other sites under `/home/victoria/sites`.
+
+Run the default dry-run first. It checks the selected revision locally, reads
+the remote release marker, lists the planned file changes, and determines
+whether a service restart is necessary. It makes no production changes:
+
+```sh
+./deploy/deploy-production --commit HEAD --dry-run
+```
+
+After reviewing that output, deploy the exact same revision:
+
+```sh
+./deploy/deploy-production --commit HEAD --deploy
+```
+
+The deployment stages a Git-only archive remotely, installs production-only
+dependencies in that staging directory, validates it, then performs a bounded
+file-level activation into the WordRush directory. It creates a timestamped
+`wordrush.rollback-*.tgz` sibling artifact before activation, retains the
+three newest, and automatically restores it if a post-activation check fails.
+Static-only changes do not restart `wordrush`; server/runtime or dependency
+changes do. Output includes the revision, changed files, service action,
+rollback artifact, beta-gate result, and deployed hashes.
+
+To restore a listed rollback artifact immediately:
+
+```sh
+./deploy/rollback-production wordrush.rollback-YYYYMMDDTHHMMSSZ-<revision>.tgz
+```
+
+Both tools require passwordless SSH to `racknerd` and non-interactive sudo for
+`systemctl restart wordrush`. They never transfer `.env`, beta credentials,
+session data, Git metadata, local data, or ignored files.
+
+The old manual recovery procedure remains below for emergency use only. Do not
 run broad commands against `/home/victoria/sites`—that parent contains other
 sites.
 
