@@ -508,6 +508,84 @@ nav small {
   transform: none;
 }
 
+.game-mode-stack {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0 28px;
+}
+.game-mode-card {
+  width: 100%;
+  min-height: 88px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 14px 16px;
+  text-align: left;
+  color: #201a34;
+  border: 2px solid var(--mode-edge, #fff8cc);
+  border-radius: 18px;
+  background: linear-gradient(120deg, var(--mode-start), var(--mode-end));
+  box-shadow: 0 6px 0 var(--mode-shadow, #5c4b7d);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.game-mode-card:hover,
+.game-mode-card:focus-visible {
+  transform: translateY(-3px) rotate(-0.3deg);
+  box-shadow: 0 9px 0 var(--mode-shadow, #5c4b7d);
+}
+.game-mode-card:active {
+  transform: translateY(3px);
+  box-shadow: 0 3px 0 var(--mode-shadow, #5c4b7d);
+}
+.game-mode-card > span {
+  width: 42px;
+  font-size: 32px;
+  text-align: center;
+  filter: drop-shadow(0 2px 0 #ffffff99);
+}
+.game-mode-card > div {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+.game-mode-card small {
+  font: 900 10px monospace;
+  letter-spacing: 0.12em;
+}
+.game-mode-card strong {
+  font-size: 16px;
+}
+.game-mode-card em {
+  color: inherit;
+  font-size: 12px;
+  font-style: normal;
+  opacity: 0.78;
+}
+.game-mode-card > b {
+  font-size: 26px;
+}
+.mode-classic { --mode-start: #b7f5ff; --mode-end: #80b9ff; --mode-edge: #e7fbff; --mode-shadow: #5682bb; }
+.mode-random { --mode-start: #e2ff84; --mode-end: #7fe5a6; --mode-edge: #f6ffc4; --mode-shadow: #48956b; }
+.mode-sudden { --mode-start: #ffe16b; --mode-end: #ff9f65; --mode-edge: #fff3af; --mode-shadow: #c9743d; }
+.mode-dirty { --mode-start: #e9b7ff; --mode-end: #d77bc7; --mode-edge: #f8dbff; --mode-shadow: #985184; }
+.mode-race { --mode-start: #ffb0bc; --mode-end: #ff6f81; --mode-edge: #ffe0e5; --mode-shadow: #bd4b60; }
+.mode-minimum { --mode-start: #b7f0d0; --mode-end: #67d5cf; --mode-edge: #ddfff1; --mode-shadow: #459c9a; }
+.mode-random #reroll {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 50%;
+  background: #ffffff80;
+  color: inherit;
+  font-size: 24px;
+}
+@media (max-width: 380px) {
+  .game-mode-card { min-height: 80px; padding: 12px; }
+  .game-mode-card > span { width: 34px; font-size: 27px; }
+  .game-mode-card strong { font-size: 14px; }
+}
+
 :root {
   color-scheme: light dark;
 }

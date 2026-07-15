@@ -42,38 +42,29 @@
         <button class="party-panel" id="partyMode" type="button">
           <span>🎉</span><div><small>PARTY MODE</small><strong>Build the next round together</strong><em>Pick grid · words · time</em></div><b>→</b>
         </button>
-        <div
-          class="mode-panel"
-          id="randomPanel"
-          role="button"
-          tabindex="0"
-          aria-label="Start Random Rush"
-        >
-          <div>
-            <small>RANDOM RUSH</small
-            ><strong id="randomPreview">Minimum 4 · Sudden death</strong
-            ><span id="randomPreviewSub">3 minutes · 5×5 grid</span>
+        <div class="game-mode-stack" aria-label="Game modes">
+          <button class="game-mode-card mode-classic" data-mode="classic">
+            <span>🌈</span><div><small>CLASSIC</small><strong>Two minutes of word joy</strong><em>Free play · 4×4 grid</em></div><b>→</b>
+          </button>
+          <div class="game-mode-card mode-random" id="randomPanel" role="button" tabindex="0" aria-label="Start Random Rush">
+            <span>🎲</span><div><small>RANDOM RUSH</small><strong id="randomPreview">Minimum 4 · Sudden death</strong><em id="randomPreviewSub">3 minutes · 5×5 grid</em></div><button id="reroll" type="button" aria-label="Reroll Random Rush">↻</button>
           </div>
-          <button id="reroll">↻</button>
+          <button class="game-mode-card mode-sudden" data-mode="sudden">
+            <span>⚡</span><div><small>SUDDEN DEATH</small><strong>One miss ends the round</strong><em>All thrill · no safety net</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-dirty" data-mode="dirty">
+            <span>😼</span><div><small>DIRTY MODE</small><strong>Wordplay after dark</strong><em>18+ dictionary</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-race" data-mode="race">
+            <span>🏁</span><div><small>RACE TO 500</small><strong>Score fast. Finish first.</strong><em>Beat the clock to 500 points</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-minimum" data-mode="minimum">
+            <span>🦒</span><div><small>WORD STRETCH</small><strong>Make every word count</strong><em>Long words only</em></div><b>→</b>
+          </button>
         </div>
-        <h2>Choose your battle</h2>
+        <h2>More ways to play</h2>
         <div class="mode-grid">
-          <button data-mode="minimum">
-            <b>03</b><strong>Minimum</strong
-            ><small>Long words only</small></button
-          ><button data-mode="sudden">
-            <b>⚡</b><strong>Sudden death</strong
-            ><small>One miss ends it</small></button
-          ><button data-mode="race">
-            <b>↯</b><strong>Race mode</strong
-            ><small>First to 500 wins</small></button
-          ><button data-mode="dirty">
-            <b>😼</b><strong>Dirty mode</strong
-            ><small>18+ dictionary</small></button
-          ><button data-mode="classic">
-            <b>∞</b><strong>Classic</strong
-            ><small>2 minutes · free play</small></button
-          ><button id="dictionary">
+          <button id="dictionary">
             <b>＋</b><strong>My dictionary</strong
             ><small>Add your own words</small></button
           ><button id="customGame">
@@ -89,9 +80,7 @@
         </p>
         <div class="actions">
           <button class="primary" id="multiplayerButton">
-            👥 Multiplayer <span>→</span></button
-          ><button class="secondary" id="quickPlay">
-            Quick play <span>→</span>
+            👥 Multiplayer <span>→</span>
           </button>
         </div>
         <div class="stats">

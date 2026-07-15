@@ -92,7 +92,7 @@ test("browser can start, play, persist stats, and toggle dark mode", async () =>
   await page.goto(baseUrl);
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  await page.locator("#quickPlay").click();
+  await page.locator('button[data-mode="classic"]').click();
   assert.equal(
     await page
       .locator("#gameScreen")
@@ -223,7 +223,7 @@ test("solo play validates a traced word without downloading the dictionary", asy
     if (pathname === "/api/word-check") wordCheckRequests.push(request.url());
   });
   await page.goto(baseUrl);
-  await page.locator("#quickPlay").click();
+  await page.locator('button[data-mode="classic"]').click();
   const found = await page.evaluate(() => {
     const words = window.WordrushConfig.COMMON_WORDS;
     const letters = [...document.querySelectorAll(".tile")].map(
@@ -324,7 +324,7 @@ test("active games hide the title bar and preserve a no-scroll compact layout", 
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator("#quickPlay").click();
+  await page.locator('button[data-mode="classic"]').click();
   const layout = await page.evaluate(() => {
     const style = (selector) =>
       getComputedStyle(document.querySelector(selector));
@@ -836,7 +836,7 @@ test("browser exposes the expanded avatar set and unlocks achievement toasts", a
     background: getComputedStyle(node).backgroundColor,
   }));
   assert.notEqual(darkToast.color, darkToast.background);
-  await page.locator("#quickPlay").click();
+  await page.locator('button[data-mode="classic"]').click();
   await page.evaluate(() => {
     const profile = JSON.parse(localStorage.getItem("wordrush-profile"));
     profile.words = 1;
@@ -877,7 +877,7 @@ test("tracing animates selected tiles while keeping the saved trace line hidden"
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator("#quickPlay").click();
+  await page.locator('button[data-mode="classic"]').click();
   const tile = await page.locator(".tile").first().boundingBox();
   const point = { x: tile.x + tile.width / 2, y: tile.y + tile.height / 2 };
   await page.mouse.move(point.x, point.y);
@@ -942,7 +942,7 @@ test("touch tracing accepts tile edges without selecting diagonal gaps", async (
     hasTouch: true,
   });
   await page.goto(baseUrl);
-  await page.locator("#quickPlay").click();
+  await page.locator('button[data-mode="classic"]').click();
   const tiles = page.locator(".tile");
   const first = await tiles.nth(0).boundingBox();
   const gapPoint = {
@@ -969,7 +969,7 @@ test("diagonal tracing does not pick corner-crossed neighboring tiles", async ()
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator("#quickPlay").click();
+  await page.locator('button[data-mode="classic"]').click();
   const from = await page.locator(".tile").nth(0).boundingBox();
   const to = await page.locator(".tile").nth(5).boundingBox();
   const center = (box) => ({
@@ -1005,7 +1005,7 @@ test("a canceled pointer cannot clear a newer trace", async () => {
     hasTouch: true,
   });
   await page.goto(baseUrl);
-  await page.locator("#quickPlay").click();
+  await page.locator('button[data-mode="classic"]').click();
   const first = await page.locator(".tile").nth(0).boundingBox();
   const second = await page.locator(".tile").nth(1).boundingBox();
   await page.evaluate(

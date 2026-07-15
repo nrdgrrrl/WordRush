@@ -621,7 +621,7 @@ function pulseAcceptedWord(trace) {
     tiles.forEach((tile) => tile.classList.remove("word-correct"));
   }, 480);
 }
-$("#quickPlay").onclick = () => start("classic");
+$("#quickPlay")?.addEventListener("click", () => start("classic"));
 $("#navStats").onclick = () => show("statsScreen");
 $("#stopRush").onclick = stopRush;
 $("#stopRushResults").onclick = stopRush;
