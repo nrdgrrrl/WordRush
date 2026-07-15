@@ -19,7 +19,8 @@ app="$1"; artifact="$2"; restore="${artifact%.tgz}.restore-$$"
 mkdir "$restore"
 trap 'rm -rf "$restore"' EXIT
 tar -xzf "$artifact" -C "$restore"
-rsync -a --delete --exclude='.env' --exclude='data/' --exclude='*.log' "$restore/" "$app/"
+rsync -a --delete --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r \
+  --exclude='.env' --exclude='data/' --exclude='*.log' "$restore/" "$app/"
 sudo -n systemctl restart wordrush
 systemctl is-active --quiet wordrush
 echo "Restored $artifact; wordrush is active."

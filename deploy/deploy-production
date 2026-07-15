@@ -116,7 +116,7 @@ set -euo pipefail
 app="$1"; base="$2"; archive="$3"; stage="$4"; stamp="$5"; revision="$6"; restart="$7"; url="$8"
 case "$app" in /home/victoria/sites/rush/wordrush) ;; *) echo "Refusing unexpected app path" >&2; exit 2;; esac
 case "$stage" in /home/victoria/sites/rush/.wordrush-stage-*) ;; *) echo "Refusing unexpected stage path" >&2; exit 2;; esac
-umask 077
+umask 022
 activated=0
 rollback=""
 cleanup() { rm -rf "$stage" "$archive" "${restore:-}"; }
@@ -127,7 +127,8 @@ recover() {
     restore="$base/.wordrush-restore-$stamp"
     mkdir -p "$restore"
     tar -xzf "$rollback" -C "$restore"
-    rsync -a --delete --exclude='.env' --exclude='data/' --exclude='*.log' "$restore/" "$app/"
+    rsync -a --delete --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r \
+      --exclude='.env' --exclude='data/' --exclude='*.log' "$restore/" "$app/"
     if [ "$restart" = 1 ]; then sudo -n systemctl restart wordrush; fi
   fi
   exit "$status"
@@ -144,18 +145,32 @@ PATH=/opt/node/bin:$PATH node --check "$stage/server.js"
 # outside this archive and are explicitly excluded from both activation paths.
 rollback="$base/wordrush.rollback-$stamp.tgz"
 tar -C "$app" --exclude='.env' --exclude='data' --exclude='*.log' -czf "$rollback" .
+chmod 600 "$rollback"
 echo "Rollback artifact: $rollback"
 
 # This is a bounded WordRush-only file swap. rsync does not traverse the base
 # directory, and preserves ownership/modes already used by the live app.
-rsync -a --delete --exclude='.env' --exclude='data/' --exclude='*.log' --exclude='.wordrush-release' "$stage/" "$app/"
+rsync -a --delete --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r \
+  --exclude='.env' --exclude='data/' --exclude='*.log' --exclude='.wordrush-release' \
+  "$stage/" "$app/"
 printf '%s\n' "$revision" > "$app/.wordrush-release"
+chmod 664 "$app/.wordrush-release"
 activated=1
 if [ "$restart" = 1 ]; then
   sudo -n systemctl restart wordrush
 fi
 systemctl is-active --quiet wordrush
-headers="$(curl -fsSI --max-time 15 "$url")"
+# systemd can report active just before Node has bound its loopback socket.
+# Wait briefly for Apache to observe the expected unauthenticated beta redirect.
+headers=""
+for _ in $(seq 1 15); do
+  headers="$(curl -fsSI --max-time 15 "$url" || true)"
+  if printf '%s\n' "$headers" | grep -Eq '^HTTP/[0-9.]+ 30[23]' && \
+    printf '%s\n' "$headers" | grep -Eqi '^location: /auth/login'; then
+    break
+  fi
+  sleep 1
+done
 printf '%s\n' "$headers" | grep -Eq '^HTTP/[0-9.]+ 30[23]'
 printf '%s\n' "$headers" | grep -Eqi '^location: /auth/login'
 echo "HTTPS beta gate: ok"
