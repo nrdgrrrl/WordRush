@@ -548,10 +548,12 @@ async function submit() {
     emit("word-accepted", { word: w, points });
     if ((s.mode === "race" || s.target) && s.score >= 500) end();
   } else if (duplicate || s.found.has(w)) {
+    pulseIncorrectWord(trace);
     profile.incorrect++;
     updateProfile();
     toast("Already found");
   } else {
+    pulseIncorrectWord(trace);
     profile.incorrect++;
     updateProfile();
     toast(
@@ -606,21 +608,23 @@ function pick(t) {
   t.classList.add("selected");
   $("#preview").textContent = s.pick.map((i) => s.b[i]).join("");
 }
-function pulseAcceptedWord(trace) {
+function pulseWord(trace, className) {
   const tiles = trace
     .map((index) => document.querySelector('.tile[data-i="' + index + '"]'))
     .filter(Boolean);
   tiles.forEach((tile) => {
-    tile.classList.remove("word-correct");
+    tile.classList.remove("word-correct", "word-incorrect");
     // Restart the animation when a player finds another word before the
     // previous completion animation has fully finished.
     void tile.offsetWidth;
-    tile.classList.add("word-correct");
+    tile.classList.add(className);
   });
   setTimeout(() => {
-    tiles.forEach((tile) => tile.classList.remove("word-correct"));
-  }, 480);
+    tiles.forEach((tile) => tile.classList.remove(className));
+  }, 650);
 }
+function pulseAcceptedWord(trace) { pulseWord(trace, "word-correct"); }
+function pulseIncorrectWord(trace) { pulseWord(trace, "word-incorrect"); }
 $("#quickPlay")?.addEventListener("click", () => start("classic"));
 $("#navStats").onclick = () => show("statsScreen");
 $("#stopRush").onclick = stopRush;
@@ -712,6 +716,7 @@ window.wordrushRecordOnlineWord = (word, points) => {
   });
 };
 window.wordrushRecordOnlineIncorrect = () => {
+  if (s.pendingOnlineTrace) pulseIncorrectWord(s.pendingOnlineTrace.trace);
   s.pendingOnlineTrace = null;
   profile.incorrect++;
   updateProfile();
@@ -924,10 +929,17 @@ function safeCandidateAt(x, y, target = null, starting = false) {
     if (direct && grid.contains(direct)) return direct;
     // Rounded tile corners can make the browser report the board as the
     // target. Keep the full tile rectangle touchable at the start of a trace.
+    const gridRect = grid.getBoundingClientRect();
     return (
       [...grid.querySelectorAll(".tile")].find((candidate) => {
-        const rect = candidate.getBoundingClientRect();
-        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+        const left = gridRect.left + candidate.offsetLeft;
+        const top = gridRect.top + candidate.offsetTop;
+        return (
+          x >= left &&
+          x <= left + candidate.offsetWidth &&
+          y >= top &&
+          y <= top + candidate.offsetHeight
+        );
       }) || null
     );
   }

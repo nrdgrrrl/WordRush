@@ -928,6 +928,7 @@ test("tracing animates selected tiles while keeping the saved trace line hidden"
   assert.notEqual(await page.locator("#tracePath").getAttribute("d"), null);
   await page.mouse.up();
   assert.equal(await page.locator(".tile.selected").count(), 1);
+  assert.equal(await page.locator(".tile.word-incorrect").count(), 1);
   assert.notEqual(await page.locator("#tracePath").getAttribute("d"), null);
   await page.waitForTimeout(300);
   assert.equal(await page.locator(".tile.selected").count(), 0);
