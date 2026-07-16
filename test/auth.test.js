@@ -63,6 +63,16 @@ test("production beta gate protects HTTP and WebSocket access", async (t) => {
   const anonymous = await fetch(origin, { redirect: "manual" });
   assert.equal(anonymous.status, 303);
   assert.equal(anonymous.headers.get("location"), "/auth/login");
+  const loginForm = await (await fetch(origin + "/auth/login")).text();
+  assert.match(
+    loginForm,
+    /id="username"[^>]+name="username"[^>]+autocomplete="username"/,
+  );
+  assert.match(
+    loginForm,
+    /id="current-password"[^>]+name="password"[^>]+autocomplete="current-password"/,
+  );
+  assert.match(loginForm, /<form[^>]+autocomplete="on"/);
   const receiver = await fetch(origin + "/receiver/", { redirect: "manual" });
   assert.equal(receiver.status, 200);
   assert.match(

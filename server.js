@@ -182,7 +182,35 @@ function loginPage(res, returnPath = "/") {
   const loginAction = "/auth/login" +
     (returnPath === "/" ? "" : "?return=" + encodeURIComponent(returnPath));
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-  res.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wordrush beta</title><style>body{font:16px system-ui;margin:0;min-height:100vh;display:grid;place-items:center;background:#15131c;color:#fff}main{width:min(26rem,90vw)}input,button{box-sizing:border-box;width:100%;padding:.8rem;margin:.4rem 0;font:inherit}button{cursor:pointer}</style><main><h1>Wordrush private beta</h1><p>Enter your beta password to play.</p><form method="post" action="${loginAction}"><label>Password<input name="password" type="password" autocomplete="current-password" required autofocus></label><button>Continue</button></form></main></html>`);
+  res.end(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Wordrush beta</title>
+  <style>
+    body{font:16px system-ui;margin:0;min-height:100vh;display:grid;place-items:center;background:#15131c;color:#fff}
+    main{width:min(26rem,90vw)}
+    label{display:block;margin:.7rem 0}
+    input,button{box-sizing:border-box;width:100%;padding:.8rem;margin:.4rem 0;font:inherit}
+    input[readonly]{color:#bbb;background:#27232f;border:1px solid #51485f}
+    button{cursor:pointer}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Wordrush private beta</h1>
+    <p>Enter your beta password to play.</p>
+    <form method="post" action="${loginAction}" autocomplete="on">
+      <label for="username">Account</label>
+        <input id="username" name="username" type="text" value="Wordrush beta" autocomplete="username" readonly>
+      <label for="current-password">Password</label>
+        <input id="current-password" name="password" type="password" autocomplete="current-password" required autofocus>
+      <button type="submit">Continue</button>
+    </form>
+  </main>
+</body>
+</html>`);
 }
 function readForm(req) {
   return new Promise((resolve) => {
