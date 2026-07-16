@@ -2,6 +2,11 @@
 
 Production runs at `https://rush.nrdgrrrl.com`.
 
+The Apache template keeps player and Cast display WebSockets open for up to 24
+hours. Do not reduce the `/display` proxy timeout to a short request-style
+timeout: a Cast receiver may be idle between rounds while still needing to stay
+connected to the room.
+
 ## Runtime layout
 
 - Apache is the public TLS/WSS endpoint on ports 80 and 443.
