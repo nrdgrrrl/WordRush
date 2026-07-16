@@ -16,6 +16,9 @@
     creator = false,
     creatorId = "",
     roomStatus = "";
+  let reconnectTimer = null,
+    reconnectAttempts = 0,
+    intentionalLeave = false;
   let displayTokenRequest = null;
   const $ = (selector) => document.querySelector(selector);
   const goHome = () =>
@@ -33,6 +36,9 @@
     toast.timer = setTimeout(() => el.classList.remove("show"), 1800);
   };
   function clearSession(code = sessionCode) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    reconnectAttempts = 0;
     if (code) endedSessionCode = code;
     sessionCode = "";
     window.wordrushSessionCode = "";
@@ -40,6 +46,7 @@
     creatorId = "";
     roomStatus = "";
     localStorage.removeItem("wordrush-room");
+    localStorage.removeItem("wordrush-room-token");
     $("#multiplayerBanner").hidden = true;
     $("#multiplayerBannerText").textContent = "No active session";
     $("#sessionLobby").hidden = true;
@@ -153,19 +160,60 @@
     sessionDialog();
   }
   function sendWhenReady(payload) {
-    const send = () => socket.send(JSON.stringify(payload));
-    socket.readyState === 1
+    const target = socket;
+    const send = () => {
+      if (target.readyState === WebSocket.OPEN)
+        target.send(JSON.stringify(payload));
+    };
+    target.readyState === WebSocket.OPEN
       ? send()
-      : socket.addEventListener("open", send, { once: true });
+      : target.addEventListener("open", send, { once: true });
   }
-  function connect() {
+  function savedSession() {
+    const code = localStorage.getItem("wordrush-room") || "";
+    const reconnectToken = localStorage.getItem("wordrush-room-token") || "";
+    return /^[A-Z]{5}$/.test(code) && reconnectToken
+      ? { code, reconnectToken }
+      : null;
+  }
+  function rememberSession(message) {
+    localStorage.setItem("wordrush-room", message.code);
+    localStorage.setItem("wordrush-room-token", message.reconnectToken);
+  }
+  function scheduleReconnect() {
+    if (reconnectTimer || intentionalLeave) return;
+    const saved = savedSession();
+    if (!saved) {
+      clearSession();
+      return goHome();
+    }
+    const delay = window.wordrushReconnectDelayMs ??
+      Math.min(500 * 2 ** reconnectAttempts, 10_000);
+    reconnectAttempts += 1;
+    $("#multiplayerBanner").hidden = false;
+    $("#multiplayerBannerText").textContent = "Reconnecting to session…";
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect(saved);
+    }, delay);
+  }
+  function connect(resume = null) {
     if (socket && socket.readyState <= 1) return socket;
-    socket = new WebSocket(socketUrl);
-    window.wordrushSocket = socket;
-    socket.addEventListener("open", () =>
-      socket.send(JSON.stringify({ type: "hello", guestId, ...identity() })),
-    );
-    socket.addEventListener("message", (event) => {
+    const activeSocket = new WebSocket(socketUrl);
+    socket = activeSocket;
+    window.wordrushSocket = activeSocket;
+    activeSocket.addEventListener("open", () => {
+      activeSocket.send(JSON.stringify({ type: "hello", guestId, ...identity() }));
+      if (resume)
+        activeSocket.send(JSON.stringify({
+          type: "resume_room",
+          code: resume.code,
+          reconnectToken: resume.reconnectToken,
+          ...identity(),
+        }));
+    });
+    activeSocket.addEventListener("message", (event) => {
+      if (socket !== activeSocket) return;
       let message;
       try {
         message = JSON.parse(event.data);
@@ -173,26 +221,34 @@
         return toast("Received an invalid server message");
       }
       if (message.type === "session_closed") {
+        intentionalLeave = false;
         clearSession(message.code);
         goHome();
         if ($("#multiplayerDialog").open) $("#multiplayerDialog").close();
         toast("Multiplayer session ended");
       }
       if (message.type === "session_left") {
+        intentionalLeave = false;
         clearSession(message.code);
         goHome();
         if ($("#multiplayerDialog").open) $("#multiplayerDialog").close();
         toast("Left multiplayer session");
       }
       if (message.type === "room_created") {
-        localStorage.setItem("wordrush-room", message.code);
+        rememberSession(message);
         showLobby(message.code, true);
         toast("Session " + message.code + " created");
       }
       if (message.type === "joined_room") {
-        localStorage.setItem("wordrush-room", message.code);
+        rememberSession(message);
         showLobby(message.code, false);
         toast("Joined session " + message.code);
+      }
+      if (message.type === "room_resumed") {
+        reconnectAttempts = 0;
+        rememberSession(message);
+        if (!sessionCode) showLobby(message.code, false);
+        toast("Session reconnected");
       }
       if (message.type === "room_state" && message.code !== endedSessionCode) {
         roomStatus = message.status;
@@ -274,6 +330,14 @@
       }
       if (message.type === "results_settings")
         window.wordrushResultsSettings?.(message.results);
+      if (message.type === "error" && message.code === "RESUME_FAILED") {
+        intentionalLeave = false;
+        clearSession(resume?.code);
+        goHome();
+        if ($("#multiplayerDialog").open) $("#multiplayerDialog").close();
+        toast("That multiplayer session has ended");
+        activeSocket.close(1000, "resume failed");
+      }
       if (message.type === "error")
         if (displayTokenRequest) {
           const request = displayTokenRequest;
@@ -284,12 +348,24 @@
       if (message.type === "error")
         toast(message.code.replaceAll("_", " ").toLowerCase());
     });
-    socket.addEventListener("close", () => {
+    activeSocket.addEventListener("close", () => {
+      if (socket !== activeSocket) return;
+      socket = null;
       window.wordrushSocket = null;
-      clearSession();
-      goHome();
+      if (displayTokenRequest) {
+        const request = displayTokenRequest;
+        displayTokenRequest = null;
+        clearTimeout(request.timer);
+        request.reject(new Error("DISPLAY_TOKEN_CONNECTION_LOST"));
+      }
+      if (intentionalLeave) {
+        intentionalLeave = false;
+        clearSession();
+        return goHome();
+      }
+      scheduleReconnect();
     });
-    return socket;
+    return activeSocket;
   }
   window.wordrushIdentityChanged = () => {
     if (socket?.readyState === 1 && sessionCode)
@@ -328,6 +404,9 @@
   };
   $("#sessionManage")?.addEventListener("click", () => sessionDialog());
   $("#sessionCreate")?.addEventListener("click", () => {
+    localStorage.removeItem("wordrush-room");
+    localStorage.removeItem("wordrush-room-token");
+    intentionalLeave = false;
     const ws = connect();
     sendWhenReady({ type: "create_room", ...identity() });
   });
@@ -336,6 +415,9 @@
       ?.trim()
       .toUpperCase();
     if (!/^[A-Z]{5}$/.test(code || "")) return toast("Enter a 5-letter code");
+    localStorage.removeItem("wordrush-room");
+    localStorage.removeItem("wordrush-room-token");
+    intentionalLeave = false;
     socket = connect();
     sendWhenReady({ type: "join_room", code, ...identity() });
   });
@@ -345,9 +427,14 @@
   if (joinFromLink) {
     history.replaceState({}, "", location.pathname + location.hash);
     if (/^[A-Z]{5}$/.test(joinFromLink)) {
+      localStorage.removeItem("wordrush-room");
+      localStorage.removeItem("wordrush-room-token");
       socket = connect();
       sendWhenReady({ type: "join_room", code: joinFromLink, ...identity() });
     } else toast("That room code is invalid");
+  } else {
+    const saved = savedSession();
+    if (saved) connect(saved);
   }
   $("#sessionStart")?.addEventListener("click", () => {
     const mode = $("#sessionType").value;
@@ -367,16 +454,14 @@
       leaveSession();
   });
   function leaveSession() {
+    intentionalLeave = true;
     if (socket?.readyState === 1 && sessionCode)
       sendWhenReady({ type: "leave_session" });
     else {
+      intentionalLeave = false;
       clearSession();
       goHome();
       sessionDialog(false);
     }
   }
-  window.addEventListener("pagehide", () => {
-    if (creator && sessionCode && socket?.readyState === WebSocket.OPEN)
-      socket.send(JSON.stringify({ type: "leave_session" }));
-  });
 })();

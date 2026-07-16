@@ -29,6 +29,12 @@ const SESSION_FILE = process.env.WORDRUSH_SESSION_FILE || "";
 const DISPLAY_TOKEN_TTL_MS = Number(
   process.env.WORDRUSH_DISPLAY_TOKEN_TTL_MS || 5 * 60 * 1000,
 );
+const DISPLAY_RECONNECT_TTL_MS = Number(
+  process.env.WORDRUSH_DISPLAY_RECONNECT_TTL_MS || 8 * 60 * 60 * 1000,
+);
+const ROOM_RECONNECT_GRACE_MS = Number(
+  process.env.WORDRUSH_ROOM_RECONNECT_GRACE_MS || 15 * 60 * 1000,
+);
 const MAX_HTTP_BODY = 10_000;
 const MAX_WS_CONNECTIONS_PER_IP = Number(process.env.WORDRUSH_MAX_WS_PER_IP || 60);
 const MAX_WS_MESSAGES_PER_WINDOW = Number(
@@ -37,6 +43,7 @@ const MAX_WS_MESSAGES_PER_WINDOW = Number(
 const RATE_WINDOW_MS = 60_000;
 const sessions = new Map();
 const displayTokens = new Map();
+const displayCredentials = new Map();
 const rateLimits = new Map();
 const configuredOrigins = (process.env.WORDRUSH_ALLOWED_ORIGINS || "")
   .split(",")
@@ -326,7 +333,7 @@ function code() {
   return value;
 }
 function send(ws, message) {
-  if (ws.readyState === 1) ws.send(JSON.stringify(message));
+  if (ws?.readyState === 1) ws.send(JSON.stringify(message));
 }
 function cleanText(value, fallback, max = 20) {
   const cleaned = String(value ?? fallback)
@@ -426,6 +433,7 @@ function closeRoom(room, reason) {
   clearRoomTimer(room);
   rooms.delete(room.code);
   for (const member of room.players.values()) {
+    clearTimeout(member.disconnectTimer);
     const memberClient = clients.get(member.ws);
     if (memberClient) memberClient.roomCode = null;
     send(member.ws, { type: "session_closed", code: room.code, reason });
@@ -436,6 +444,8 @@ function closeRoom(room, reason) {
     ws.close(1000, "room closed");
   }
   room.displays.clear();
+  for (const [token, credential] of displayCredentials)
+    if (credential.roomCode === room.code) displayCredentials.delete(token);
   room.players.clear();
   room.round = null;
   room.status = "closed";
@@ -576,7 +586,29 @@ function consumeDisplayToken(value) {
   if (record.expiresAt <= Date.now()) return null;
   const room = rooms.get(record.roomCode);
   if (!room || room.status === "closed") return null;
-  return room;
+  const reconnectToken = crypto.randomBytes(32).toString("base64url");
+  displayCredentials.set(reconnectToken, {
+    roomCode: room.code,
+    expiresAt: Date.now() + DISPLAY_RECONNECT_TTL_MS,
+    ws: null,
+  });
+  return { room, reconnectToken };
+}
+function resumeDisplay(value) {
+  const token = typeof value === "string" ? value : "";
+  const credential = displayCredentials.get(token);
+  if (!credential || credential.expiresAt <= Date.now()) {
+    if (credential) displayCredentials.delete(token);
+    return null;
+  }
+  const room = rooms.get(credential.roomCode);
+  if (!room || room.status === "closed") {
+    displayCredentials.delete(token);
+    return null;
+  }
+  if (credential.ws?.readyState === 1) return null;
+  credential.expiresAt = Date.now() + DISPLAY_RECONNECT_TTL_MS;
+  return { room, reconnectToken: token };
 }
 function leaveDisplay(ws) {
   const display = displays.get(ws);
@@ -584,6 +616,20 @@ function leaveDisplay(ws) {
   displays.delete(ws);
   const room = rooms.get(display.roomCode);
   room?.displays.delete(ws);
+  const credential = displayCredentials.get(display.reconnectToken);
+  if (credential?.ws === ws) credential.ws = null;
+}
+function expireDisconnectedPlayer(room, player, ws) {
+  if (rooms.get(room.code) !== room || player.ws !== ws) return;
+  player.disconnectTimer = null;
+  if (player.id === room.creatorId)
+    return closeRoom(room, "creator_reconnect_timeout");
+  room.players.delete(player.id);
+  if (!room.players.size) {
+    clearRoomTimer(room);
+    return rooms.delete(room.code);
+  }
+  broadcast(room, state(room));
 }
 function leave(ws) {
   const info = clients.get(ws);
@@ -591,25 +637,45 @@ function leave(ws) {
   clients.delete(ws);
   const room = rooms.get(info.roomCode);
   if (!room) return;
-  if (info.id === room.creatorId) {
-    return closeRoom(room, "creator_disconnected");
-  }
-  room.players.delete(info.id);
-  if (!room.players.size) return rooms.delete(room.code);
+  const player = room.players.get(info.id);
+  if (!player || player.ws !== ws) return;
+  clearTimeout(player.disconnectTimer);
+  player.disconnectTimer = setTimeout(
+    () => expireDisconnectedPlayer(room, player, ws),
+    ROOM_RECONNECT_GRACE_MS,
+  );
+  player.disconnectTimer.unref?.();
   broadcast(room, state(room));
 }
 function handle(ws, message) {
   const type = message?.type;
   if (ws.connectionRole === "display") {
-    if (type !== "display_hello")
+    if (type !== "display_hello" && type !== "display_resume")
       return send(ws, { type: "error", code: "DISPLAY_READ_ONLY" });
     if (displays.has(ws))
       return send(ws, { type: "error", code: "DISPLAY_ALREADY_AUTHENTICATED" });
-    const room = consumeDisplayToken(message.token);
-    if (!room) return send(ws, { type: "error", code: "INVALID_DISPLAY_TOKEN" });
-    displays.set(ws, { roomCode: room.code });
+    const authenticated = type === "display_resume"
+      ? resumeDisplay(message.token)
+      : consumeDisplayToken(message.token);
+    if (!authenticated)
+      return send(ws, {
+        type: "error",
+        code: type === "display_resume"
+          ? "INVALID_DISPLAY_CREDENTIAL"
+          : "INVALID_DISPLAY_TOKEN",
+      });
+    const { room, reconnectToken } = authenticated;
+    const credential = displayCredentials.get(reconnectToken);
+    credential.ws = ws;
+    displays.set(ws, { roomCode: room.code, reconnectToken });
     room.displays.add(ws);
-    return send(ws, displayUpdate(room, "display_connected"));
+    return send(ws, {
+      ...displayUpdate(
+        room,
+        type === "display_resume" ? "display_reconnected" : "display_connected",
+      ),
+      reconnectToken,
+    });
   }
   if (type === "hello") {
     const id = String(message.guestId || crypto.randomUUID());
@@ -623,6 +689,29 @@ function handle(ws, message) {
   }
   const client = clients.get(ws);
   if (!client) return send(ws, { type: "error", code: "HELLO_REQUIRED" });
+  if (type === "resume_room") {
+    const room = rooms.get(String(message.code || "").toUpperCase());
+    const player = room?.players.get(client.id);
+    if (!room || !player || player.reconnectToken !== message.reconnectToken)
+      return send(ws, { type: "error", code: "RESUME_FAILED" });
+    const oldSocket = player.ws;
+    clearTimeout(player.disconnectTimer);
+    player.disconnectTimer = null;
+    client.roomCode = room.code;
+    client.name = cleanText(message.name, player.name);
+    client.avatar = cleanText(message.avatar, player.avatar || "🐈", 2);
+    player.name = client.name;
+    player.avatar = client.avatar;
+    player.ws = ws;
+    if (oldSocket !== ws && oldSocket?.readyState <= 1)
+      oldSocket.close(1000, "connection resumed elsewhere");
+    send(ws, {
+      type: "room_resumed",
+      code: room.code,
+      reconnectToken: player.reconnectToken,
+    });
+    return broadcast(room, state(room));
+  }
   if (type === "create_room") {
     if (client.roomCode && rooms.has(client.roomCode))
       return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
@@ -648,14 +737,21 @@ function handle(ws, message) {
     room.creatorId = client.id;
     client.name = cleanText(message.name, client.name);
     client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
-    room.players.set(client.id, {
+    const player = {
       ...client,
       ws,
+      reconnectToken: crypto.randomBytes(32).toString("base64url"),
+      disconnectTimer: null,
       score: room.mode === "coop" ? room.teamScore : 0,
       words: [],
       found: new Set(),
+    };
+    room.players.set(client.id, player);
+    send(ws, {
+      type: "room_created",
+      code: room.code,
+      reconnectToken: player.reconnectToken,
     });
-    send(ws, { type: "room_created", code: room.code });
     broadcast(room, state(room));
     return;
   }
@@ -671,14 +767,21 @@ function handle(ws, message) {
     client.roomCode = room.code;
     client.name = cleanText(message.name, client.name);
     client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
-    room.players.set(client.id, {
+    const player = {
       ...client,
       ws,
+      reconnectToken: crypto.randomBytes(32).toString("base64url"),
+      disconnectTimer: null,
       score: room.mode === "coop" ? room.teamScore : 0,
       words: [],
       found: new Set(),
+    };
+    room.players.set(client.id, player);
+    send(ws, {
+      type: "joined_room",
+      code: room.code,
+      reconnectToken: player.reconnectToken,
     });
-    send(ws, { type: "joined_room", code: room.code });
     broadcast(room, state(room));
     return;
   }
@@ -706,6 +809,7 @@ function handle(ws, message) {
     if (client.id === leavingRoom.creatorId) {
       closeRoom(leavingRoom, "creator_left");
     } else {
+      clearTimeout(leavingRoom.players.get(client.id)?.disconnectTimer);
       leavingRoom.players.delete(client.id);
       client.roomCode = null;
       send(ws, { type: "session_left" });
@@ -866,6 +970,7 @@ wss.on("connection", (ws, req) => {
       ? "display"
       : "player";
   ws.isAlive = true;
+  ws.connectedAt = Date.now();
   ws.messageWindow = { startedAt: Date.now(), count: 0 };
   ws.on("pong", () => {
     ws.isAlive = true;
@@ -883,7 +988,15 @@ wss.on("connection", (ws, req) => {
       send(ws, { type: "error", code: "BAD_MESSAGE" });
     }
   });
-  ws.on("close", () => leave(ws));
+  ws.on("close", (code, reason) => {
+    const client = clients.get(ws);
+    const display = displays.get(ws);
+    if (process.env.NODE_ENV === "production" || process.env.WORDRUSH_LOG_WS === "1")
+      console.log(
+        `Wordrush WebSocket closed role=${ws.connectionRole} room=${client?.roomCode || display?.roomCode || "none"} code=${code} durationMs=${Date.now() - ws.connectedAt} reason=${String(reason || "none").slice(0, 80)}`,
+      );
+    leave(ws);
+  });
 });
 server.on("upgrade", (req, socket, head) => {
   if (!allowedHost(req) || !allowedOrigin(req)) return socket.destroy();
@@ -898,6 +1011,12 @@ const heartbeat = setInterval(() => {
   const now = Date.now();
   for (const [token, display] of displayTokens)
     if (display.expiresAt <= now) displayTokens.delete(token);
+  for (const [token, credential] of displayCredentials)
+    if (credential.expiresAt <= now) {
+      if (credential.ws?.readyState === 1)
+        credential.expiresAt = now + DISPLAY_RECONNECT_TTL_MS;
+      else displayCredentials.delete(token);
+    }
   let expiredSession = false;
   for (const [token, session] of sessions)
     if (session.expiresAt <= now) { sessions.delete(token); expiredSession = true; }
@@ -915,7 +1034,14 @@ if (require.main === module)
   server.listen(PORT, HOST, () =>
     console.log("Wordrush listening on http://" + HOST + ":" + PORT),
   );
-module.exports = { server, rooms, handle, MAX_PLAYERS, displayTokens };
+module.exports = {
+  server,
+  rooms,
+  handle,
+  MAX_PLAYERS,
+  displayTokens,
+  displayCredentials,
+};
 
 const { Leaderboard } = require("./leaderboard");
 const leaderboard = new Leaderboard();

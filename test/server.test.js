@@ -7,11 +7,12 @@ const WebSocket = require("ws");
 const { COMMON_WORDS, ADULT_WORDS } = require("../game-config");
 const { neighbors } = require("../game-core");
 process.env.RANDOM_RUSH_DELAY = "50";
+process.env.WORDRUSH_ROOM_RECONNECT_GRACE_MS = "100";
 process.env.WORDRUSH_LEADERBOARD_FILE = path.join(
   fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-server-")),
   "leaderboard.json",
 );
-const { server, rooms, displayTokens } = require("../server");
+const { server, rooms, displayTokens, displayCredentials } = require("../server");
 function message(ws, type, payload = {}) {
   ws.send(JSON.stringify({ type, ...payload }));
 }
@@ -99,6 +100,7 @@ test.after(
       for (const room of rooms.values()) room.displays.forEach((ws) => ws.close());
       rooms.clear();
       displayTokens.clear();
+      displayCredentials.clear();
       server.close(resolve);
     }),
 );
@@ -145,7 +147,7 @@ test("rejects the eleventh player", async () => {
   players.forEach((ws) => ws.close());
 });
 
-test("display tokens grant one room-scoped, read-only connection", async () => {
+test("display tokens grant a room-scoped connection that can resume independently", async () => {
   const host = await client("display-host");
   const createdPromise = next(host, "room_created");
   const lobbyPromise = next(host, "room_state");
@@ -159,16 +161,28 @@ test("display tokens grant one room-scoped, read-only connection", async () => {
   assert.equal(typeof token.token, "string");
   assert.ok(token.expiresAt > Date.now());
 
-  const display = await displayClient();
+  let display = await displayClient();
   const displayState = next(display, "display_state");
   message(display, "display_hello", { token: token.token });
   const initial = await displayState;
   assert.equal(initial.event, "display_connected");
   assert.equal(initial.state.code, created.code);
   assert.equal(initial.state.players.length, 1);
+  assert.equal(typeof initial.reconnectToken, "string");
   assert.equal("creatorId" in initial.state, false);
   assert.equal("id" in initial.state.players[0], false);
   assert.equal(rooms.get(created.code).players.size, 1);
+  assert.equal(rooms.get(created.code).displays.size, 1);
+
+  const reconnectToken = initial.reconnectToken;
+  display.close();
+  await new Promise((resolve) => display.once("close", resolve));
+  display = await displayClient();
+  const reconnectedState = next(display, "display_state");
+  message(display, "display_resume", { token: reconnectToken });
+  const reconnected = await reconnectedState;
+  assert.equal(reconnected.event, "display_reconnected");
+  assert.equal(reconnected.state.code, created.code);
   assert.equal(rooms.get(created.code).displays.size, 1);
 
   const denied = next(display, "error");
@@ -397,7 +411,7 @@ test("creator leaving closes the session for every connected player", async () =
   guest.close();
 });
 
-test("creator disconnecting closes the session for every connected player", async () => {
+test("creator can resume after a transient disconnect before the grace period expires", async () => {
   const host = await client("disconnecting-host");
   const guest = await client("disconnecting-guest");
   const createdPromise = next(host, "room_created");
@@ -411,8 +425,24 @@ test("creator disconnecting closes the session for every connected player", asyn
     name: "DisconnectingGuest",
   });
   await joinedPromise;
-  const closedGuest = next(guest, "session_closed");
   host.close();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(rooms.has(created.code), true);
+
+  const resumedHost = await client("disconnecting-host");
+  const resumedPromise = next(resumedHost, "room_resumed");
+  message(resumedHost, "resume_room", {
+    code: created.code,
+    reconnectToken: created.reconnectToken,
+  });
+  assert.equal((await resumedPromise).code, created.code);
+  assert.equal(
+    rooms.get(created.code).players.get("disconnecting-host").ws.readyState,
+    WebSocket.OPEN,
+  );
+
+  const closedGuest = next(guest, "session_closed");
+  resumedHost.close();
   await closedGuest;
   assert.equal(rooms.has(created.code), false);
   guest.close();

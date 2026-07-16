@@ -221,7 +221,7 @@ test(
   },
 );
 
-test("refreshing the creator closes the room for connected guests", async () => {
+test("refreshing the creator resumes the room for connected guests", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const host = await browser.newPage();
   const guest = await browser.newPage();
@@ -241,11 +241,13 @@ test("refreshing the creator closes the room for connected guests", async () => 
       .textContent.includes("2 player"),
   );
   await host.reload();
-  await guest.waitForFunction(
+  await host.waitForFunction(
     () =>
-      document.querySelector("#multiplayerBanner").hidden &&
-      document.querySelector("#homeScreen").classList.contains("active"),
+      window.wordrushSessionCode &&
+      document.querySelector("#sessionPlayersText").textContent.includes("2 player"),
   );
-  assert.equal(rooms.has(code), false);
+  assert.equal(await host.locator("#sessionCode").textContent(), code);
+  assert.equal(await guest.locator("#multiplayerBanner").isHidden(), false);
+  assert.equal(rooms.has(code), true);
   await browser.close();
 });

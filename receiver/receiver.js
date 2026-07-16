@@ -5,6 +5,9 @@
   const connection = document.querySelector("#connection");
   let socket;
   let castContext;
+  let reconnectToken = "";
+  let reconnectTimer = null;
+  let reconnectAttempts = 0;
 
   const escape = (value) =>
     String(value ?? "").replace(/[&<>'"]/g, (character) =>
@@ -44,34 +47,67 @@
       for (const sender of senders) castContext.sendCustomMessage(NAMESPACE, sender.id, message);
     } catch {}
   };
-  const connectDisplay = (token) => {
+  const connectDisplay = (token, resume = false) => {
     if (typeof token !== "string" || !token) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    if (!resume) {
+      reconnectToken = "";
+      reconnectAttempts = 0;
+    }
     const previousSocket = socket;
-    connection.textContent = "Connecting to room…";
+    let reconnectRequested = false;
+    connection.textContent = resume ? "Reconnecting to room…" : "Connecting to room…";
     const displaySocket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/display`);
     socket = displaySocket;
     previousSocket?.close();
     displaySocket.addEventListener("open", () =>
-      displaySocket.send(JSON.stringify({ type: "display_hello", token })),
+      displaySocket.send(JSON.stringify({
+        type: resume ? "display_resume" : "display_hello",
+        token,
+      })),
     );
     displaySocket.addEventListener("message", ({ data }) => {
       if (socket !== displaySocket) return;
       let message;
       try { message = JSON.parse(data); } catch { return; }
-      if (message.type === "display_state") return render(message.state);
-      if (message.type === "session_closed") return render({ status: "closed" });
+      if (message.type === "display_state") {
+        if (message.reconnectToken) reconnectToken = message.reconnectToken;
+        reconnectAttempts = 0;
+        return render(message.state);
+      }
+      if (message.type === "session_closed") {
+        reconnectToken = "";
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+        render({ status: "closed" });
+        connection.textContent = "Room closed";
+        return;
+      }
       if (message.type === "error") {
+        reconnectToken = "";
         renderIdle("This room connection was not authorized. Cast the room again from your phone.");
         connection.textContent = "Authorization required";
+        reconnectRequested = true;
         notifySender({ type: "display_reconnect_needed", code: message.code });
+        displaySocket.close();
       }
     });
     displaySocket.addEventListener("close", () => {
       if (socket !== displaySocket) return;
-      if (screen.classList.contains("idle")) return;
-      renderIdle("The room connection was interrupted. Reconnecting from your phone…");
-      connection.textContent = "Room connection ended";
-      notifySender({ type: "display_reconnect_needed" });
+      socket = null;
+      if (!reconnectToken) {
+        if (!reconnectRequested) notifySender({ type: "display_reconnect_needed" });
+        return;
+      }
+      connection.textContent = "Room connection interrupted — reconnecting…";
+      const delay = window.wordrushDisplayReconnectDelayMs ??
+        Math.min(1000 * 2 ** reconnectAttempts, 10_000);
+      reconnectAttempts += 1;
+      reconnectTimer = setTimeout(
+        () => connectDisplay(reconnectToken, true),
+        delay,
+      );
     });
   };
   const startCastReceiver = () => {

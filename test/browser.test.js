@@ -36,7 +36,7 @@ test("receiver preview is public and awaits Cast room context", async () => {
   await browser.close();
 });
 
-test("receiver renders room states and clears stale scores after a dropped connection", async () => {
+test("receiver preserves room state and reconnects itself after a dropped connection", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
   await page.route("**/cast_receiver_framework.js", (route) =>
@@ -48,6 +48,7 @@ test("receiver renders room states and clears stale scores after a dropped conne
         this.url = url;
         this.listeners = new Map();
         window.__receiverSocket = this;
+        window.__receiverSockets = [...(window.__receiverSockets || []), this];
         queueMicrotask(() => this.emit("open"));
       }
       addEventListener(type, handler) {
@@ -60,6 +61,7 @@ test("receiver renders room states and clears stale scores after a dropped conne
       close() { this.emit("close"); }
     }
     window.WebSocket = FakeWebSocket;
+    window.wordrushDisplayReconnectDelayMs = 0;
     window.cast = { framework: { CastReceiverContext: { getInstance: () => ({
       addCustomMessageListener: (_namespace, handler) => { window.__receiverHandler = handler; },
       getSenders: () => [], sendCustomMessage: () => {},
@@ -74,7 +76,7 @@ test("receiver renders room states and clears stale scores after a dropped conne
   await page.evaluate(() => window.__receiverHandler({ data: { type: "display_token", token: "test-token" } }));
   await page.waitForFunction(() => window.__receiverMessages?.length === 1);
   await page.evaluate(() => window.__receiverSocket.emit("message", { data: JSON.stringify({
-    type: "display_state", state: {
+    type: "display_state", reconnectToken: "reconnect-token", state: {
       status: "lobby", code: "ABCDE", players: [
         { name: "Host", avatar: "🐈", score: 0 },
         { name: "Guest", avatar: "🦊", score: 0 },
@@ -99,8 +101,14 @@ test("receiver renders room states and clears stale scores after a dropped conne
   assert.equal(await page.locator(".score-card").count(), 10);
   assert.match(await page.locator("#eyebrow").textContent(), /LIVE SCOREBOARD/);
   await page.evaluate(() => window.__receiverSocket.emit("close"));
-  assert.match(await page.locator("h1").textContent(), /Cast a room/);
-  assert.match(await page.locator("#connection").textContent(), /ended/);
+  await page.waitForFunction(() => window.__receiverSockets?.length === 2);
+  await page.waitForFunction(() => window.__receiverMessages?.length === 2);
+  assert.deepEqual(
+    JSON.parse(await page.evaluate(() => window.__receiverMessages[1])),
+    { type: "display_resume", token: "reconnect-token" },
+  );
+  assert.equal(await page.locator(".score-card").count(), 10);
+  assert.match(await page.locator("#connection").textContent(), /Reconnecting/i);
   await browser.close();
 });
 
@@ -806,7 +814,7 @@ test("two-player lobby synchronizes roles and guest exit leaves the host room op
   await browser.close();
 });
 
-test("multiplayer banner disappears when its connection is lost", async () => {
+test("multiplayer session reconnects when its socket is lost", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
@@ -821,17 +829,23 @@ test("multiplayer banner disappears when its connection is lost", async () => {
   await page.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
   );
+  const code = await page.locator("#sessionCode").textContent();
   assert.equal(await page.locator("#multiplayerBanner").isHidden(), false);
-  await page.evaluate(() => window.wordrushSocket.close());
+  await page.evaluate(() => {
+    window.wordrushReconnectDelayMs = 0;
+    const oldSocket = window.wordrushSocket;
+    window.__oldWordrushSocket = oldSocket;
+    oldSocket.close();
+  });
   await page.waitForFunction(
-    () => document.querySelector("#multiplayerBanner").hidden,
+    () =>
+      window.wordrushSocket &&
+      window.wordrushSocket !== window.__oldWordrushSocket &&
+      window.wordrushSocket.readyState === WebSocket.OPEN &&
+      window.wordrushSessionCode,
   );
-  assert.equal(
-    await page
-      .locator("#homeScreen")
-      .evaluate((node) => node.classList.contains("active")),
-    true,
-  );
+  assert.equal(await page.locator("#multiplayerBanner").isHidden(), false);
+  assert.equal(await page.locator("#sessionCode").textContent(), code);
   await browser.close();
 });
 
