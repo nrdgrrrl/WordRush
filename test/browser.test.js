@@ -673,6 +673,43 @@ test("multiplayer creates a five-letter session and launches co-op", async () =>
   await browser.close();
 });
 
+test("a joining guest cannot fall through to solo play and the host can reopen the QR", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const guest = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await Promise.all([host.goto(baseUrl), guest.goto(baseUrl)]);
+  await host.locator("#sessionManage").click();
+  await host.locator("#sessionCreate").click();
+  await host.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  const code = await host.locator("#sessionCode").textContent();
+
+  await guest.locator("#sessionManage").click();
+  await guest.evaluate((roomCode) => {
+    window.prompt = () => roomCode;
+    document.querySelector("#sessionJoin").click();
+    document.querySelector("#multiplayerDialog").close();
+    document.querySelector('[data-mode="classic"]').click();
+  }, code);
+  assert.equal(await guest.locator("#gameScreen").evaluate((node) => node.classList.contains("active")), false);
+  await host.waitForFunction(() =>
+    document.querySelector("#sessionPlayersText").textContent.includes("2 player"),
+  );
+
+  await guest.locator('#multiplayerDialog button[value="cancel"]').click();
+  await guest.locator('[data-mode="classic"]').click();
+  assert.equal(await guest.locator("#gameScreen").evaluate((node) => node.classList.contains("active")), false);
+  assert.equal(await host.locator("#gameScreen").evaluate((node) => node.classList.contains("active")), false);
+
+  await host.locator('#multiplayerDialog button[value="cancel"]').click();
+  await host.locator("#multiplayerShare").click();
+  assert.equal(await host.locator("#multiplayerDialog").evaluate((node) => node.open), true);
+  await host.waitForFunction(() => document.querySelector("#sessionQr").naturalWidth > 0);
+  assert.match(await host.locator("#sessionQr").getAttribute("src"), new RegExp("join=" + code));
+  await browser.close();
+});
+
 test("live multiplayer scores are equally prominent and color opponents differently", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const host = await browser.newPage({ viewport: { width: 390, height: 844 } });

@@ -450,7 +450,6 @@ async function start(mode, override = null, adultMode = false, rush = false) {
   )
     return;
   if (
-    window.wordrushSessionCode &&
     window.wordrushStartSessionGame?.({
       mode,
       config: override

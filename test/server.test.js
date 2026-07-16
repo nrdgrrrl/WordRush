@@ -448,6 +448,37 @@ test("creator can resume after a transient disconnect before the grace period ex
   guest.close();
 });
 
+test("a disconnected guest retains and can reclaim their room seat from an invite", async () => {
+  const host = await client("persistent-guest-host");
+  const guest = await client("persistent-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  const joined = await joinedPromise;
+
+  guest.close();
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(rooms.get(created.code).players.has("persistent-guest"), true);
+
+  const resumedGuest = await client("persistent-guest");
+  const rejoinedPromise = next(resumedGuest, "joined_room");
+  message(resumedGuest, "join_room", { code: created.code });
+  const rejoined = await rejoinedPromise;
+  assert.equal(rejoined.code, created.code);
+  assert.notEqual(rejoined.reconnectToken, joined.reconnectToken);
+  assert.equal(rooms.get(created.code).players.size, 2);
+
+  const closedGuest = next(resumedGuest, "session_closed");
+  message(host, "leave_session");
+  await closedGuest;
+  host.close();
+  resumedGuest.close();
+});
+
 test("random multiplayer sessions automatically advance to another round", async () => {
   const ws = await client("random-host");
   const createdPromise = next(ws, "room_created");

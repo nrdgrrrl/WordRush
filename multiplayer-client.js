@@ -18,7 +18,11 @@
     roomStatus = "";
   let reconnectTimer = null,
     reconnectAttempts = 0,
-    intentionalLeave = false;
+    intentionalLeave = false,
+    pendingSession = Boolean(
+      /^[A-Z]{5}$/.test(localStorage.getItem("wordrush-room") || "") &&
+      localStorage.getItem("wordrush-room-token"),
+    );
   let displayTokenRequest = null;
   const $ = (selector) => document.querySelector(selector);
   const goHome = () =>
@@ -45,6 +49,7 @@
     creator = false;
     creatorId = "";
     roomStatus = "";
+    pendingSession = false;
     localStorage.removeItem("wordrush-room");
     localStorage.removeItem("wordrush-room-token");
     $("#multiplayerBanner").hidden = true;
@@ -146,6 +151,7 @@
     else $("#multiplayerDialog").close();
   }
   function showLobby(code, isCreator) {
+    pendingSession = false;
     sessionCode = code;
     endedSessionCode = "";
     window.wordrushSessionCode = code;
@@ -155,6 +161,8 @@
     $("#sessionChoices").hidden = true;
     $("#sessionLobby").hidden = false;
     $("#sessionCode").textContent = code;
+    $("#sessionQr").src = "/qr.svg?join=" + encodeURIComponent(code);
+    $("#sessionQr").alt = "QR code to join Wordrush room " + code;
     updateLobbyControls();
     window.dispatchEvent(new CustomEvent("wordrush:room-change"));
     sessionDialog();
@@ -177,6 +185,7 @@
       : null;
   }
   function rememberSession(message) {
+    pendingSession = false;
     localStorage.setItem("wordrush-room", message.code);
     localStorage.setItem("wordrush-room-token", message.reconnectToken);
   }
@@ -187,6 +196,7 @@
       clearSession();
       return goHome();
     }
+    pendingSession = true;
     const delay = window.wordrushReconnectDelayMs ??
       Math.min(500 * 2 ** reconnectAttempts, 10_000);
     reconnectAttempts += 1;
@@ -338,6 +348,12 @@
         toast("That multiplayer session has ended");
         activeSocket.close(1000, "resume failed");
       }
+      if (
+        message.type === "error" &&
+        !sessionCode &&
+        ["ROOM_NOT_FOUND", "ROOM_FULL", "ALREADY_JOINED"].includes(message.code)
+      )
+        pendingSession = false;
       if (message.type === "error")
         if (displayTokenRequest) {
           const request = displayTokenRequest;
@@ -386,7 +402,12 @@
     });
   };
   window.wordrushStartSessionGame = ({ mode, config, randomRush } = {}) => {
-    if (!sessionCode) return false;
+    if (!sessionCode && !pendingSession && !savedSession()) return false;
+    if (!sessionCode || !socket || socket.readyState !== WebSocket.OPEN) {
+      pendingSession = true;
+      toast("Reconnecting to the multiplayer session");
+      return true;
+    }
     if (!creator) {
       toast("Only the session creator can start a game");
       return true;
@@ -407,6 +428,7 @@
     localStorage.removeItem("wordrush-room");
     localStorage.removeItem("wordrush-room-token");
     intentionalLeave = false;
+    pendingSession = true;
     const ws = connect();
     sendWhenReady({ type: "create_room", ...identity() });
   });
@@ -418,6 +440,7 @@
     localStorage.removeItem("wordrush-room");
     localStorage.removeItem("wordrush-room-token");
     intentionalLeave = false;
+    pendingSession = true;
     socket = connect();
     sendWhenReady({ type: "join_room", code, ...identity() });
   });
@@ -429,6 +452,7 @@
     if (/^[A-Z]{5}$/.test(joinFromLink)) {
       localStorage.removeItem("wordrush-room");
       localStorage.removeItem("wordrush-room-token");
+      pendingSession = true;
       socket = connect();
       sendWhenReady({ type: "join_room", code: joinFromLink, ...identity() });
     } else toast("That room code is invalid");
@@ -436,6 +460,28 @@
     const saved = savedSession();
     if (saved) connect(saved);
   }
+  $("#multiplayerShare")?.addEventListener("click", () => {
+    if (sessionCode) sessionDialog();
+  });
+  $("#sessionShare")?.addEventListener("click", async () => {
+    if (!sessionCode) return;
+    const url = new URL("/", location.origin);
+    url.searchParams.set("join", sessionCode);
+    try {
+      if (navigator.share)
+        await navigator.share({
+          title: "Join my Wordrush room",
+          text: "Join Wordrush room " + sessionCode,
+          url: url.href,
+        });
+      else {
+        await navigator.clipboard.writeText(url.href);
+        toast("Join link copied");
+      }
+    } catch (error) {
+      if (error?.name !== "AbortError") toast("Could not share the join link");
+    }
+  });
   $("#sessionStart")?.addEventListener("click", () => {
     const mode = $("#sessionType").value;
     sendWhenReady({ type: "start_game", mode });

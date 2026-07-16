@@ -35,9 +35,18 @@
             <small>MULTIPLAYER</small
             ><strong id="multiplayerBannerText">1 player in session</strong>
           </div>
-          <button id="exitMultiplayer" aria-label="Exit multiplayer mode">
-            ×
-          </button>
+          <div class="multiplayer-banner-actions">
+            <button
+              type="button"
+              id="multiplayerShare"
+              aria-label="Show multiplayer join QR code"
+            >
+              QR
+            </button>
+            <button id="exitMultiplayer" aria-label="Exit multiplayer mode">
+              ×
+            </button>
+          </div>
         </div>
         <button class="party-panel" id="partyMode" type="button">
           <span>🎉</span><div><small>PARTY MODE</small><strong>Build the next round together</strong><em>Pick grid · words · time</em></div><b>→</b>
@@ -286,6 +295,17 @@
             <p class="session-code-label">YOUR PARTY LOBBY</p>
             <strong class="session-code" id="sessionCode">-----</strong>
             <p class="lobby-share-hint">Share this code with your players</p>
+            <div class="session-invite" id="sessionInvite">
+              <img
+                id="sessionQr"
+                width="180"
+                height="180"
+                alt="Multiplayer join QR code"
+              />
+              <button type="button" class="secondary" id="sessionShare">
+                Share join link
+              </button>
+            </div>
             <p id="sessionPlayersText">1 player connected</p>
             <p class="lobby-status" id="lobbyStatus" role="status" aria-live="polite">
               Waiting for the host to start

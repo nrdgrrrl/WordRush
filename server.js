@@ -640,11 +640,17 @@ function leave(ws) {
   const player = room.players.get(info.id);
   if (!player || player.ws !== ws) return;
   clearTimeout(player.disconnectTimer);
-  player.disconnectTimer = setTimeout(
-    () => expireDisconnectedPlayer(room, player, ws),
-    ROOM_RECONNECT_GRACE_MS,
-  );
-  player.disconnectTimer.unref?.();
+  player.disconnectTimer = null;
+  // The active host owns the room lifetime. Keep a disconnected guest's seat
+  // and score until that room closes because mobile browsers can suspend guest
+  // reconnect timers for far longer than the host recovery grace period.
+  if (info.id === room.creatorId) {
+    player.disconnectTimer = setTimeout(
+      () => expireDisconnectedPlayer(room, player, ws),
+      ROOM_RECONNECT_GRACE_MS,
+    );
+    player.disconnectTimer.unref?.();
+  }
   broadcast(room, state(room));
 }
 function handle(ws, message) {
@@ -760,10 +766,35 @@ function handle(ws, message) {
       return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
     const room = rooms.get(String(message.code || "").toUpperCase());
     if (!room) return send(ws, { type: "error", code: "ROOM_NOT_FOUND" });
+    const existingPlayer = room.players.get(client.id);
+    if (existingPlayer) {
+      if (existingPlayer.ws?.readyState === 1)
+        return send(ws, { type: "error", code: "ALREADY_JOINED" });
+      const oldSocket = existingPlayer.ws;
+      clearTimeout(existingPlayer.disconnectTimer);
+      existingPlayer.disconnectTimer = null;
+      client.roomCode = room.code;
+      client.name = cleanText(message.name, existingPlayer.name);
+      client.avatar = cleanText(
+        message.avatar,
+        existingPlayer.avatar || "🐈",
+        2,
+      );
+      existingPlayer.name = client.name;
+      existingPlayer.avatar = client.avatar;
+      existingPlayer.ws = ws;
+      existingPlayer.reconnectToken = crypto.randomBytes(32).toString("base64url");
+      if (oldSocket !== ws && oldSocket?.readyState <= 1)
+        oldSocket.close(1000, "player rejoined from invite");
+      send(ws, {
+        type: "joined_room",
+        code: room.code,
+        reconnectToken: existingPlayer.reconnectToken,
+      });
+      return broadcast(room, state(room));
+    }
     if (room.players.size >= MAX_PLAYERS)
       return send(ws, { type: "error", code: "ROOM_FULL" });
-    if (room.players.has(client.id))
-      return send(ws, { type: "error", code: "ALREADY_JOINED" });
     client.roomCode = room.code;
     client.name = cleanText(message.name, client.name);
     client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
