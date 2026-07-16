@@ -75,6 +75,21 @@ test("receiver renders room states and clears stale scores after a dropped conne
   await page.waitForFunction(() => window.__receiverMessages?.length === 1);
   await page.evaluate(() => window.__receiverSocket.emit("message", { data: JSON.stringify({
     type: "display_state", state: {
+      status: "lobby", code: "ABCDE", players: [
+        { name: "Host", avatar: "🐈", score: 0 },
+        { name: "Guest", avatar: "🦊", score: 0 },
+      ],
+    },
+  }) }));
+  const qr = await page.locator(".join-qr").evaluate((node) => {
+    const bounds = node.getBoundingClientRect();
+    return { width: bounds.width, height: bounds.height, bottom: bounds.bottom };
+  });
+  assert.equal(qr.width, 832);
+  assert.equal(qr.height, 832);
+  assert.ok(qr.bottom <= 1080);
+  await page.evaluate(() => window.__receiverSocket.emit("message", { data: JSON.stringify({
+    type: "display_state", state: {
       status: "playing", code: "ABCDE", config: { label: "CLASSIC" },
       players: Array.from({ length: 10 }, (_, index) => ({
         name: "Very long player name " + index, avatar: "🐈", score: 100 - index,

@@ -28,7 +28,7 @@
       const joinUrl = new URL("/", location.origin);
       joinUrl.searchParams.set("join", state.code);
       screen.className = "screen lobby";
-      screen.innerHTML = `<p class="kicker">JOIN ROOM</p><div class="lobby-join"><img class="join-qr" src="/qr.svg?join=${encodeURIComponent(state.code)}" alt="QR code to join Wordrush room ${escape(state.code)}"><div><div class="room-code">${escape(state.code)}</div><p class="join-url">Scan to open Wordrush and join this room.</p></div></div><div class="scoreboard">${cards}</div>`;
+      screen.innerHTML = `<p class="kicker">JOIN ROOM</p><div class="lobby-join"><img class="join-qr" src="/qr.svg?join=${encodeURIComponent(state.code)}" alt="QR code to join Wordrush room ${escape(state.code)}"><div class="lobby-details"><div class="room-code">${escape(state.code)}</div><p class="join-url">Scan to open Wordrush and join this room.</p><div class="scoreboard">${cards}</div></div></div>`;
     } else if (state.status === "finished") {
       screen.className = "screen finished";
       screen.innerHTML = `<p class="kicker">ROUND COMPLETE</p><h1>${escape(state.lastResult?.reason === "timeout" ? "Time's up." : "Results are in.")}</h1><div class="scoreboard">${cards}</div>`;

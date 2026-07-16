@@ -12,8 +12,11 @@ h1 { margin: .35em 0; max-width: 16ch; font-size: clamp(3.2rem, 7.2vw, 8.2rem); 
 footer { color: #d1c1d8; font-size: clamp(.9rem, 1.35vw, 1.35rem); }
 .room-code { font-size: clamp(5.5rem, 16vw, 17rem); letter-spacing: .08em; line-height: .9; color: #f6c85f; text-shadow: .06em .06em 0 #35203f; overflow-wrap: anywhere; }
 .join-url { font-size: clamp(1.1rem, 2vw, 2rem); color: #e3d8eb; }
-.lobby-join { display: flex; align-items: center; gap: clamp(1.5rem, 4vw, 5rem); margin: 1.5rem 0 2.5rem; }
-.join-qr { width: clamp(13rem, 23vw, 26rem); height: clamp(13rem, 23vw, 26rem); padding: 1rem; border-radius: 1rem; background: #fff9f0; image-rendering: pixelated; }
+.receiver-shell:has(.lobby) { padding-block: 2vh; }
+.lobby-join { display: flex; align-items: center; gap: clamp(1.5rem, 4vw, 5rem); margin: .5rem 0; }
+.lobby-details { flex: 1; min-width: 0; }
+.lobby-details .scoreboard { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.join-qr { width: clamp(26rem, 46vw, 52rem); height: clamp(26rem, 46vw, 52rem); padding: 2rem; border-radius: 2rem; background: #fff9f0; image-rendering: pixelated; flex: none; }
 .scoreboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(30%, 16rem), 1fr)); gap: 1.1rem; max-width: 100%; }
 .score-card { min-width: 0; padding: 1.25rem 1.5rem; border-radius: 1.15rem; background: #2a2038; border: 2px solid rgba(255,255,255,.1); }
 .score-card:first-child { border-color: #f6c85f; background: #3b2949; }
