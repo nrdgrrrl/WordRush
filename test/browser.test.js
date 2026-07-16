@@ -62,10 +62,15 @@ test("receiver renders room states and clears stale scores after a dropped conne
     window.WebSocket = FakeWebSocket;
     window.cast = { framework: { CastReceiverContext: { getInstance: () => ({
       addCustomMessageListener: (_namespace, handler) => { window.__receiverHandler = handler; },
-      getSenders: () => [], sendCustomMessage: () => {}, start: () => {},
+      getSenders: () => [], sendCustomMessage: () => {},
+      start: (options) => { window.__receiverOptions = options; },
     }) } } };
   });
   await page.goto(baseUrl + "/receiver/");
+  assert.equal(
+    await page.evaluate(() => window.__receiverOptions?.disableIdleTimeout),
+    true,
+  );
   await page.evaluate(() => window.__receiverHandler({ data: { type: "display_token", token: "test-token" } }));
   await page.waitForFunction(() => window.__receiverMessages?.length === 1);
   await page.evaluate(() => window.__receiverSocket.emit("message", { data: JSON.stringify({
@@ -322,8 +327,8 @@ test("active games hide the title bar and preserve a no-scroll compact layout", 
   assert.equal(layout.scrollHeight, layout.viewportHeight);
   assert.ok(layout.modeSize > 11);
   assert.ok(layout.ruleSize > 11);
-  assert.ok(layout.previewSize > 13);
-  assert.ok(layout.scoreSize < 28);
+  assert.ok(layout.previewSize >= 24);
+  assert.ok(layout.scoreSize >= 32);
   await browser.close();
 });
 
@@ -452,16 +457,15 @@ test("random rush rolls into a different game and can be stopped", async () => {
     window.wordrushRushDelay = 50;
   });
   await page.locator("#randomPanel").click();
-  const firstMode = await page.locator("#gameMode").textContent();
-  await page.locator("#endGame").click();
-  await page.waitForTimeout(120);
-  assert.equal(
-    await page
-      .locator("#gameScreen")
-      .evaluate((node) => node.classList.contains("active")),
-    true,
-  );
-  assert.notEqual(await page.locator("#gameMode").textContent(), firstMode);
+  const modes = [];
+  for (let round = 0; round < 4; round++) {
+    modes.push(await page.locator("#gameMode").textContent());
+    if (round === 3) break;
+    await page.locator("#endGame").click();
+    await page.waitForSelector("#resultsScreen.active");
+    await page.waitForSelector("#gameScreen.active");
+  }
+  assert.equal(new Set(modes).size, 4);
   await page.locator("#stopRush").click();
   assert.equal(
     await page
@@ -469,6 +473,47 @@ test("random rush rolls into a different game and can be stopped", async () => {
       .evaluate((node) => node.classList.contains("active")),
     true,
   );
+  await browser.close();
+});
+
+test("dirty custom boards always expose at least five adult words", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.locator("#customGame").click();
+  await page.locator("#customType").selectOption("dirty");
+  await page.locator("#customBoard").selectOption("4");
+  await page.locator("#customStart").click();
+  const playable = await page.evaluate((words) => {
+    const board = [...document.querySelectorAll(".tile")].map((tile) => tile.textContent);
+    const size = 4;
+    const neighbors = (index) => {
+      const row = Math.floor(index / size), column = index % size, result = [];
+      for (let dr = -1; dr <= 1; dr++)
+        for (let dc = -1; dc <= 1; dc++) {
+          const nextRow = row + dr, nextColumn = column + dc;
+          if ((dr || dc) && nextRow >= 0 && nextColumn >= 0 && nextRow < size && nextColumn < size)
+            result.push(nextRow * size + nextColumn);
+        }
+      return result;
+    };
+    const hasPath = (word) => {
+      const walk = (index, offset, used) => {
+        if (offset === word.length) return true;
+        return neighbors(index).some((next) => {
+          if (used.has(next) || board[next] !== word[offset]) return false;
+          const following = new Set(used).add(next);
+          return walk(next, offset + 1, following);
+        });
+      };
+      return board.some((letter, index) =>
+        letter === word[0] && walk(index, 1, new Set([index])),
+      );
+    };
+    return words.filter(hasPath);
+  }, ["ASS", "BITCH", "COCK", "DAMN", "DICK", "HELL", "PISS", "SHIT", "SLUT", "TIT"]);
+  assert.ok(playable.length >= 5, `expected five dirty words, found ${playable.join(", ")}`);
   await browser.close();
 });
 
@@ -589,7 +634,7 @@ test("multiplayer creates a five-letter session and launches co-op", async () =>
   await page.locator("#sessionStart").click();
   await page.waitForSelector("#gameScreen.active");
   assert.equal(await page.locator("#gameMode").textContent(), "CO-OP");
-  assert.equal(await page.locator("#livePlayers .live-player").count(), 1);
+  assert.equal(await page.locator("#livePlayers .live-player").count(), 0);
   await page.locator('#gameScreen [data-screen="homeScreen"]').click();
   page.on("dialog", (dialog) => dialog.accept());
   await page.locator("#exitMultiplayer").click();
@@ -602,6 +647,47 @@ test("multiplayer creates a five-letter session and launches co-op", async () =>
       .evaluate((node) => node.classList.contains("active")),
     true,
   );
+  await browser.close();
+});
+
+test("live multiplayer scores are equally prominent and color opponents differently", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const guest = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await host.goto(baseUrl);
+  await host.locator("#sessionManage").click();
+  await host.locator("#sessionCreate").click();
+  await host.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  const code = await host.locator("#sessionCode").textContent();
+  await guest.goto(baseUrl + "/?join=" + code);
+  await host.waitForFunction(() =>
+    document.querySelectorAll("#lobbyPlayers .live-player").length === 2,
+  );
+  await host.locator("#sessionType").selectOption("classic");
+  await host.locator("#sessionStart").click();
+  await Promise.all([
+    host.waitForSelector("#gameScreen.active"),
+    guest.waitForSelector("#gameScreen.active"),
+  ]);
+  const scores = await host.evaluate(() => {
+    const own = getComputedStyle(document.querySelector("#gameScore"));
+    const opponent = getComputedStyle(
+      document.querySelector("#livePlayers .is-opponent b"),
+    );
+    const preview = getComputedStyle(document.querySelector("#preview"));
+    return {
+      ownSize: parseFloat(own.fontSize),
+      opponentSize: parseFloat(opponent.fontSize),
+      ownColor: own.color,
+      opponentColor: opponent.color,
+      previewSize: parseFloat(preview.fontSize),
+    };
+  });
+  assert.equal(scores.opponentSize, scores.ownSize);
+  assert.notEqual(scores.opponentColor, scores.ownColor);
+  assert.ok(scores.previewSize >= 24);
   await browser.close();
 });
 

@@ -412,10 +412,20 @@ function closeRoom(room, reason) {
   room.round = null;
   room.status = "closed";
 }
-function randomMode(previous) {
-  const modes = ["classic", "minimum", "sudden", "race", "coop", "dirty"];
-  const choices = modes.filter((mode) => mode !== previous);
-  return choices[crypto.randomInt(choices.length)];
+const RANDOM_MODES = ["classic", "minimum", "sudden", "race", "coop", "dirty"];
+function shuffledModes(previous) {
+  const modes = RANDOM_MODES.filter((mode) => mode !== previous);
+  for (let index = modes.length - 1; index > 0; index--) {
+    const swap = crypto.randomInt(index + 1);
+    [modes[index], modes[swap]] = [modes[swap], modes[index]];
+  }
+  if (RANDOM_MODES.includes(previous)) modes.push(previous);
+  return modes;
+}
+function randomMode(room) {
+  if (!room.randomModeQueue.length)
+    room.randomModeQueue = shuffledModes(room.mode);
+  return room.randomModeQueue.shift();
 }
 function startRound(room, selected = room.mode, rawConfig = null) {
   clearRoomTimer(room);
@@ -514,7 +524,7 @@ function finishRound(room, reason = "complete") {
   if (room.randomRush) {
     room.rushTimer = setTimeout(() => {
       if (room.randomRush && room.status === "finished")
-        startRound(room, randomMode(room.mode));
+        startRound(room, randomMode(room));
     }, RANDOM_RUSH_DELAY);
     room.rushTimer.unref?.();
   }
@@ -593,6 +603,7 @@ function handle(ws, message) {
       mode: "classic",
       creatorId: null,
       randomRush: false,
+      randomModeQueue: [],
       teamScore: 0,
       customWords: new Set(normalizeWords(message.customWords)),
       players: new Map(),
@@ -682,9 +693,11 @@ function handle(ws, message) {
     const requested = String(message.mode || "classic");
     if (requested === "random") {
       room.randomRush = true;
-      return startRound(room, randomMode(room.mode));
+      room.randomModeQueue = [];
+      return startRound(room, randomMode(room));
     }
     room.randomRush = false;
+    room.randomModeQueue = [];
     return startRound(
       room,
       requested === "custom" || MODE_CONFIG[requested] ? requested : "classic",

@@ -107,7 +107,7 @@ function generateBoard(size, lexicon, options = {}) {
       dirtyLexicon ? dirtyWords : [],
     ),
   );
-  for (let attempt = 0; attempt < 40; attempt++) {
+  for (let attempt = 0; attempt < 200; attempt++) {
     const cells = Array(size * size).fill("");
     const targets = dirtyLexicon
       ? [...dirtyWords].sort(() => Math.random() - 0.5).slice(0, 7)
@@ -155,6 +155,23 @@ function generateBoard(size, lexicon, options = {}) {
       (!dirtyLexicon || dirtyCoverage >= Math.min(5, dirtyWords.length))
     )
       return board;
+  }
+  if (dirtyLexicon && size >= 4) {
+    // Guaranteed last resort for dirty/custom-dirty boards. This seed has
+    // paths for BITCH, COCK, DICK, SHIT and TIT, and embedding preserves them
+    // on every supported board size.
+    const seed = "NOLKCDCSITHIBITD";
+    const board = Array.from(
+      { length: size * size },
+      () => LETTER_BAG[Math.floor(Math.random() * LETTER_BAG.length)],
+    );
+    const offsetRow = Math.floor(Math.random() * (size - 3));
+    const offsetColumn = Math.floor(Math.random() * (size - 3));
+    for (let row = 0; row < 4; row++)
+      for (let column = 0; column < 4; column++)
+        board[(row + offsetRow) * size + column + offsetColumn] =
+          seed[row * 4 + column];
+    return board;
   }
   return Array.from(
     { length: size * size },

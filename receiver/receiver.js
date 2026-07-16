@@ -83,7 +83,12 @@
     castContext.addCustomMessageListener(NAMESPACE, (event) => {
       if (event.data?.type === "display_token") connectDisplay(event.data.token);
     });
-    castContext.start({ statusText: "Wordrush TV is ready" });
+    castContext.start({
+      statusText: "Wordrush TV is ready",
+      // Wordrush is a non-media receiver. CAF otherwise treats the app as idle
+      // and shuts it down even while its room WebSocket is healthy.
+      disableIdleTimeout: true,
+    });
     connection.textContent = "Waiting for room context from your phone";
   };
   renderIdle();

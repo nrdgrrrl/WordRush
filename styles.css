@@ -218,8 +218,9 @@ h2 {
   font-size: 29px;
 }
 .game-meta {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  justify-content: stretch;
   align-items: end;
   margin: 30px 0 17px;
 }
@@ -232,6 +233,9 @@ h2 {
 .game-meta strong {
   display: block;
   font-size: 34px;
+}
+#gameScore {
+  color: var(--coral);
 }
 .preview {
   height: 45px;
@@ -785,11 +789,17 @@ body:has(#gameScreen.active) .app-shell {
   min-width: 58px;
 }
 .game-meta strong {
-  font-size: 28px;
+  font-size: 32px;
 }
 .preview {
-  height: 36px;
+  height: 42px;
+  font-size: 24px;
+  font-weight: bold;
+  color: var(--ink);
   margin-bottom: 8px;
+}
+.preview.found {
+  font-size: 24px;
 }
 .board {
   padding: 6px;
@@ -836,11 +846,15 @@ body[data-mode="dirty"] .tile {
     margin: 6px 0 5px;
   }
   .game-meta strong {
-    font-size: 23px;
+    font-size: 28px;
   }
   .preview {
-    height: 30px;
+    height: 34px;
+    font-size: 21px;
     margin-bottom: 5px;
+  }
+  .preview.found {
+    font-size: 21px;
   }
   .game-foot {
     padding-top: 6px;
@@ -860,33 +874,53 @@ body[data-mode="dirty"] .tile {
 .live-players {
   display: flex;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
-  max-width: 190px;
+  max-width: none;
+  overflow-x: auto;
 }
 .live-player {
   display: grid;
-  grid-template-columns: 20px auto auto;
-  gap: 4px;
+  grid-template-columns: 20px minmax(42px, auto);
+  grid-template-rows: auto auto;
+  gap: 2px 5px;
   align-items: center;
   background: #ebe9e2;
-  padding: 5px 7px;
-  font-size: 10px;
+  padding: 4px 7px;
+  font-size: 11px;
+  flex: none;
+  min-width: 88px;
 }
 .player-avatar {
   font-size: 16px;
 }
 .player-name {
-  max-width: 62px;
+  max-width: 82px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .live-player b {
-  font: 11px monospace;
+  grid-column: 1 / -1;
+  color: var(--coral);
+  font-family: monospace;
+  font-size: 32px;
+  line-height: 1;
+  text-align: right;
 }
-.live-player:first-child {
+.live-player.is-you {
   outline: 1px solid var(--coral);
+}
+.live-player.is-opponent {
+  outline: 1px solid #5268c7;
+}
+.live-player.is-opponent b {
+  color: #5268c7;
+}
+@media (max-height: 650px) {
+  .live-player b {
+    font-size: 28px;
+  }
 }
 dialog {
   border: 0;
@@ -1154,11 +1188,11 @@ body:has(#gameScreen.active) .app-shell {
   margin-block: 8px 7px;
 }
 #gameScreen.active .game-meta strong {
-  font-size: 24px;
+  font-size: 32px;
 }
 #gameScreen.active .preview {
-  font-size: 15px;
-  height: 36px;
+  font-size: 24px;
+  height: 42px;
   margin-bottom: 7px;
 }
 @media (max-height: 650px) {
@@ -1169,12 +1203,20 @@ body:has(#gameScreen.active) .app-shell {
     margin-block: 7px 5px;
     padding-block: 7px;
   }
+  #gameScreen.active .game-meta strong,
+  #gameScreen.active .live-player b {
+    font-size: 28px;
+  }
+  #gameScreen.active .preview {
+    font-size: 21px;
+    height: 34px;
+  }
   #gameScreen.active .game-meta {
     margin-block: 5px;
   }
   #gameScreen.active .preview {
-    height: 30px;
-    font-size: 14px;
+    height: 34px;
+    font-size: 21px;
     margin-bottom: 4px;
   }
 }

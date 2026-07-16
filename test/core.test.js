@@ -127,14 +127,14 @@ test("dirty words are opt-in and custom words are accepted", () => {
   );
 });
 test("dirty boards strongly favor playable adult words", () => {
-  for (let round = 0; round < 10; round++) {
-    const board = generateBoard(5, createLexicon("dirty"));
+  for (const size of [4, 5, 6, 7, 8]) {
+    const board = generateBoard(size, createLexicon("dirty"));
     const playableAdultWords = ADULT_WORDS.filter(
-      (word) => word.length <= 25 && hasPath(board, 5, word),
+      (word) => word.length <= size * size && hasPath(board, size, word),
     );
     assert.ok(
       playableAdultWords.length >= 5,
-      `expected at least 5 dirty words, found ${playableAdultWords.length}`,
+      `expected at least 5 dirty words on ${size}×${size}, found ${playableAdultWords.length}`,
     );
   }
 });

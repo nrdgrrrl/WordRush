@@ -69,10 +69,10 @@
     const list = players || [];
     const livePlayers = $("#livePlayers");
     livePlayers?.replaceChildren();
-    list.forEach((player) => {
+    list.filter((player) => player.id !== guestId).forEach((player) => {
       if (livePlayers) {
         const row = document.createElement("div");
-        row.className = "live-player";
+        row.className = "live-player is-opponent";
         const score = document.createElement("b");
         score.textContent = Number(player.score || 0).toLocaleString();
         row.append(playerIdentity(player), score);

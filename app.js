@@ -13,9 +13,20 @@ function emit(name, detail = {}) {
   document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
 }
 const RANDOM_MODES = ["classic", "minimum", "sudden", "race"];
+let randomModeQueue = [];
+function shuffledModes(modes, previous) {
+  const shuffled = modes.filter((mode) => mode !== previous);
+  for (let index = shuffled.length - 1; index > 0; index--) {
+    const swap = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swap]] = [shuffled[swap], shuffled[index]];
+  }
+  if (modes.includes(previous)) shuffled.push(previous);
+  return shuffled;
+}
 function nextRandomMode() {
-  const choices = RANDOM_MODES.filter((mode) => mode !== s.mode);
-  return choices[Math.floor(Math.random() * choices.length)] || RANDOM_MODES[0];
+  if (!randomModeQueue.length)
+    randomModeQueue = shuffledModes(RANDOM_MODES, s.mode);
+  return randomModeQueue.shift() || RANDOM_MODES[0];
 }
 const common = sharedConfig.COMMON_WORDS,
   adult = sharedConfig.ADULT_WORDS,
@@ -459,6 +470,7 @@ async function start(mode, override = null, adultMode = false, rush = false) {
   )
     return;
   let m = override || MODE[mode];
+  if (rush && !s.rush) randomModeQueue = [];
   customAdult = adultMode || mode === "dirty";
   s.customConfig = override;
   s.rush = rush;
@@ -864,7 +876,7 @@ $("#profileForm")?.addEventListener("submit", saveProfile);
 function make() {
   let all = [...lex()],
     dirty = s.mode === "dirty" || customAdult;
-  for (let attempt = 0; attempt < 40; attempt++) {
+  for (let attempt = 0; attempt < 200; attempt++) {
     let c = Array(s.n * s.n).fill(""),
       preferred = dirty
         ? [...adult].sort(() => Math.random() - 0.5).slice(0, 7)
@@ -896,9 +908,27 @@ function make() {
     s.b = old;
     if (dirtyCount >= 5) return board;
   }
-  return Array(s.n * s.n)
-    .fill(0)
-    .map(() => bag[Math.floor(Math.random() * bag.length)]);
+  if (dirty && s.n >= 4) {
+    // This 4×4 seed contains playable paths for BITCH, COCK, DICK, SHIT and
+    // TIT. Embed it in larger custom boards so dirty mode can never silently
+    // fall back to a board without adult words.
+    const seed = "NOLKCDCSITHIBITD";
+    const board = Array.from(
+      { length: s.n * s.n },
+      () => bag[Math.floor(Math.random() * bag.length)],
+    );
+    const offsetRow = Math.floor(Math.random() * (s.n - 3));
+    const offsetColumn = Math.floor(Math.random() * (s.n - 3));
+    for (let row = 0; row < 4; row++)
+      for (let column = 0; column < 4; column++)
+        board[(row + offsetRow) * s.n + column + offsetColumn] =
+          seed[row * 4 + column];
+    return board;
+  }
+  return Array.from(
+    { length: s.n * s.n },
+    () => bag[Math.floor(Math.random() * bag.length)],
+  );
 }
 let selectionClearTimer = null;
 function clearPick(immediate = false) {

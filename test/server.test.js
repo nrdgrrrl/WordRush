@@ -427,11 +427,13 @@ test("random multiplayer sessions automatically advance to another round", async
   await lobbyPromise;
   const firstRoundPromise = next(ws, "round_started");
   message(ws, "start_game", { mode: "random" });
-  const first = await firstRoundPromise;
-  const nextRoundPromise = next(ws, "round_started");
-  message(ws, "end_round");
-  const second = await nextRoundPromise;
-  assert.notEqual(second.config.label, first.config.label);
+  const labels = [(await firstRoundPromise).config.label];
+  for (let round = 1; round < 6; round++) {
+    const nextRoundPromise = next(ws, "round_started");
+    message(ws, "end_round");
+    labels.push((await nextRoundPromise).config.label);
+  }
+  assert.equal(new Set(labels).size, 6);
   ws.close();
   rooms.delete(created.code);
 });
