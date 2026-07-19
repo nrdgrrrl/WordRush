@@ -215,10 +215,11 @@ The deployed multiplayer/Cast release received a second full audit. Confirmed fi
 - browser and server board generation now use the shared `board-core.js` implementation;
 - malformed saved profile values are normalized, duplicate navigation handling and invalid result markup were removed, and redundant grid CSS was consolidated;
 - expired rate-limit records are pruned, closed-room display tokens are released, and forwarded client IPs are trusted only behind the loopback proxy.
+- static serving now uses an explicit browser-asset allowlist, so runtime leaderboard data, server source, deployment files, and environment files cannot be downloaded.
 
-The release gate now covers 30 unit/integration tests, 35 browser tests, and 2 three-client soak tests.
+The release gate now covers 31 unit/integration tests, 35 browser tests, and 2 three-client soak tests.
 
-- `npm test`: 30 unit/integration tests passing.
+- `npm test`: 31 unit/integration tests passing.
 - `npm run test:browser`: 35 browser tests and 2 three-client soak tests passing.
 - Syntax checks pass for server and browser JavaScript.
 - `git diff --check` passes.

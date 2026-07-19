@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const http = require("node:http");
 const WebSocket = require("ws");
 const { COMMON_WORDS, ADULT_WORDS } = require("../game-config");
 const { neighbors } = require("../game-core");
@@ -807,4 +808,17 @@ test("static file serving rejects encoded paths outside the project root", async
   );
   assert.equal(response.status, 404);
   assert.equal(await response.text(), "Not found");
+});
+
+test("static serving exposes only browser assets and keeps runtime data private", async () => {
+  const request = (pathname) => new Promise((resolve, reject) => {
+    http.get("http://127.0.0.1:" + server.address().port + pathname, (response) => {
+      response.resume();
+      response.on("end", () => resolve(response.statusCode));
+    }).on("error", reject);
+  });
+  assert.equal(await request("/board-core.js"), 200);
+  assert.equal(await request("/data/leaderboard.json"), 404);
+  assert.equal(await request("/server.js"), 404);
+  assert.equal(await request("/.env"), 404);
 });

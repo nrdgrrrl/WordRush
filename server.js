@@ -856,6 +856,31 @@ const server = http.createServer((req, res) => {
   if (requested === "/") requested = "/index.html";
   if (requested === "/receiver" || requested === "/receiver/")
     requested = "/receiver/index.html";
+  const publicRootFiles = new Set([
+    "/index.html",
+    "/styles.css",
+    "/stats.css",
+    "/custom.css",
+    "/multiplayer.css",
+    "/game-config.js",
+    "/board-core.js",
+    "/app.js",
+    "/stats.js",
+    "/achievements.js",
+    "/multiplayer-client.js",
+    "/cast-sender.js",
+    "/leaderboard-client.js",
+    "/random-rush.js",
+    "/results.js",
+  ]);
+  if (
+    !publicRootFiles.has(requested) &&
+    !requested.startsWith("/assets/") &&
+    !requested.startsWith("/receiver/")
+  ) {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    return res.end("Not found");
+  }
   const root = path.resolve(__dirname);
   const file = path.resolve(root, "." + requested);
   if (
