@@ -21,6 +21,8 @@ const {
   rateLimits,
   clientIp,
   pruneExpiredRateLimits,
+  heartbeatSocket,
+  WS_HEARTBEAT_MISSES,
 } = require("../server");
 function message(ws, type, payload = {}) {
   ws.send(JSON.stringify({ type, ...payload }));
@@ -188,6 +190,20 @@ test("display tokens grant a room-scoped connection that can resume independentl
   await keepalive;
 
   const reconnectToken = initial.reconnectToken;
+  const originalDisplay = display;
+  const displaced = new Promise((resolve) =>
+    originalDisplay.once("close", (code, reason) => resolve({ code, reason: String(reason) })),
+  );
+  display = await displayClient();
+  const supersedingState = next(display, "display_state");
+  message(display, "display_resume", { token: reconnectToken });
+  assert.equal((await supersedingState).event, "display_reconnected");
+  assert.deepEqual(await displaced, {
+    code: 4000,
+    reason: "display resumed elsewhere",
+  });
+  assert.equal(rooms.get(created.code).displays.size, 1);
+
   display.close();
   await new Promise((resolve) => display.once("close", resolve));
   display = await displayClient();
@@ -216,6 +232,24 @@ test("display tokens grant a room-scoped connection that can resume independentl
   assert.equal((await closed).code, created.code);
   host.close();
   display.close();
+});
+
+test("WebSocket heartbeat tolerates two missed responses before terminating", () => {
+  const fakeSocket = {
+    missedHeartbeats: 0,
+    pings: 0,
+    terminations: 0,
+    ping() { this.pings += 1; },
+    terminate() { this.terminations += 1; },
+  };
+  for (let count = 0; count < WS_HEARTBEAT_MISSES; count += 1)
+    assert.equal(heartbeatSocket(fakeSocket), true);
+  assert.equal(fakeSocket.pings, WS_HEARTBEAT_MISSES);
+  assert.equal(fakeSocket.terminations, 0);
+  assert.equal(heartbeatSocket(fakeSocket), false);
+  assert.equal(fakeSocket.terminations, 1);
+  fakeSocket.missedHeartbeats = 0;
+  assert.equal(heartbeatSocket(fakeSocket), true);
 });
 
 test("an active cast keeps its room alive while the host phone sleeps", async () => {

@@ -51,10 +51,12 @@ test("receiver preserves room state and reconnects itself after a dropped connec
     class FakeWebSocket {
       constructor(url) {
         this.url = url;
+        this.readyState = 0;
+        this.closeCalls = 0;
         this.listeners = new Map();
         window.__receiverSocket = this;
         window.__receiverSockets = [...(window.__receiverSockets || []), this];
-        queueMicrotask(() => this.emit("open"));
+        queueMicrotask(() => { this.readyState = 1; this.emit("open"); });
       }
       addEventListener(type, handler) {
         this.listeners.set(type, [...(this.listeners.get(type) || []), handler]);
@@ -63,26 +65,37 @@ test("receiver preserves room state and reconnects itself after a dropped connec
         for (const handler of this.listeners.get(type) || []) handler(event);
       }
       send(message) { window.__receiverMessages = [...(window.__receiverMessages || []), message]; }
-      close() { this.emit("close"); }
+      close() { this.closeCalls += 1; this.readyState = 3; this.emit("close"); }
     }
     window.WebSocket = FakeWebSocket;
     window.wordrushDisplayReconnectDelayMs = 0;
     window.wordrushDisplayKeepaliveMs = 10;
+    window.wordrushReceiverHandoffDelayMs = 60_000;
     window.cast = { framework: { CastReceiverContext: { getInstance: () => ({
       addCustomMessageListener: (_namespace, handler) => { window.__receiverHandler = handler; },
-      getSenders: () => [{ id: "sender-1" }],
-      sendCustomMessage: (_namespace, _senderId, message) => {
+      addEventListener: (_type, handler) => { window.__receiverSenderConnected = handler; },
+      getSenders: () => [{ id: "sender-1" }, { id: "sender-2" }],
+      sendCustomMessage: (_namespace, senderId, message) => {
         window.__receiverCastMessages = [...(window.__receiverCastMessages || []), message];
+        window.__receiverCastEnvelopes = [...(window.__receiverCastEnvelopes || []), { senderId, message }];
       },
       start: (options) => { window.__receiverOptions = options; },
-    }) } } };
+    }) }, system: { EventType: { SENDER_CONNECTED: "sender-connected" } } } };
   });
   await page.goto(baseUrl + "/receiver/");
   assert.equal(
     await page.evaluate(() => window.__receiverOptions?.disableIdleTimeout),
     true,
   );
-  await page.evaluate(() => window.__receiverHandler({ data: { type: "display_token", token: "test-token" } }));
+  assert.equal(await page.evaluate(() => window.__receiverOptions?.skipPlayersLoad), true);
+  await page.evaluate(() => window.__receiverSenderConnected({ senderId: "sender-2" }));
+  assert.deepEqual(await page.evaluate(() => window.__receiverCastEnvelopes.at(-1)), {
+    senderId: "sender-2",
+    message: { type: "display_reconnect_needed" },
+  });
+  await page.evaluate(() => window.__receiverHandler({ data: {
+    type: "display_token", token: "test-token", roomCode: "ABCDE",
+  } }));
   await page.waitForFunction(() => window.__receiverMessages?.length === 1);
   await page.evaluate(() => window.__receiverSocket.emit("message", { data: JSON.stringify({
     type: "display_state", reconnectToken: "reconnect-token", state: {
@@ -95,6 +108,19 @@ test("receiver preserves room state and reconnects itself after a dropped connec
   await page.waitForFunction(() => window.__receiverCastMessages?.some(
     (message) => message.type === "display_status" && message.status === "connected",
   ));
+  await page.evaluate(() => window.__receiverHandler({ data: {
+    type: "display_token", token: "duplicate-token", roomCode: "ABCDE",
+  } }));
+  assert.equal(await page.evaluate(() => window.__receiverSockets.length), 1);
+  assert.equal(await page.evaluate(() => window.__receiverSocket.closeCalls), 0);
+  await page.evaluate(() => window.__receiverHandler({
+    senderId: "sender-1",
+    data: { type: "display_probe", roomCode: "ABCDE" },
+  }));
+  assert.deepEqual(await page.evaluate(() => window.__receiverCastEnvelopes.at(-1)), {
+    senderId: "sender-1",
+    message: { type: "display_status", status: "connected" },
+  });
   const qr = await page.locator(".join-qr").evaluate((node) => {
     const bounds = node.getBoundingClientRect();
     return { width: bounds.width, height: bounds.height, bottom: bounds.bottom };
@@ -159,7 +185,7 @@ test("receiver preserves room state and reconnects itself after a dropped connec
   );
   await page.waitForFunction(() => window.__receiverMessages?.some((raw) =>
     JSON.parse(raw).type === "display_keepalive"));
-  await page.evaluate(() => window.__receiverSocket.emit("close"));
+  await page.evaluate(() => window.__receiverSocket.close());
   await page.waitForFunction(() => window.__receiverCastMessages?.some(
     (message) => message.type === "display_status" && message.status === "reconnecting",
   ));
@@ -174,6 +200,15 @@ test("receiver preserves room state and reconnects itself after a dropped connec
   );
   assert.equal(await page.locator(".final-player-card").count(), 2);
   assert.match(await page.locator("#connection").textContent(), /Reconnecting/i);
+  await page.reload();
+  await page.waitForFunction(() => window.__receiverMessages?.some((raw) =>
+    JSON.parse(raw).type === "display_resume"));
+  assert.deepEqual(
+    await page.evaluate(() => window.__receiverMessages.map((raw) => JSON.parse(raw)).find(
+      (message) => message.type === "display_resume",
+    )),
+    { type: "display_resume", token: "reconnect-token" },
+  );
   await browser.close();
 });
 
@@ -632,10 +667,18 @@ test("Party Mode keeps selected rules for the next solo round", async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   await page.locator("#partyMode").click();
+  assert.equal(await page.locator("#partyDialog select").count(), 0);
+  assert.equal(await page.locator("#partyDialog input").count(), 0);
+  assert.equal(await page.locator(".party-grid-preview").count(), 3);
+  assert.equal(await page.locator(".party-marquee span").count(), 5);
   await page.locator('[data-party-size="5"]').click();
   await page.locator('[data-party-min="4"]').click();
   await page.locator('[data-party-time="90"]').click();
-  await page.locator("#partyForm button[value=start]").click();
+  assert.equal(await page.locator('[data-party-size="5"]').getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator('[data-party-min="4"]').getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator('[data-party-time="90"]').getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator("#partySummary").textContent(), "4+ letters · 5×5 · 01:30");
+  await page.locator("#partyStart").click();
   assert.equal(await page.locator(".tile").count(), 25);
   assert.equal(await page.locator("#gameHint").textContent(), "Minimum 4 letters");
   await page.locator("#endGame").click();
@@ -974,6 +1017,7 @@ test("Cast health status exposes an in-game re-cast action with fresh credential
     window.wordrushSessionCode = "ABCDE";
     window.wordrushRequestDisplayToken = async () => ({ token: "fresh-display-token" });
     window.wordrushCastHealthTimeoutMs = 1000;
+    window.wordrushCastProbeTimeoutMs = 50;
     document.querySelector("#homeScreen").classList.remove("active");
     document.querySelector("#gameScreen").classList.add("active");
     window.dispatchEvent(new CustomEvent("wordrush:room-change"));
@@ -984,6 +1028,7 @@ test("Cast health status exposes an in-game re-cast action with fresh credential
   assert.deepEqual(await page.evaluate(() => window.__castSent[0]), {
     type: "display_token",
     token: "fresh-display-token",
+    roomCode: "ABCDE",
   });
 
   await page.evaluate(() => window.__castReceiverListener("namespace", {
@@ -992,6 +1037,22 @@ test("Cast health status exposes an in-game re-cast action with fresh credential
   }));
   assert.match(await page.locator("#castStatus").textContent(), /TV is live/);
   assert.match(await page.locator("#gameCastButton").textContent(), /Refresh TV/);
+
+  await page.evaluate(() => window.__castStateListener({ sessionState: "resumed" }));
+  await page.waitForFunction(() => window.__castSent?.some(
+    (message) => message.type === "display_probe"));
+  assert.deepEqual(await page.evaluate(() => window.__castSent.find(
+    (message) => message.type === "display_probe")), {
+    type: "display_probe",
+    roomCode: "ABCDE",
+  });
+  await page.evaluate(() => window.__castReceiverListener("namespace", {
+    type: "display_status",
+    status: "connected",
+  }));
+  await page.waitForTimeout(80);
+  assert.equal(await page.evaluate(() => window.__castSent.filter(
+    (message) => message.type === "display_token").length), 1);
 
   await page.evaluate(() => {
     window.wordrushSessionCode = "FGHIJ";
@@ -1007,7 +1068,8 @@ test("Cast health status exposes an in-game re-cast action with fresh credential
   assert.match(await page.locator("#castStatus").textContent(), /dropped.*Re-cast/i);
   assert.match(await page.locator("#gameCastButton").textContent(), /Re-cast TV/);
   await page.locator("#gameCastButton").click();
-  await page.waitForFunction(() => window.__castSent?.length === 2);
+  await page.waitForFunction(() => window.__castSent?.filter(
+    (message) => message.type === "display_token").length === 2);
   await browser.close();
 });
 

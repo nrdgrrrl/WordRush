@@ -432,13 +432,70 @@
         </form>
       </dialog>
       <dialog id="partyDialog">
-        <form method="dialog" id="partyForm">
-          <div class="dialog-head"><div><p class="eyebrow">🎉 PARTY MODE</p><h2>Make it your round</h2></div><button value="cancel" aria-label="Close">×</button></div>
-          <p class="party-prompt">Tap your rules, then let the word battle begin.</p>
-          <fieldset class="party-options"><legend>Grid size</legend><div><button type="button" data-party-size="4">4×4</button><button type="button" data-party-size="5">5×5</button><button type="button" data-party-size="6">6×6</button></div></fieldset>
-          <fieldset class="party-options"><legend>Minimum word</legend><div><button type="button" data-party-min="3">3</button><button type="button" data-party-min="4">4</button><button type="button" data-party-min="5">5</button></div></fieldset>
-          <fieldset class="party-options"><legend>Time limit</legend><div class="party-times"><button type="button" data-party-time="30">0:30</button><button type="button" data-party-time="60">1:00</button><button type="button" data-party-time="90">1:30</button><button type="button" data-party-time="120">2:00</button><button type="button" data-party-time="150">2:30</button><button type="button" data-party-time="180">3:00</button><button type="button" data-party-time="210">3:30</button><button type="button" data-party-time="240">4:00</button><button type="button" data-party-time="270">4:30</button><button type="button" data-party-time="300">5:00</button></div></fieldset>
-          <button class="primary dialog-save" value="start">Start party →</button>
+        <form method="dialog" id="partyForm" class="rush-builder party-builder">
+          <div class="dialog-head">
+            <div>
+              <p class="eyebrow">🎉 PARTY MODE</p>
+              <h2>Choose the chaos</h2>
+            </div>
+            <button value="cancel" aria-label="Close">×</button>
+          </div>
+          <div class="builder-marquee party-marquee" aria-hidden="true">
+            <span>P</span><span>A</span><span>R</span><span>T</span><span>Y</span>
+          </div>
+          <p class="builder-prompt">Pass the phone. Pick the rules. Start the showdown!</p>
+          <fieldset class="builder-group party-grid-cards">
+            <legend>Pick your playground</legend>
+            <div role="group" aria-label="Grid size">
+              <button type="button" data-party-size="4">
+                <span class="party-grid-preview size-four" aria-hidden="true"></span>
+                <b>4×4</b><small>Quick &amp; cozy</small>
+              </button>
+              <button type="button" data-party-size="5">
+                <span class="party-grid-preview size-five" aria-hidden="true"></span>
+                <b>5×5</b><small>More to explore</small>
+              </button>
+              <button type="button" data-party-size="6">
+                <span class="party-grid-preview size-six" aria-hidden="true"></span>
+                <b>6×6</b><small>Maximum mayhem</small>
+              </button>
+            </div>
+          </fieldset>
+          <fieldset class="builder-group party-word-cards">
+            <legend>Shortest word</legend>
+            <div role="group" aria-label="Minimum word length">
+              <button type="button" data-party-min="3">
+                <span aria-hidden="true">CAT</span><b>3 letters</b><small>Fast &amp; friendly</small>
+              </button>
+              <button type="button" data-party-min="4">
+                <span aria-hidden="true">PLAY</span><b>4 letters</b><small>Tricky territory</small>
+              </button>
+              <button type="button" data-party-min="5">
+                <span aria-hidden="true">QUEST</span><b>5 letters</b><small>Big-brain battle</small>
+              </button>
+            </div>
+          </fieldset>
+          <fieldset class="builder-group party-clock-group">
+            <legend>Set the party clock</legend>
+            <div class="party-times" role="group" aria-label="Time limit">
+              <button type="button" data-party-time="30"><span>🧨</span><b>0:30</b></button>
+              <button type="button" data-party-time="60"><span>⚡</span><b>1:00</b></button>
+              <button type="button" data-party-time="90"><span>🚀</span><b>1:30</b></button>
+              <button type="button" data-party-time="120"><span>🎯</span><b>2:00</b></button>
+              <button type="button" data-party-time="150"><span>🎲</span><b>2:30</b></button>
+              <button type="button" data-party-time="180"><span>🎉</span><b>3:00</b></button>
+              <button type="button" data-party-time="210"><span>🏆</span><b>3:30</b></button>
+              <button type="button" data-party-time="240"><span>👑</span><b>4:00</b></button>
+              <button type="button" data-party-time="270"><span>🌟</span><b>4:30</b></button>
+              <button type="button" data-party-time="300"><span>🔥</span><b>5:00</b></button>
+            </div>
+          </fieldset>
+          <div class="builder-ticket party-ticket" aria-live="polite">
+            <span>YOUR PARTY</span><strong id="partySummary">3+ letters · 4×4 · 2:00</strong>
+          </div>
+          <button class="primary dialog-save builder-start party-start" id="partyStart" value="start">
+            START THE PARTY! →
+          </button>
         </form>
       </dialog>
       <dialog id="profileDialog">

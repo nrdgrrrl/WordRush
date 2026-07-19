@@ -150,6 +150,128 @@ html[data-theme="dark"] .builder-group legend { color: #fff9f0; }
   .builder-split .builder-group + .builder-group { margin-left: 4px; }
   .builder-split .builder-group:first-child { margin-right: 4px; }
 }
+
+/* Party Mode uses the same tactile game-builder language with extra confetti. */
+#partyDialog {
+  width: min(620px, calc(100% - 24px));
+  max-width: 620px;
+  max-height: calc(100dvh - 24px);
+  border: 3px solid #2c1c37;
+  border-radius: 24px;
+  overflow: auto;
+  background:
+    radial-gradient(circle at 7% 4%, #b7f5ff 0 4.5rem, transparent 4.6rem),
+    radial-gradient(circle at 95% 8%, #f6c85f 0 6rem, transparent 6.1rem),
+    linear-gradient(150deg, #fff9f0 0 65%, #f5ddff 100%);
+  box-shadow: 0 12px 0 #2c1c37, 0 30px 90px #0008;
+}
+.party-builder { padding-bottom: 22px; }
+.party-builder .dialog-head h2 {
+  font-size: clamp(1.8rem, 6vw, 2.8rem);
+  letter-spacing: -.05em;
+}
+.party-marquee span:nth-child(1) { background: #f7b2a8; }
+.party-marquee span:nth-child(2) { background: #b7f5ff; }
+.party-marquee span:nth-child(3) { background: #f6c85f; }
+.party-marquee span:nth-child(4) { background: #e3c8ff; }
+.party-marquee span:nth-child(5) { background: #eaf9d2; }
+.party-marquee span { animation: party-tile-bob 1.8s ease-in-out infinite alternate; }
+.party-marquee span:nth-child(even) { animation-delay: -.8s; }
+@keyframes party-tile-bob {
+  to { transform: translateY(-5px) rotate(calc(var(--tilt, -3deg) * -1)); }
+}
+.party-grid-cards > div,
+.party-word-cards > div {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+.party-grid-cards button,
+.party-word-cards button {
+  min-width: 0;
+  padding: 10px 5px;
+}
+.party-grid-cards button > b,
+.party-grid-cards button > small,
+.party-word-cards button > b,
+.party-word-cards button > small { display: block; }
+.party-grid-cards button > b,
+.party-word-cards button > b { margin-top: 6px; font-size: .84rem; }
+.party-grid-cards button > small,
+.party-word-cards button > small { margin-top: 2px; color: #6e6374; font-size: .62rem; }
+.party-grid-preview {
+  --preview-cells: 4;
+  display: block;
+  width: 45px;
+  aspect-ratio: 1;
+  margin: 0 auto;
+  border: 2px solid #2c1c37;
+  border-radius: 7px;
+  background-color: #b7f5ff;
+  background-image:
+    linear-gradient(to right, transparent calc(100% - 1px), #2c1c37 calc(100% - 1px)),
+    linear-gradient(to bottom, transparent calc(100% - 1px), #2c1c37 calc(100% - 1px));
+  background-size: calc(100% / var(--preview-cells)) calc(100% / var(--preview-cells));
+  box-shadow: 0 3px 0 #2c1c37;
+  transform: rotate(-3deg);
+}
+.party-grid-preview.size-five { --preview-cells: 5; background-color: #f6c85f; transform: rotate(2deg); }
+.party-grid-preview.size-six { --preview-cells: 6; background-color: #f7b2a8; transform: rotate(-1deg); }
+.party-word-cards button > span {
+  display: inline-block;
+  padding: 6px 8px;
+  border: 2px solid #2c1c37;
+  border-radius: 8px;
+  background: #eaf9d2;
+  box-shadow: 0 3px 0 #2c1c37;
+  font-size: .76rem;
+  font-weight: 950;
+  letter-spacing: .13em;
+  transform: rotate(-2deg);
+}
+.party-word-cards button:nth-child(2) > span { background: #e3c8ff; transform: rotate(2deg); }
+.party-word-cards button:nth-child(3) > span { background: #f7b2a8; transform: rotate(-1deg); }
+.party-times {
+  display: grid !important;
+  grid-template-columns: repeat(5, 1fr);
+}
+.party-times button {
+  min-width: 0;
+  min-height: 52px;
+  padding: 5px 2px;
+  font-weight: 900;
+}
+.party-times button span,
+.party-times button b { display: block; }
+.party-times button span { font-size: 1.05rem; }
+.party-times button b { margin-top: 2px; font-size: .72rem; }
+.party-ticket {
+  border-color: #dd5f58;
+  background: linear-gradient(100deg, #f7b2a8, #fff1bd);
+}
+.party-start { background: linear-gradient(100deg, #5b2d7f, #dd5f58) !important; color: #fff9f0 !important; }
+html[data-theme="dark"] #partyDialog {
+  border-color: #f6c85f;
+  background:
+    radial-gradient(circle at 7% 4%, #224c59 0 4.5rem, transparent 4.6rem),
+    radial-gradient(circle at 95% 8%, #765c22 0 6rem, transparent 6.1rem),
+    #1d1925;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) #partyDialog {
+    border-color: #f6c85f;
+    background:
+      radial-gradient(circle at 7% 4%, #224c59 0 4.5rem, transparent 4.6rem),
+      radial-gradient(circle at 95% 8%, #765c22 0 6rem, transparent 6.1rem),
+      #1d1925;
+  }
+}
+@media (prefers-reduced-motion: reduce) { .party-marquee span { animation: none; } }
+@media (max-width: 430px) {
+  .party-grid-cards button > small,
+  .party-word-cards button > small { display: none; }
+  .party-times { gap: 4px !important; }
+  .party-times button { min-height: 48px; }
+}
 .custom-game {
   border-color: var(--coral) !important;
 }
@@ -488,4 +610,3 @@ html[data-theme="dark"] #resultsScreen .achievement { color: #2c1c37; }
 @media (prefers-reduced-motion: reduce) { .result-confetti i { animation: none; } }
  .party-panel { width:100%; display:flex; align-items:center; gap:.8rem; text-align:left; border:2px solid #f6c85f; background:linear-gradient(120deg,#5b2d7f,#dd5f58); color:#fff9f0; border-radius:1.2rem; padding:1rem 1.1rem; margin:.8rem 0; box-shadow:0 .45rem 0 rgba(44,28,55,.45); }
  .party-panel > span { font-size:2rem; } .party-panel div { flex:1; display:grid; gap:.1rem; } .party-panel small { font-weight:900; letter-spacing:.11em; } .party-panel strong { font-size:1.15rem; } .party-panel em { font-style:normal; opacity:.85; font-size:.82rem; } .party-panel > b { font-size:1.6rem; }
- .party-prompt { margin:.3rem 0 1rem; } .party-options { border:0; padding:0; margin:1rem 0; } .party-options legend { font-weight:900; margin-bottom:.45rem; } .party-options > div { display:flex; gap:.45rem; flex-wrap:wrap; } .party-options button { flex:1; min-width:3.8rem; border:2px solid #d1c1d8; background:transparent; color:inherit; border-radius:.8rem; padding:.7rem .45rem; font:inherit; font-weight:800; } .party-options button.active { background:#f6c85f; color:#2c1c37; border-color:#f6c85f; transform:translateY(-2px); } .party-times button { flex:0 0 calc(20% - .4rem); min-width:3.4rem; }

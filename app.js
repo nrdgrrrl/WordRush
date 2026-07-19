@@ -658,9 +658,19 @@ $("#stopRush").onclick = stopRush;
 $("#stopRushResults").onclick = stopRush;
 let partyConfig = { size: 4, min: 3, seconds: 120 };
 function syncPartyOptions() {
-  document.querySelectorAll("[data-party-size]").forEach((button) => button.classList.toggle("active", +button.dataset.partySize === partyConfig.size));
-  document.querySelectorAll("[data-party-min]").forEach((button) => button.classList.toggle("active", +button.dataset.partyMin === partyConfig.min));
-  document.querySelectorAll("[data-party-time]").forEach((button) => button.classList.toggle("active", +button.dataset.partyTime === partyConfig.seconds));
+  for (const [attribute, value] of [
+    ["partySize", partyConfig.size],
+    ["partyMin", partyConfig.min],
+    ["partyTime", partyConfig.seconds],
+  ])
+    document.querySelectorAll(`[data-${attribute.replace(/[A-Z]/g, (letter) => "-" + letter.toLowerCase())}]`).forEach((button) => {
+      const active = +button.dataset[attribute] === value;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+  $("#partySummary").textContent =
+    partyConfig.min + "+ letters · " + partyConfig.size + "×" + partyConfig.size +
+    " · " + formatTimer(partyConfig.seconds);
 }
 function openParty() { syncPartyOptions(); $("#partyDialog").showModal(); }
 $("#partyMode").onclick = openParty;

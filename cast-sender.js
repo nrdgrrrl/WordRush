@@ -12,6 +12,7 @@
   let receiverMessageSession = null;
   let receiverHealthy = false;
   let receiverHealthTimer = null;
+  let receiverProbeTimer = null;
   let activeRoomCode = "";
 
   if (!button || !control || !status) return;
@@ -31,6 +32,8 @@
       receiverHealthy = false;
       clearTimeout(receiverHealthTimer);
       receiverHealthTimer = null;
+      clearTimeout(receiverProbeTimer);
+      receiverProbeTimer = null;
       if (gameButton) gameButton.textContent = "📺 Cast to TV";
     }
     control.hidden = !hasRoom();
@@ -45,6 +48,8 @@
     receiverHealthy = healthy;
     clearTimeout(receiverHealthTimer);
     receiverHealthTimer = null;
+    clearTimeout(receiverProbeTimer);
+    receiverProbeTimer = null;
     if (healthy) {
       setStatus("TV is live with this room", true);
       if (gameButton) gameButton.textContent = "📺 Refresh TV";
@@ -66,13 +71,36 @@
     setStatus("Connecting this room…");
     try {
       const { token } = await window.wordrushRequestDisplayToken();
-      await session.sendMessage(NAMESPACE, { type: "display_token", token });
+      await session.sendMessage(NAMESPACE, {
+        type: "display_token",
+        token,
+        roomCode: window.wordrushSessionCode,
+      });
       setStatus("Waiting for the TV to confirm…", true);
     } catch (error) {
       setStatus("Could not connect the TV. Your game is unchanged.", true);
       console.warn("Wordrush Cast room handoff failed", error);
     } finally {
       sharing = false;
+    }
+  };
+  const probeRoom = async () => {
+    if (!hasRoom() || !context) return;
+    const session = context.getCurrentSession();
+    if (!session) return;
+    clearTimeout(receiverProbeTimer);
+    setStatus("Checking the TV connection…", true);
+    try {
+      await session.sendMessage(NAMESPACE, {
+        type: "display_probe",
+        roomCode: window.wordrushSessionCode,
+      });
+      receiverProbeTimer = setTimeout(() => {
+        receiverProbeTimer = null;
+        if (!receiverHealthy) shareRoom();
+      }, window.wordrushCastProbeTimeoutMs ?? 5_000);
+    } catch {
+      await shareRoom();
     }
   };
   const listenForReceiverMessages = (session) => {
@@ -103,16 +131,19 @@
         cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
         (event) => {
           const state = event.sessionState;
-          if (
-            state === cast.framework.SessionState.SESSION_STARTED ||
-            state === cast.framework.SessionState.SESSION_RESUMED
-          ) {
+          if (state === cast.framework.SessionState.SESSION_STARTED) {
             listenForReceiverMessages(context.getCurrentSession());
             shareRoom();
+          } else if (state === cast.framework.SessionState.SESSION_RESUMED) {
+            listenForReceiverMessages(context.getCurrentSession());
+            receiverHealthy = false;
+            probeRoom();
           } else if (state === cast.framework.SessionState.SESSION_ENDED) {
             receiverMessageSession = null;
             receiverHealthy = false;
             clearTimeout(receiverHealthTimer);
+            clearTimeout(receiverProbeTimer);
+            receiverProbeTimer = null;
             if (gameButton) gameButton.textContent = "📺 Cast to TV";
             updateAvailability();
           }

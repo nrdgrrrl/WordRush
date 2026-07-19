@@ -35,6 +35,12 @@ const MAX_WS_CONNECTIONS_PER_IP = Number(process.env.WORDRUSH_MAX_WS_PER_IP || 6
 const MAX_WS_MESSAGES_PER_WINDOW = Number(
   process.env.WORDRUSH_MAX_WS_MESSAGES_PER_WINDOW || 60,
 );
+const WS_HEARTBEAT_INTERVAL_MS = Number(
+  process.env.WORDRUSH_WS_HEARTBEAT_INTERVAL_MS || 30_000,
+);
+const WS_HEARTBEAT_MISSES = Number(
+  process.env.WORDRUSH_WS_HEARTBEAT_MISSES || 2,
+);
 const RATE_WINDOW_MS = 60_000;
 const displayTokens = new Map();
 const displayCredentials = new Map();
@@ -454,9 +460,10 @@ function resumeDisplay(value) {
     displayCredentials.delete(token);
     return null;
   }
-  if (credential.ws?.readyState === 1) return null;
   credential.expiresAt = Date.now() + DISPLAY_RECONNECT_TTL_MS;
-  return { room, reconnectToken: token };
+  // A TV can notice a broken network path before Node observes the old close.
+  // Possession of the private credential authorizes atomically replacing it.
+  return { room, reconnectToken: token, previousSocket: credential.ws };
 }
 function leaveDisplay(ws) {
   const display = displays.get(ws);
@@ -542,18 +549,25 @@ function handle(ws, message) {
           ? "INVALID_DISPLAY_CREDENTIAL"
           : "INVALID_DISPLAY_TOKEN",
       });
-    const { room, reconnectToken } = authenticated;
+    const { room, reconnectToken, previousSocket } = authenticated;
     const credential = displayCredentials.get(reconnectToken);
+    if (previousSocket && previousSocket !== ws) {
+      displays.delete(previousSocket);
+      room.displays.delete(previousSocket);
+    }
     credential.ws = ws;
     displays.set(ws, { roomCode: room.code, reconnectToken });
     room.displays.add(ws);
-    return send(ws, {
+    send(ws, {
       ...displayUpdate(
         room,
         type === "display_resume" ? "display_reconnected" : "display_connected",
       ),
       reconnectToken,
     });
+    if (previousSocket && previousSocket !== ws && previousSocket.readyState <= 1)
+      previousSocket.close(4000, "display resumed elsewhere");
+    return;
   }
   if (type === "hello") {
     if (clients.has(ws))
@@ -913,11 +927,11 @@ wss.on("connection", (ws, req) => {
     new URL(req.url || "/", "http://localhost").pathname === "/display"
       ? "display"
       : "player";
-  ws.isAlive = true;
+  ws.missedHeartbeats = 0;
   ws.connectedAt = Date.now();
   ws.messageWindow = { startedAt: Date.now(), count: 0 };
   ws.on("pong", () => {
-    ws.isAlive = true;
+    ws.missedHeartbeats = 0;
   });
   ws.on("message", (raw) => {
     const now = Date.now();
@@ -948,6 +962,17 @@ server.on("upgrade", (req, socket, head) => {
   if (!rateLimit(`ws:${ip}`, MAX_WS_CONNECTIONS_PER_IP)) return socket.destroy();
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
 });
+function heartbeatSocket(ws) {
+  // Cast devices can briefly pause their network stack while changing Wi-Fi
+  // power state. Require multiple missed pongs instead of killing one stall.
+  if (ws.missedHeartbeats >= WS_HEARTBEAT_MISSES) {
+    ws.terminate();
+    return false;
+  }
+  ws.missedHeartbeats += 1;
+  ws.ping();
+  return true;
+}
 const heartbeat = setInterval(() => {
   const now = Date.now();
   pruneExpiredRateLimits(now);
@@ -960,13 +985,9 @@ const heartbeat = setInterval(() => {
       else displayCredentials.delete(token);
     }
   for (const ws of wss.clients) {
-    if (!ws.isAlive) ws.terminate();
-    else {
-      ws.isAlive = false;
-      ws.ping();
-    }
+    heartbeatSocket(ws);
   }
-}, 15000);
+}, WS_HEARTBEAT_INTERVAL_MS);
 heartbeat.unref?.();
 if (require.main === module)
   server.listen(PORT, HOST, () =>
@@ -982,6 +1003,8 @@ module.exports = {
   rateLimits,
   clientIp,
   pruneExpiredRateLimits,
+  heartbeatSocket,
+  WS_HEARTBEAT_MISSES,
 };
 
 const { Leaderboard } = require("./leaderboard");

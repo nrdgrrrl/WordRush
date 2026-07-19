@@ -9,6 +9,31 @@
   let reconnectTimer = null;
   let reconnectAttempts = 0;
   let keepaliveTimer = null;
+  let activeRoomCode = "";
+  let targetRoomCode = "";
+  const reconnectStorageKey = "wordrush-display-reconnect";
+
+  const savedReconnectCredential = () => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(reconnectStorageKey) || "null");
+      return typeof saved?.token === "string" && saved.token
+        ? { token: saved.token, roomCode: String(saved.roomCode || "") }
+        : null;
+    } catch {
+      return null;
+    }
+  };
+  const saveReconnectCredential = () => {
+    try {
+      sessionStorage.setItem(reconnectStorageKey, JSON.stringify({
+        token: reconnectToken,
+        roomCode: activeRoomCode,
+      }));
+    } catch {}
+  };
+  const clearReconnectCredential = () => {
+    try { sessionStorage.removeItem(reconnectStorageKey); } catch {}
+  };
 
   const escape = (value) =>
     String(value ?? "").replace(/[&<>'"]/g, (character) =>
@@ -88,12 +113,20 @@
     }
     connection.textContent = "Live room connection";
   };
-  const notifySender = (message) => {
+  const notifySender = (message, senderId = "") => {
     try {
       const senders = castContext?.getSenders?.() || [];
-      for (const sender of senders) castContext.sendCustomMessage(NAMESPACE, sender.id, message);
+      const recipients = senderId
+        ? senders.filter((sender) => sender.id === senderId)
+        : message.type === "display_reconnect_needed"
+          ? senders.slice(0, 1)
+          : senders;
+      for (const sender of recipients)
+        castContext.sendCustomMessage(NAMESPACE, sender.id, message);
     } catch {}
   };
+  const socketIsActive = (candidate) =>
+    candidate && (candidate.readyState === undefined || candidate.readyState <= 1);
   const stopKeepalive = () => {
     clearInterval(keepaliveTimer);
     keepaliveTimer = null;
@@ -108,14 +141,28 @@
       } catch {}
     }, interval);
   };
-  const connectDisplay = (token, resume = false) => {
+  const connectDisplay = (token, resume = false, roomCode = "") => {
     if (typeof token !== "string" || !token) return;
+    const normalizedRoomCode = String(roomCode || "").trim().toUpperCase();
+    if (
+      !resume &&
+      normalizedRoomCode &&
+      normalizedRoomCode === targetRoomCode &&
+      socketIsActive(socket)
+    ) {
+      // Phone wakeups and multiple origin-scoped sender tabs can deliver the
+      // same room again. Never replace a live display for an idempotent handoff.
+      if (activeRoomCode === normalizedRoomCode)
+        notifySender({ type: "display_status", status: "connected" });
+      return;
+    }
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
     stopKeepalive();
     if (!resume) {
       reconnectToken = "";
       reconnectAttempts = 0;
+      targetRoomCode = normalizedRoomCode;
     }
     const previousSocket = socket;
     let reconnectRequested = false;
@@ -135,6 +182,9 @@
       try { message = JSON.parse(data); } catch { return; }
       if (message.type === "display_state") {
         if (message.reconnectToken) reconnectToken = message.reconnectToken;
+        activeRoomCode = String(message.state?.code || targetRoomCode);
+        targetRoomCode = activeRoomCode;
+        saveReconnectCredential();
         reconnectAttempts = 0;
         startKeepalive(displaySocket);
         notifySender({ type: "display_status", status: "connected" });
@@ -146,6 +196,9 @@
       }
       if (message.type === "session_closed") {
         reconnectToken = "";
+        activeRoomCode = "";
+        targetRoomCode = "";
+        clearReconnectCredential();
         stopKeepalive();
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -155,6 +208,7 @@
       }
       if (message.type === "error") {
         reconnectToken = "";
+        clearReconnectCredential();
         renderIdle("This room connection was not authorized. Cast the room again from your phone.");
         connection.textContent = "Authorization required";
         reconnectRequested = true;
@@ -176,7 +230,7 @@
         Math.min(1000 * 2 ** reconnectAttempts, 10_000);
       reconnectAttempts += 1;
       reconnectTimer = setTimeout(
-        () => connectDisplay(reconnectToken, true),
+        () => connectDisplay(reconnectToken, true, targetRoomCode),
         delay,
       );
     });
@@ -188,14 +242,40 @@
     }
     castContext = cast.framework.CastReceiverContext.getInstance();
     castContext.addCustomMessageListener(NAMESPACE, (event) => {
-      if (event.data?.type === "display_token") connectDisplay(event.data.token);
+      if (event.data?.type === "display_token")
+        connectDisplay(event.data.token, false, event.data.roomCode);
+      if (event.data?.type === "display_probe") {
+        const requestedRoom = String(event.data.roomCode || "").trim().toUpperCase();
+        const healthy = socketIsActive(socket) && reconnectToken &&
+          (!requestedRoom || requestedRoom === activeRoomCode);
+        notifySender(
+          healthy
+            ? { type: "display_status", status: "connected" }
+            : { type: "display_reconnect_needed" },
+          event.senderId,
+        );
+      }
     });
+    const senderConnected = cast.framework.system?.EventType?.SENDER_CONNECTED;
+    if (senderConnected)
+      castContext.addEventListener?.(senderConnected, (event) => {
+        if (!socketIsActive(socket))
+          notifySender({ type: "display_reconnect_needed" }, event.senderId);
+      });
     castContext.start({
       statusText: "Wordrush TV is ready",
       // Wordrush is a non-media receiver. CAF otherwise treats the app as idle
       // and shuts it down even while its room WebSocket is healthy.
       disableIdleTimeout: true,
+      skipPlayersLoad: true,
     });
+    const saved = savedReconnectCredential();
+    if (saved) connectDisplay(saved.token, true, saved.roomCode);
+    else
+      setTimeout(() => {
+        if (!socketIsActive(socket))
+          notifySender({ type: "display_reconnect_needed" });
+      }, window.wordrushReceiverHandoffDelayMs ?? 1_000);
     connection.textContent = "Waiting for room context from your phone";
   };
   renderIdle();
