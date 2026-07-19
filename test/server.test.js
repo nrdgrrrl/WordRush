@@ -174,6 +174,10 @@ test("display tokens grant a room-scoped connection that can resume independentl
   assert.equal(rooms.get(created.code).players.size, 1);
   assert.equal(rooms.get(created.code).displays.size, 1);
 
+  const keepalive = next(display, "display_keepalive_ack");
+  message(display, "display_keepalive");
+  await keepalive;
+
   const reconnectToken = initial.reconnectToken;
   display.close();
   await new Promise((resolve) => display.once("close", resolve));
@@ -202,6 +206,41 @@ test("display tokens grant a room-scoped connection that can resume independentl
   message(host, "leave_session");
   assert.equal((await closed).code, created.code);
   host.close();
+  display.close();
+});
+
+test("an active cast keeps its room alive while the host phone sleeps", async () => {
+  const host = await client("sleeping-cast-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room", { name: "Sleeping Host" });
+  const created = await createdPromise;
+  await lobbyPromise;
+
+  const tokenPromise = next(host, "display_token");
+  message(host, "create_display_token");
+  const token = await tokenPromise;
+  const display = await displayClient();
+  const displayState = next(display, "display_state");
+  message(display, "display_hello", { token: token.token });
+  await displayState;
+
+  host.close();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(rooms.has(created.code), true);
+  assert.equal(rooms.get(created.code).displays.size, 1);
+
+  const resumedHost = await client("sleeping-cast-host");
+  const resumed = next(resumedHost, "room_resumed");
+  message(resumedHost, "resume_room", {
+    code: created.code,
+    reconnectToken: created.reconnectToken,
+  });
+  await resumed;
+  const closed = next(resumedHost, "session_closed");
+  message(resumedHost, "leave_session");
+  await closed;
+  resumedHost.close();
   display.close();
 });
 
@@ -366,6 +405,54 @@ test("propagates player identities through room state, score updates, and rankin
     ranking.find((player) => player.name === "CosmicPaw").avatar,
     "🐼",
   );
+  host.close();
+  guest.close();
+});
+
+test("multiplayer results accumulate session wins, losses, and total points", async () => {
+  const host = await client("session-record-host");
+  const guest = await client("session-record-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room", { name: "Record Host" });
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joined = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code, name: "Record Guest" });
+  await joined;
+
+  const firstStarted = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  await firstStarted;
+  rooms.get(created.code).players.get("session-record-host").score = 25;
+  rooms.get(created.code).players.get("session-record-guest").score = 9;
+  const firstFinished = next(host, "round_finished");
+  message(host, "end_round");
+  const first = await firstFinished;
+  assert.deepEqual(first.ranking.map((player) => [player.id, player.session]), [
+    ["session-record-host", { wins: 1, losses: 0, points: 25 }],
+    ["session-record-guest", { wins: 0, losses: 1, points: 9 }],
+  ]);
+
+  const secondStarted = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  await secondStarted;
+  rooms.get(created.code).players.get("session-record-host").score = 4;
+  rooms.get(created.code).players.get("session-record-guest").score = 36;
+  const secondFinished = next(host, "round_finished");
+  message(host, "end_round");
+  const second = await secondFinished;
+  const records = Object.fromEntries(
+    second.ranking.map((player) => [player.id, player.session]),
+  );
+  assert.deepEqual(records, {
+    "session-record-host": { wins: 1, losses: 1, points: 29 },
+    "session-record-guest": { wins: 1, losses: 1, points: 45 },
+  });
+
+  const closed = next(guest, "session_closed");
+  message(host, "leave_session");
+  await closed;
   host.close();
   guest.close();
 });

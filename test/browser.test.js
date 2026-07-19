@@ -15,6 +15,11 @@ const executablePath =
   process.env.PLAYWRIGHT_CHROMIUM ||
   "/home/victoria/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome";
 let baseUrl;
+async function startClassic(page) {
+  await page.locator('button[data-mode="classic"]').click();
+  await page.waitForSelector("#customDialog[open]");
+  await page.locator("#customStart").click();
+}
 test.before(
   () =>
     new Promise((resolve) =>
@@ -62,9 +67,13 @@ test("receiver preserves room state and reconnects itself after a dropped connec
     }
     window.WebSocket = FakeWebSocket;
     window.wordrushDisplayReconnectDelayMs = 0;
+    window.wordrushDisplayKeepaliveMs = 10;
     window.cast = { framework: { CastReceiverContext: { getInstance: () => ({
       addCustomMessageListener: (_namespace, handler) => { window.__receiverHandler = handler; },
-      getSenders: () => [], sendCustomMessage: () => {},
+      getSenders: () => [{ id: "sender-1" }],
+      sendCustomMessage: (_namespace, _senderId, message) => {
+        window.__receiverCastMessages = [...(window.__receiverCastMessages || []), message];
+      },
       start: (options) => { window.__receiverOptions = options; },
     }) } } };
   });
@@ -83,6 +92,9 @@ test("receiver preserves room state and reconnects itself after a dropped connec
       ],
     },
   }) }));
+  await page.waitForFunction(() => window.__receiverCastMessages?.some(
+    (message) => message.type === "display_status" && message.status === "connected",
+  ));
   const qr = await page.locator(".join-qr").evaluate((node) => {
     const bounds = node.getBoundingClientRect();
     return { width: bounds.width, height: bounds.height, bottom: bounds.bottom };
@@ -100,14 +112,67 @@ test("receiver preserves room state and reconnects itself after a dropped connec
   }) }));
   assert.equal(await page.locator(".score-card").count(), 10);
   assert.match(await page.locator("#eyebrow").textContent(), /LIVE SCOREBOARD/);
+  await page.evaluate(() => window.__receiverSocket.emit("message", { data: JSON.stringify({
+    type: "display_state", state: {
+      status: "finished", code: "ABCDE",
+      players: [
+        { name: "Nova", avatar: "🦊", score: 74 },
+        { name: "Pixel", avatar: "🐈", score: 34 },
+      ],
+      lastResult: {
+        cooperative: false,
+        ranking: [
+          {
+            name: "Nova", avatar: "🦊", score: 74,
+            session: { wins: 3, losses: 1, points: 248 },
+            words: [
+              { word: "PLANETS", points: 49 },
+              { word: "STARS", points: 25 },
+            ],
+          },
+          {
+            name: "Pixel", avatar: "🐈", score: 34,
+            session: { wins: 1, losses: 3, points: 179 },
+            words: [
+              { word: "MOON", points: 16 },
+              { word: "COMET", points: 18 },
+            ],
+          },
+        ],
+      },
+    },
+  }) }));
+  assert.equal(await page.locator(".final-player-card").count(), 2);
+  assert.equal(await page.locator(".tv-word").count(), 4);
+  assert.equal(await page.locator(".tv-word.length-short").count(), 1);
+  assert.equal(await page.locator(".tv-word.length-medium").count(), 2);
+  assert.equal(await page.locator(".tv-word.length-long").count(), 1);
+  assert.match(await page.locator(".longest-banner").textContent(), /PLANETS/);
+  assert.match(await page.locator(".longest-banner").textContent(), /Nova/);
+  assert.match(await page.locator(".longest-banner").textContent(), /49 pts/);
+  assert.match(await page.locator(".tv-session-record").first().textContent(), /3W · 1L · 248 SESSION PTS/);
+  assert.match(await page.locator(".tv-session-record").nth(1).textContent(), /1W · 3L · 179 SESSION PTS/);
+  assert.equal(
+    await page.locator(".results-party").evaluate((node) =>
+      node.getBoundingClientRect().bottom <= innerHeight),
+    true,
+  );
+  await page.waitForFunction(() => window.__receiverMessages?.some((raw) =>
+    JSON.parse(raw).type === "display_keepalive"));
   await page.evaluate(() => window.__receiverSocket.emit("close"));
+  await page.waitForFunction(() => window.__receiverCastMessages?.some(
+    (message) => message.type === "display_status" && message.status === "reconnecting",
+  ));
   await page.waitForFunction(() => window.__receiverSockets?.length === 2);
-  await page.waitForFunction(() => window.__receiverMessages?.length === 2);
+  await page.waitForFunction(() => window.__receiverMessages?.some((raw) =>
+    JSON.parse(raw).type === "display_resume"));
   assert.deepEqual(
-    JSON.parse(await page.evaluate(() => window.__receiverMessages[1])),
+    await page.evaluate(() => window.__receiverMessages.map((raw) => JSON.parse(raw)).find(
+      (message) => message.type === "display_resume",
+    )),
     { type: "display_resume", token: "reconnect-token" },
   );
-  assert.equal(await page.locator(".score-card").count(), 10);
+  assert.equal(await page.locator(".final-player-card").count(), 2);
   assert.match(await page.locator("#connection").textContent(), /Reconnecting/i);
   await browser.close();
 });
@@ -120,7 +185,7 @@ test("browser can start, play, persist stats, and toggle dark mode", async () =>
   await page.goto(baseUrl);
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  await page.locator('button[data-mode="classic"]').click();
+  await startClassic(page);
   assert.equal(
     await page
       .locator("#gameScreen")
@@ -227,7 +292,7 @@ test("solo play validates a traced word without downloading the dictionary", asy
     if (pathname === "/api/word-check") wordCheckRequests.push(request.url());
   });
   await page.goto(baseUrl);
-  await page.locator('button[data-mode="classic"]').click();
+  await startClassic(page);
   const found = await page.evaluate(() => {
     const words = window.WordrushConfig.COMMON_WORDS;
     const letters = [...document.querySelectorAll(".tile")].map(
@@ -328,7 +393,7 @@ test("active games hide the title bar and preserve a no-scroll compact layout", 
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator('button[data-mode="classic"]').click();
+  await startClassic(page);
   const layout = await page.evaluate(() => {
     const style = (selector) =>
       getComputedStyle(document.querySelector(selector));
@@ -443,16 +508,20 @@ test("sudden death can return home from its results screen", async () => {
   await browser.close();
 });
 
-test("custom game controls start the selected configuration", async () => {
+test("graphical game builder includes a three-letter option and starts its configuration", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   await page.locator("#customGame").click();
-  await page.locator("#customType").selectOption("classic");
-  await page.locator("#customRules").selectOption("classic");
-  await page.locator("#customMin").fill("6");
-  await page.locator("#customBoard").selectOption("8");
-  await page.locator("#customTime").fill("45");
+  assert.equal(await page.locator("#customDialog select").count(), 0);
+  assert.equal(await page.locator("#customDialog input").count(), 0);
+  const threeLetters = page.locator('[data-custom-min="3"]');
+  assert.equal(await threeLetters.isVisible(), true);
+  await threeLetters.click();
+  assert.equal(await threeLetters.getAttribute("aria-pressed"), "true");
+  await page.locator('[data-custom-min="6"]').click();
+  await page.locator('[data-custom-size="8"]').click();
+  await page.locator('[data-custom-time="30"]').click();
   await page.locator("#customStart").click();
   assert.equal(
     await page
@@ -467,7 +536,7 @@ test("custom game controls start the selected configuration", async () => {
   );
   assert.equal(
     await page.locator("#ruleBanner").textContent(),
-    "Minimum 6 letters · 45 seconds",
+    "Minimum 6 letters · 30 seconds",
   );
   await browser.close();
 });
@@ -477,7 +546,9 @@ test("random rush rolls into a different game and can be stopped", async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   await page.evaluate(() => {
-    window.wordrushRushDelay = 50;
+    // Keep the result celebration visible long enough for a browser paint and
+    // an accessibility-visible assertion before the next rush begins.
+    window.wordrushRushDelay = 250;
   });
   await page.locator("#randomPanel").click();
   const modes = [];
@@ -505,8 +576,8 @@ test("dirty custom boards always expose at least five adult words", async () => 
   await page.goto(baseUrl);
   page.on("dialog", (dialog) => dialog.accept());
   await page.locator("#customGame").click();
-  await page.locator("#customType").selectOption("dirty");
-  await page.locator("#customBoard").selectOption("4");
+  await page.locator('[data-custom-type="dirty"]').click();
+  await page.locator('[data-custom-size="4"]').click();
   await page.locator("#customStart").click();
   const playable = await page.evaluate((words) => {
     const board = [...document.querySelectorAll(".tile")].map((tile) => tile.textContent);
@@ -710,6 +781,35 @@ test("a joining guest cannot fall through to solo play and the host can reopen t
   await browser.close();
 });
 
+test("main screen join QR remains available after a multiplayer round starts", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await host.goto(baseUrl);
+  await host.locator("#sessionManage").click();
+  await host.locator("#sessionCreate").click();
+  await host.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  const code = await host.locator("#sessionCode").textContent();
+  await host.locator("#sessionType").selectOption("classic");
+  await host.locator("#sessionStart").click();
+  await host.waitForSelector("#gameScreen.active");
+  await host.locator('#gameScreen [data-screen="homeScreen"]').click();
+
+  assert.equal(await host.locator("#multiplayerBanner").isVisible(), true);
+  assert.match(await host.locator("#multiplayerShare").textContent(), /Join QR/);
+  await host.locator("#multiplayerShare").click();
+  await host.waitForFunction(() => document.querySelector("#sessionQr").naturalWidth > 0);
+  assert.match(await host.locator("#sessionQr").getAttribute("src"), new RegExp("join=" + code));
+  assert.match(await host.locator("#lobbyStatus").textContent(), /new players.*scan/i);
+
+  const returningPlayer = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await returningPlayer.goto(baseUrl + "/?join=" + code);
+  await returningPlayer.waitForSelector("#gameScreen.active");
+  assert.equal(await returningPlayer.locator("#gameMode").textContent(), "CLASSIC");
+  await browser.close();
+});
+
 test("live multiplayer scores are equally prominent and color opponents differently", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -766,6 +866,86 @@ test("Cast control stays disabled on an insecure origin", async () => {
     await page.locator("#castStatus").textContent(),
     /secure Wordrush only/,
   );
+  await browser.close();
+});
+
+test("Cast health status exposes an in-game re-cast action with fresh credentials", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.route("https://www.gstatic.com/cv/js/sender/v1/cast_sender.js**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/javascript",
+      body: `
+        window.chrome = { cast: { AutoJoinPolicy: { ORIGIN_SCOPED: "origin" } } };
+        window.__castSession = {
+          sendMessage: async (_namespace, message) => {
+            window.__castSent = [...(window.__castSent || []), message];
+          },
+          addMessageListener: (_namespace, listener) => { window.__castReceiverListener = listener; }
+        };
+        window.__castContext = {
+          setOptions: () => {},
+          addEventListener: (_type, listener) => { window.__castStateListener = listener; },
+          getCurrentSession: () => window.__castSession,
+          requestSession: async () => {}
+        };
+        window.cast = { framework: {
+          CastContext: { getInstance: () => window.__castContext },
+          CastContextEventType: { SESSION_STATE_CHANGED: "state" },
+          SessionState: { SESSION_STARTED: "started", SESSION_RESUMED: "resumed", SESSION_ENDED: "ended" }
+        } };
+        queueMicrotask(() => window.__onGCastApiAvailable(true));
+      `,
+    }),
+  );
+  await page.route("https://wordrush.test/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/cast-config")
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ applicationId: "test-cast-app" }),
+      });
+    const upstream = await fetch(baseUrl + url.pathname + url.search);
+    await route.fulfill({
+      status: upstream.status,
+      contentType: upstream.headers.get("content-type") || "text/plain",
+      body: Buffer.from(await upstream.arrayBuffer()),
+    });
+  });
+  await page.goto("https://wordrush.test/");
+  await page.evaluate(() => {
+    window.wordrushSessionCode = "ABCDE";
+    window.wordrushRequestDisplayToken = async () => ({ token: "fresh-display-token" });
+    window.wordrushCastHealthTimeoutMs = 1000;
+    document.querySelector("#homeScreen").classList.remove("active");
+    document.querySelector("#gameScreen").classList.add("active");
+    window.dispatchEvent(new CustomEvent("wordrush:room-change"));
+  });
+  await page.waitForFunction(() => !document.querySelector("#gameCastButton").hidden);
+  await page.locator("#gameCastButton").click();
+  await page.waitForFunction(() => window.__castSent?.length === 1);
+  assert.deepEqual(await page.evaluate(() => window.__castSent[0]), {
+    type: "display_token",
+    token: "fresh-display-token",
+  });
+
+  await page.evaluate(() => window.__castReceiverListener("namespace", {
+    type: "display_status",
+    status: "connected",
+  }));
+  assert.match(await page.locator("#castStatus").textContent(), /TV is live/);
+  assert.match(await page.locator("#gameCastButton").textContent(), /Refresh TV/);
+
+  await page.evaluate(() => window.__castReceiverListener("namespace", {
+    type: "display_status",
+    status: "reconnecting",
+  }));
+  assert.match(await page.locator("#castStatus").textContent(), /dropped.*Re-cast/i);
+  assert.match(await page.locator("#gameCastButton").textContent(), /Re-cast TV/);
+  await page.locator("#gameCastButton").click();
+  await page.waitForFunction(() => window.__castSent?.length === 2);
   await browser.close();
 });
 
@@ -1024,7 +1204,7 @@ test("browser exposes the expanded avatar set and unlocks achievement toasts", a
     background: getComputedStyle(node).backgroundColor,
   }));
   assert.notEqual(darkToast.color, darkToast.background);
-  await page.locator('button[data-mode="classic"]').click();
+  await startClassic(page);
   await page.evaluate(() => {
     const profile = JSON.parse(localStorage.getItem("wordrush-profile"));
     profile.words = 1;
@@ -1044,7 +1224,7 @@ test("browser exposes the expanded avatar set and unlocks achievement toasts", a
   });
   assert.equal(inGameToast.configuredTop, "10px");
   assert.equal(inGameToast.clearOfBoard, true);
-  await page.waitForTimeout(3500);
+  await page.waitForTimeout(2500);
   assert.equal(
     await page
       .locator("#toast")
@@ -1065,7 +1245,7 @@ test("tracing animates selected tiles while keeping the saved trace line hidden"
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator('button[data-mode="classic"]').click();
+  await startClassic(page);
   const tile = await page.locator(".tile").first().boundingBox();
   const point = { x: tile.x + tile.width / 2, y: tile.y + tile.height / 2 };
   await page.mouse.move(point.x, point.y);
@@ -1131,7 +1311,7 @@ test("touch tracing accepts tile edges without selecting diagonal gaps", async (
     hasTouch: true,
   });
   await page.goto(baseUrl);
-  await page.locator('button[data-mode="classic"]').click();
+  await startClassic(page);
   const tiles = page.locator(".tile");
   const first = await tiles.nth(0).boundingBox();
   const gapPoint = {
@@ -1158,7 +1338,7 @@ test("diagonal tracing does not pick corner-crossed neighboring tiles", async ()
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator('button[data-mode="classic"]').click();
+  await startClassic(page);
   const from = await page.locator(".tile").nth(0).boundingBox();
   const to = await page.locator(".tile").nth(5).boundingBox();
   const center = (box) => ({
@@ -1194,7 +1374,7 @@ test("a canceled pointer cannot clear a newer trace", async () => {
     hasTouch: true,
   });
   await page.goto(baseUrl);
-  await page.locator('button[data-mode="classic"]').click();
+  await startClassic(page);
   const first = await page.locator(".tile").nth(0).boundingBox();
   const second = await page.locator(".tile").nth(1).boundingBox();
   await page.evaluate(
@@ -1229,6 +1409,56 @@ test("a canceled pointer cannot clear a newer trace", async () => {
     { first, second },
   );
   assert.equal(await page.locator(".tile.selected").count(), 1);
+  await browser.close();
+});
+
+test("score screen celebrates rankings, highlights, and word lengths graphically", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const guestId = window.wordrushGuestId;
+    window.wordrushOnlineRound(
+      { board: Array(16).fill("A"), size: 4, endsAt: Date.now() + 60000 },
+      { label: "CLASSIC", min: 3, rule: "Multiplayer round" },
+      "classic",
+    );
+    window.wordrushOnlineFinish([
+      {
+        id: guestId,
+        name: "Comet",
+        avatar: "🦊",
+        score: 49,
+        session: { wins: 2, losses: 1, points: 149 },
+        words: [{ word: "PLANETS", points: 49 }],
+      },
+      {
+        id: "moon",
+        name: "Moon",
+        avatar: "🐈",
+        score: 25,
+        session: { wins: 1, losses: 2, points: 103 },
+        words: [{ word: "STARS", points: 25 }],
+      },
+    ], { results: { view: "static", speed: "fast" } });
+  });
+  await page.waitForSelector("#resultsScreen.active");
+  assert.equal(await page.locator(".result-player-card").count(), 2);
+  assert.match(await page.locator("#resultLongestWord").textContent(), /PLANETS · 49 pts/);
+  assert.match(await page.locator("#resultTopPlayer").textContent(), /Comet/);
+  assert.match(await page.locator(".result-session-record").first().textContent(), /2W · 1L · 149 session pts/);
+  assert.match(await page.locator(".result-session-record").nth(1).textContent(), /1W · 2L · 103 session pts/);
+  const presentation = await page.evaluate(() => ({
+    heroRadius: parseFloat(getComputedStyle(document.querySelector(".result-hero")).borderRadius),
+    first: getComputedStyle(document.querySelector(".result-player-card.rank-1")).backgroundColor,
+    second: getComputedStyle(document.querySelector(".result-player-card.rank-2")).backgroundColor,
+  }));
+  assert.ok(presentation.heroRadius >= 20);
+  assert.notEqual(presentation.first, presentation.second);
+  await page.locator("#animatedResultsButton").click();
+  await page.waitForSelector(".reveal-word.word-length-long");
+  assert.equal(await page.locator(".reveal-word.word-length-medium").count(), 1);
+  assert.equal(await page.locator(".reveal-session-record").count(), 2);
   await browser.close();
 });
 

@@ -22,10 +22,6 @@ const PORT = Number(process.env.PORT || 8000),
   displays = new Map();
 const IS_LOOPBACK = ["127.0.0.1", "::1", "localhost"].includes(HOST);
 const LAN_MODE = process.env.WORDRUSH_LAN_MODE === "1";
-const PASSWORD_HASH = process.env.WORDRUSH_BETA_PASSWORD_HASH || "";
-const AUTH_REQUIRED = Boolean(PASSWORD_HASH) && !LAN_MODE;
-const SESSION_TTL_MS = Number(process.env.WORDRUSH_SESSION_TTL_MS || 8 * 60 * 60 * 1000);
-const SESSION_FILE = process.env.WORDRUSH_SESSION_FILE || "";
 const DISPLAY_TOKEN_TTL_MS = Number(
   process.env.WORDRUSH_DISPLAY_TOKEN_TTL_MS || 5 * 60 * 1000,
 );
@@ -35,13 +31,11 @@ const DISPLAY_RECONNECT_TTL_MS = Number(
 const ROOM_RECONNECT_GRACE_MS = Number(
   process.env.WORDRUSH_ROOM_RECONNECT_GRACE_MS || 15 * 60 * 1000,
 );
-const MAX_HTTP_BODY = 10_000;
 const MAX_WS_CONNECTIONS_PER_IP = Number(process.env.WORDRUSH_MAX_WS_PER_IP || 60);
 const MAX_WS_MESSAGES_PER_WINDOW = Number(
   process.env.WORDRUSH_MAX_WS_MESSAGES_PER_WINDOW || 60,
 );
 const RATE_WINDOW_MS = 60_000;
-const sessions = new Map();
 const displayTokens = new Map();
 const displayCredentials = new Map();
 const rateLimits = new Map();
@@ -54,41 +48,6 @@ const configuredHosts = (process.env.WORDRUSH_ALLOWED_HOSTS || "")
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
 
-function persistSessions() {
-  if (!SESSION_FILE) return;
-  try {
-    fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true, mode: 0o700 });
-    const now = Date.now();
-    const entries = [...sessions.entries()]
-      .filter(([, session]) => session.expiresAt > now)
-      .map(([token, session]) => [token, { expiresAt: session.expiresAt }]);
-    const temporary = SESSION_FILE + ".tmp";
-    fs.writeFileSync(temporary, JSON.stringify(entries), { mode: 0o600 });
-    fs.renameSync(temporary, SESSION_FILE);
-  } catch (error) {
-    console.error("Could not persist beta sessions", error.message);
-  }
-}
-function loadSessions() {
-  if (!SESSION_FILE) return;
-  try {
-    const entries = JSON.parse(fs.readFileSync(SESSION_FILE, "utf8"));
-    const now = Date.now();
-    for (const [token, session] of Array.isArray(entries) ? entries : [])
-      if (/^[A-Za-z0-9_-]{32,}$/.test(token) && Number(session?.expiresAt) > now)
-        sessions.set(token, { expiresAt: Number(session.expiresAt) });
-  } catch (error) {
-    if (error.code !== "ENOENT") console.error("Could not load beta sessions", error.message);
-  }
-}
-loadSessions();
-
-if (!IS_LOOPBACK && !LAN_MODE && !PASSWORD_HASH)
-  throw new Error(
-    "WORDRUSH_BETA_PASSWORD_HASH is required when binding Wordrush beyond loopback",
-  );
-if (process.env.NODE_ENV === "production" && !LAN_MODE && !PASSWORD_HASH)
-  throw new Error("WORDRUSH_BETA_PASSWORD_HASH is required in production");
 if (process.env.NODE_ENV === "production" && !LAN_MODE && !configuredOrigins.length)
   throw new Error("WORDRUSH_ALLOWED_ORIGINS is required in production");
 if (
@@ -117,47 +76,6 @@ function rateLimit(key, limit, window = RATE_WINDOW_MS) {
   current.count += 1;
   return current.count <= limit;
 }
-function parseCookies(req) {
-  return Object.fromEntries(
-    String(req.headers.cookie || "")
-      .split(";")
-      .map((part) => part.trim().split(/=(.*)/s, 2))
-      .filter(([name]) => name)
-      .map(([name, value]) => [name, decodeURIComponent(value || "")]),
-  );
-}
-function sessionFor(req) {
-  const token = parseCookies(req).wordrush_session;
-  const session = token && sessions.get(token);
-  if (!session || session.expiresAt <= Date.now()) {
-    if (token) { sessions.delete(token); persistSessions(); }
-    return null;
-  }
-  return session;
-}
-function setSessionCookie(res, token, expiresAt) {
-  const secure = process.env.WORDRUSH_SESSION_COOKIE_SECURE !== "0" &&
-    (process.env.NODE_ENV === "production" || process.env.WORDRUSH_SESSION_COOKIE_SECURE === "1");
-  res.setHeader(
-    "Set-Cookie",
-    `wordrush_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor((expiresAt - Date.now()) / 1000)}${secure ? "; Secure" : ""}`,
-  );
-}
-function passwordMatches(password) {
-  // Format: scrypt$N$r$p$base64-salt$base64-derived-key
-  const parts = PASSWORD_HASH.split("$");
-  if (parts.length !== 6 || parts[0] !== "scrypt") return false;
-  try {
-    const [_, N, r, p, salt, expected] = parts;
-    const derived = crypto.scryptSync(String(password), Buffer.from(salt, "base64"), Buffer.from(expected, "base64").length, {
-      N: Number(N), r: Number(r), p: Number(p), maxmem: 64 * 1024 * 1024,
-    });
-    const expectedBuffer = Buffer.from(expected, "base64");
-    return derived.length === expectedBuffer.length && crypto.timingSafeEqual(derived, expectedBuffer);
-  } catch {
-    return false;
-  }
-}
 function allowedHost(req) {
   const host = String(req.headers.host || "").toLowerCase();
   if (!host) return false;
@@ -180,63 +98,6 @@ function securityHeaders(res) {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   res.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' https://www.gstatic.com; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
-}
-function safeReturnPath(value) {
-  const candidate = String(value || "");
-  return candidate.startsWith("/") && !candidate.startsWith("//") ? candidate : "/";
-}
-function loginPage(res, returnPath = "/") {
-  const loginAction = "/auth/login" +
-    (returnPath === "/" ? "" : "?return=" + encodeURIComponent(returnPath));
-  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-  res.end(`<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Wordrush beta</title>
-  <style>
-    body{font:16px system-ui;margin:0;min-height:100vh;display:grid;place-items:center;background:#15131c;color:#fff}
-    main{width:min(26rem,90vw)}
-    label{display:block;margin:.7rem 0}
-    input,button{box-sizing:border-box;width:100%;padding:.8rem;margin:.4rem 0;font:inherit}
-    input[readonly]{color:#bbb;background:#27232f;border:1px solid #51485f}
-    button{cursor:pointer}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Wordrush private beta</h1>
-    <p>Enter your beta password to play.</p>
-    <form method="post" action="${loginAction}" autocomplete="on">
-      <label for="username">Account</label>
-        <input id="username" name="username" type="text" value="Wordrush beta" autocomplete="username" readonly>
-      <label for="current-password">Password</label>
-        <input id="current-password" name="password" type="password" autocomplete="current-password" required autofocus>
-      <button type="submit">Continue</button>
-    </form>
-  </main>
-</body>
-</html>`);
-}
-function readForm(req) {
-  return new Promise((resolve) => {
-    let body = "";
-    let done = false;
-    req.on("data", (chunk) => {
-      if (done) return;
-      body += chunk;
-      if (Buffer.byteLength(body) > MAX_HTTP_BODY) {
-        done = true;
-        resolve(null);
-      }
-    });
-    req.on("end", () => {
-      if (done) return;
-      resolve(new URLSearchParams(body));
-    });
-    req.on("error", () => resolve(null));
-  });
 }
 async function authorizeRequest(req, res) {
   securityHeaders(res);
@@ -266,57 +127,8 @@ async function authorizeRequest(req, res) {
     );
     return true;
   }
-  if (!AUTH_REQUIRED) return true;
-  if (pathname === "/auth/login" && req.method === "GET") {
-    loginPage(res, safeReturnPath(requestUrl.searchParams.get("return")));
-    return false;
-  }
-  if (pathname === "/auth/login" && req.method === "POST") {
-    if (!allowedOrigin(req) || !rateLimit(`login:${clientIp(req)}`, 8)) {
-      deny(res, 429, "LOGIN_RATE_LIMITED");
-      return false;
-    }
-    const form = await readForm(req);
-    if (!form || !passwordMatches(form.get("password") || "")) {
-      deny(res, 401, "INVALID_LOGIN");
-      return false;
-    }
-    const token = crypto.randomBytes(32).toString("base64url");
-    const expiresAt = Date.now() + SESSION_TTL_MS;
-    sessions.set(token, { expiresAt });
-    persistSessions();
-    setSessionCookie(res, token, expiresAt);
-    res.writeHead(303, {
-      Location: safeReturnPath(requestUrl.searchParams.get("return")),
-      "Cache-Control": "no-store",
-    });
-    res.end();
-    return false;
-  }
-  if (pathname === "/auth/logout" && req.method === "POST") {
-    if (!allowedOrigin(req)) {
-      deny(res, 403, "ORIGIN_NOT_ALLOWED");
-      return false;
-    }
-    const token = parseCookies(req).wordrush_session;
-    if (token) sessions.delete(token);
-    persistSessions();
-    res.setHeader("Set-Cookie", "wordrush_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
-    res.writeHead(204, { "Cache-Control": "no-store" });
-    res.end();
-    return false;
-  }
   if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && !allowedOrigin(req)) {
     deny(res, 403, "ORIGIN_NOT_ALLOWED");
-    return false;
-  }
-  if (!sessionFor(req)) {
-    if (pathname.startsWith("/api/")) deny(res, 401, "AUTH_REQUIRED");
-    else {
-      const returnPath = req.url && req.url !== "/" ? `?return=${encodeURIComponent(req.url)}` : "";
-      res.writeHead(303, { Location: "/auth/login" + returnPath, "Cache-Control": "no-store" });
-      res.end();
-    }
     return false;
   }
   return true;
@@ -386,6 +198,11 @@ function state(room) {
       name: p.name,
       avatar: p.avatar || "🐈",
       score: p.score,
+      session: {
+        wins: p.sessionWins,
+        losses: p.sessionLosses,
+        points: p.sessionPoints,
+      },
     })),
     round: room.round
       ? {
@@ -408,6 +225,11 @@ function displayState(room) {
       name: p.name,
       avatar: p.avatar || "🐈",
       score: p.score,
+      session: {
+        wins: p.sessionWins,
+        losses: p.sessionLosses,
+        points: p.sessionPoints,
+      },
     })),
     round: room.round
       ? {
@@ -508,20 +330,30 @@ function finishRound(room, reason = "complete") {
   if (!room.round || room.status !== "playing") return;
   clearTimeout(room.round.timer);
   room.status = "finished";
+  const rankedPlayers = [...room.players.values()]
+    .sort((a, b) => b.score - a.score);
+  rankedPlayers.forEach((player, index) => {
+    player.sessionPoints += player.score;
+    if (room.mode === "coop" || index === 0) player.sessionWins += 1;
+    else player.sessionLosses += 1;
+  });
   const result = {
     cooperative: room.mode === "coop",
     teamScore: room.teamScore,
     stats: { wordsFound: room.round.found.size },
     results: room.results,
     reason,
-    ranking: [...room.players.values()]
-      .sort((a, b) => b.score - a.score)
-      .map((p) => ({
+    ranking: rankedPlayers.map((p) => ({
         id: p.id,
         name: p.name,
         avatar: p.avatar || "🐈",
         score: p.score,
         words: p.words || [],
+        session: {
+          wins: p.sessionWins,
+          losses: p.sessionLosses,
+          points: p.sessionPoints,
+        },
       })),
   };
   room.lastResult = result;
@@ -619,9 +451,30 @@ function leaveDisplay(ws) {
   const credential = displayCredentials.get(display.reconnectToken);
   if (credential?.ws === ws) credential.ws = null;
 }
+function roomHasDisplayAuthority(room) {
+  if (room.displays.size) return true;
+  const now = Date.now();
+  for (const credential of displayCredentials.values())
+    if (credential.roomCode === room.code && credential.expiresAt > now)
+      return true;
+  return false;
+}
+function schedulePlayerExpiry(room, player, ws) {
+  clearTimeout(player.disconnectTimer);
+  player.disconnectTimer = setTimeout(
+    () => expireDisconnectedPlayer(room, player, ws),
+    ROOM_RECONNECT_GRACE_MS,
+  );
+  player.disconnectTimer.unref?.();
+}
 function expireDisconnectedPlayer(room, player, ws) {
   if (rooms.get(room.code) !== room || player.ws !== ws) return;
   player.disconnectTimer = null;
+  // A cast receiver is an active participant even when the host phone sleeps.
+  // Keep the host's resumable seat and the room until the display connection
+  // (including its bounded reconnect window) is gone.
+  if (player.id === room.creatorId && roomHasDisplayAuthority(room))
+    return schedulePlayerExpiry(room, player, ws);
   if (player.id === room.creatorId)
     return closeRoom(room, "creator_reconnect_timeout");
   room.players.delete(player.id);
@@ -645,17 +498,20 @@ function leave(ws) {
   // and score until that room closes because mobile browsers can suspend guest
   // reconnect timers for far longer than the host recovery grace period.
   if (info.id === room.creatorId) {
-    player.disconnectTimer = setTimeout(
-      () => expireDisconnectedPlayer(room, player, ws),
-      ROOM_RECONNECT_GRACE_MS,
-    );
-    player.disconnectTimer.unref?.();
+    schedulePlayerExpiry(room, player, ws);
   }
   broadcast(room, state(room));
 }
 function handle(ws, message) {
   const type = message?.type;
   if (ws.connectionRole === "display") {
+    if (type === "display_keepalive" && displays.has(ws)) {
+      const display = displays.get(ws);
+      const credential = displayCredentials.get(display.reconnectToken);
+      if (credential)
+        credential.expiresAt = Date.now() + DISPLAY_RECONNECT_TTL_MS;
+      return send(ws, { type: "display_keepalive_ack" });
+    }
     if (type !== "display_hello" && type !== "display_resume")
       return send(ws, { type: "error", code: "DISPLAY_READ_ONLY" });
     if (displays.has(ws))
@@ -751,6 +607,9 @@ function handle(ws, message) {
       score: room.mode === "coop" ? room.teamScore : 0,
       words: [],
       found: new Set(),
+      sessionWins: 0,
+      sessionLosses: 0,
+      sessionPoints: 0,
     };
     room.players.set(client.id, player);
     send(ws, {
@@ -806,6 +665,9 @@ function handle(ws, message) {
       score: room.mode === "coop" ? room.teamScore : 0,
       words: [],
       found: new Set(),
+      sessionWins: 0,
+      sessionLosses: 0,
+      sessionPoints: 0,
     };
     room.players.set(client.id, player);
     send(ws, {
@@ -1033,9 +895,6 @@ server.on("upgrade", (req, socket, head) => {
   if (!allowedHost(req) || !allowedOrigin(req)) return socket.destroy();
   const ip = clientIp(req);
   if (!rateLimit(`ws:${ip}`, MAX_WS_CONNECTIONS_PER_IP)) return socket.destroy();
-  const pathname = new URL(req.url || "/", "http://localhost").pathname;
-  if (AUTH_REQUIRED && pathname !== "/display" && !sessionFor(req))
-    return socket.destroy();
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
 });
 const heartbeat = setInterval(() => {
@@ -1048,10 +907,6 @@ const heartbeat = setInterval(() => {
         credential.expiresAt = now + DISPLAY_RECONNECT_TTL_MS;
       else displayCredentials.delete(token);
     }
-  let expiredSession = false;
-  for (const [token, session] of sessions)
-    if (session.expiresAt <= now) { sessions.delete(token); expiredSession = true; }
-  if (expiredSession) persistSessions();
   for (const ws of wss.clients) {
     if (!ws.isAlive) ws.terminate();
     else {

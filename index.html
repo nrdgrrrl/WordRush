@@ -27,12 +27,9 @@
         </button>
       </header>
       <section class="screen active" id="homeScreen">
-        <div class="hero-art">
-          <img src="assets/cat-rush.png" alt="Cats playing with letter tiles" />
-        </div>
         <div class="multiplayer-banner" id="multiplayerBanner" hidden>
           <div>
-            <small>MULTIPLAYER</small
+            <small>LIVE MULTIPLAYER ROOM</small
             ><strong id="multiplayerBannerText">1 player in session</strong>
           </div>
           <div class="multiplayer-banner-actions">
@@ -41,12 +38,15 @@
               id="multiplayerShare"
               aria-label="Show multiplayer join QR code"
             >
-              QR
+              <span aria-hidden="true">▦</span> Join QR
             </button>
             <button id="exitMultiplayer" aria-label="Exit multiplayer mode">
               ×
             </button>
           </div>
+        </div>
+        <div class="hero-art">
+          <img src="assets/cat-rush.png" alt="Cats playing with letter tiles" />
         </div>
         <button class="party-panel" id="partyMode" type="button">
           <span>🎉</span><div><small>PARTY MODE</small><strong>Build the next round together</strong><em>Pick grid · words · time</em></div><b>→</b>
@@ -149,26 +149,32 @@
         </div>
         <div class="game-foot">
           <small id="gameHint">Minimum 3 letters</small
+          ><button id="gameCastButton" class="game-cast-button" type="button" data-cast-action hidden>📺 Re-cast TV</button
           ><button id="stopRush" hidden>Stop rush</button
           ><button id="endGame">End round</button>
         </div>
       </section>
       <section class="screen" id="resultsScreen">
-        <p class="eyebrow coral">ROUND COMPLETE</p>
-        <h1>Nice run,<br /><em id="resultName">Player.</em></h1>
-        <div class="result">
-          <small>YOUR SCORE</small><strong id="finalScore">0</strong
-          ><small><b id="resultWordCount">0</b> words found</small>
+        <div class="result-hero">
+          <div class="result-confetti" aria-hidden="true"><i>✦</i><i>●</i><i>▲</i><i>★</i><i>◆</i></div>
+          <p class="eyebrow">ROUND COMPLETE!</p>
+          <h1>What a rush,<br /><em id="resultName">Player.</em></h1>
+          <div class="result-score-burst result">
+            <small>YOUR SCORE</small><strong id="finalScore">0</strong>
+            <span><b id="resultWordCount">0</b> words found</span>
+          </div>
+        </div>
+        <div class="result-highlights" aria-label="Round highlights">
+          <article><span>🔠</span><div><small>LONGEST WORD</small><b id="resultLongestWord">—</b></div></article>
+          <article><span>👑</span><div><small>ROUND LEADER</small><b id="resultTopPlayer">—</b></div></article>
         </div>
         <div class="results-switcher" aria-label="Results view">
           <button class="active" id="staticResultsButton" type="button">
-            Score page</button
-          ><button id="animatedResultsButton" type="button">Word reveal</button>
+            🏆 Score party</button
+          ><button id="animatedResultsButton" type="button">✨ Word parade</button>
         </div>
         <div id="staticResultsView">
-          <div class="leader" id="resultPlayers">
-            <p>PLAYER <b>SCORE</b></p>
-          </div>
+          <div class="result-podium" id="resultPlayers"></div>
         </div>
         <div id="animatedResultsView" hidden>
           <div class="reveal-toolbar">
@@ -345,6 +351,7 @@
                 type="button"
                 class="secondary"
                 id="castButton"
+                data-cast-action
                 disabled
                 aria-describedby="castStatus"
               >
@@ -362,50 +369,62 @@
         </form>
       </dialog>
       <dialog id="customDialog">
-        <form method="dialog" id="customForm">
+        <form method="dialog" id="customForm" class="rush-builder">
           <div class="dialog-head">
             <div>
-              <p class="eyebrow">Make your match</p>
-              <h2>Custom game</h2>
+              <p class="eyebrow">BUILD YOUR RUSH</p>
+              <h2 id="customTitle">Classic remix</h2>
             </div>
             <button value="cancel" aria-label="Close">×</button>
           </div>
-          <label for="customType">Game type</label
-          ><select id="customType">
-            <option value="classic">Classic</option>
-            <option value="minimum">Minimum word</option>
-            <option value="sudden">Sudden death</option>
-            <option value="race">Race mode</option>
-            <option value="dirty">Dirty mode</option></select
-          ><label for="customRules">Game rules</label
-          ><select id="customRules">
-            <option value="classic">Classic rules</option>
-            <option value="long">Long words</option>
-            <option value="first">First to 500</option></select
-          ><label for="customMin">Minimum word length</label
-          ><input
-            id="customMin"
-            type="number"
-            min="3"
-            max="12"
-            value="3"
-          /><label for="customBoard">Board size</label
-          ><select id="customBoard">
-            <option>4</option>
-            <option>5</option>
-            <option>6</option>
-            <option>7</option>
-            <option>8</option></select
-          ><label for="customTime">Time limit (seconds)</label
-          ><input
-            id="customTime"
-            type="number"
-            min="15"
-            max="600"
-            step="15"
-            value="120"
-          /><button class="primary dialog-save" id="customStart" value="start">
-            Start custom game →
+          <div class="builder-marquee" aria-hidden="true">
+            <span>C</span><span>A</span><span>T</span><b>+</b><span>R</span><span>U</span><span>S</span><span>H</span>
+          </div>
+          <p class="builder-prompt">Tap the cards. Make the round yours.</p>
+          <fieldset class="builder-group builder-modes">
+            <legend>Pick your vibe</legend>
+            <div>
+              <button type="button" data-custom-type="classic"><span>🌈</span><b>Classic</b><small>Free play</small></button>
+              <button type="button" data-custom-type="minimum"><span>🦒</span><b>Stretch</b><small>Long words</small></button>
+              <button type="button" data-custom-type="sudden"><span>⚡</span><b>Sudden</b><small>One miss</small></button>
+              <button type="button" data-custom-type="race"><span>🏁</span><b>Race</b><small>To 500</small></button>
+              <button type="button" data-custom-type="dirty"><span>😼</span><b>Dirty</b><small>18+</small></button>
+            </div>
+          </fieldset>
+          <fieldset class="builder-group">
+            <legend>Shortest word</legend>
+            <div class="builder-pills" role="group" aria-label="Minimum word length">
+              <button type="button" data-custom-min="3"><b>3</b><small>letters</small></button>
+              <button type="button" data-custom-min="4"><b>4</b><small>letters</small></button>
+              <button type="button" data-custom-min="5"><b>5</b><small>letters</small></button>
+              <button type="button" data-custom-min="6"><b>6</b><small>letters</small></button>
+            </div>
+          </fieldset>
+          <div class="builder-split">
+            <fieldset class="builder-group">
+              <legend>Letter grid</legend>
+              <div class="builder-pills compact">
+                <button type="button" data-custom-size="4">4×4</button>
+                <button type="button" data-custom-size="5">5×5</button>
+                <button type="button" data-custom-size="6">6×6</button>
+                <button type="button" data-custom-size="8">8×8</button>
+              </div>
+            </fieldset>
+            <fieldset class="builder-group">
+              <legend>Beat the clock</legend>
+              <div class="builder-pills compact">
+                <button type="button" data-custom-time="30">0:30</button>
+                <button type="button" data-custom-time="60">1:00</button>
+                <button type="button" data-custom-time="120">2:00</button>
+                <button type="button" data-custom-time="180">3:00</button>
+              </div>
+            </fieldset>
+          </div>
+          <div class="builder-ticket">
+            <span>YOUR ROUND</span><strong id="customSummary">3+ letters · 4×4 · 2:00</strong>
+          </div>
+          <button class="primary dialog-save builder-start" id="customStart" value="start">
+            LET'S RUSH! →
           </button>
         </form>
       </dialog>

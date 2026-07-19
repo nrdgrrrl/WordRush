@@ -16,10 +16,6 @@ connected to the room.
 - Runtime configuration lives in `/etc/wordrush/rush.env` and must remain
   `root:wordrush`, mode `0640`. Do not add it to Git or copy its contents into
   shell history, tickets, or logs.
-- Beta sessions are opaque token records in `/var/lib/wordrush/sessions.json`,
-  written with owner-only permissions. This preserves a valid login through a
-  normal Wordrush restart; it contains neither the beta password nor browser
-  readable credentials.
 - The source templates are `deploy/wordrush.service` and
   `deploy/rush.nrdgrrrl.com.conf`. The dedicated LAN command is
   `bash serve-lan.sh`; it is intentionally not a public deployment mode.
@@ -38,14 +34,13 @@ sudo tail -n 100 /var/log/apache2/rush-error.log
 sudo certbot certificates
 ```
 
-The unauthenticated production health check is expected to redirect to the
-beta login page:
+The production health check is expected to return the public application:
 
 ```sh
 curl -I https://rush.nrdgrrrl.com/
 ```
 
-Do not put a beta password, cookie, or display token in a diagnostic command.
+Do not put a display token in a diagnostic command.
 
 ## Certificate renewal
 
@@ -91,7 +86,7 @@ file-level activation into the WordRush directory. It creates a timestamped
 three newest, and automatically restores it if a post-activation check fails.
 Static-only changes do not restart `wordrush`; server/runtime or dependency
 changes do. Output includes the revision, changed files, service action,
-rollback artifact, beta-gate result, and deployed hashes.
+rollback artifact, public HTTPS health-check result, and deployed hashes.
 
 To restore a listed rollback artifact immediately:
 
@@ -100,8 +95,8 @@ To restore a listed rollback artifact immediately:
 ```
 
 Both tools require passwordless SSH to `racknerd` and non-interactive sudo for
-`systemctl restart wordrush`. They never transfer `.env`, beta credentials,
-session data, Git metadata, local data, or ignored files.
+`systemctl restart wordrush`. They never transfer `.env`, display credentials,
+Git metadata, local data, or ignored files.
 
 The old manual recovery procedure remains below for emergency use only. Do not
 run broad commands against `/home/victoria/sites`—that parent contains other
@@ -139,15 +134,15 @@ and restart:
 ssh racknerd 'set -eu; sudo systemctl stop wordrush; mv /home/victoria/sites/rush/wordrush /home/victoria/sites/rush/wordrush.failed-$(date +%Y%m%d%H%M%S); mv /home/victoria/sites/rush/wordrush.rollback-<timestamp> /home/victoria/sites/rush/wordrush; sudo systemctl start wordrush; sudo systemctl is-active --quiet wordrush'
 ```
 
-Verify the service, HTTPS redirect, and intended authenticated browser flow
-after every deployment. A receiver needs a newly started Cast session to load a
-new receiver bundle.
+Verify the service, public HTTPS response, and browser flow after every
+deployment. A receiver needs a newly started Cast session to load a new
+receiver bundle.
 
 ## Disable Cast without disabling multiplayer
 
 To stop new Cast sessions while leaving the normal browser game available,
 remove `WORDRUSH_CAST_APPLICATION_ID` from `/etc/wordrush/rush.env` and restart
-`wordrush`. The authenticated Cast configuration endpoint will then return no
+`wordrush`. The Cast configuration endpoint will then return no
 application ID, so the sender control is unavailable. The receiver's public
 static URL still has no room authority without a fresh display token.
 

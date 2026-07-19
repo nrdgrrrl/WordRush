@@ -332,22 +332,40 @@ function render() {
 function renderResults(ranking) {
   const rows = ranking?.length
     ? ranking
-    : [{ name: profile.name, avatar: profile.avatar, score: s.score }];
+    : [{
+        name: profile.name,
+        avatar: profile.avatar,
+        score: s.score,
+        words: [...s.found].map((word) => ({ word, points: word.length ** 2 })),
+      }];
   $("#resultName").textContent = profile.name + ".";
   const target = $("#resultPlayers");
   target.replaceChildren();
-  const header = document.createElement("p");
-  header.append("PLAYER ");
-  const scoreHeading = document.createElement("b");
-  scoreHeading.textContent = "SCORE";
-  header.append(scoreHeading);
-  target.append(header);
-  rows.forEach((player) => {
-    const row = document.createElement("p");
-    row.append((player.avatar || "🐈") + " " + player.name + " ");
+  rows.forEach((player, index) => {
+    const row = document.createElement("article");
+    row.className = "result-player-card rank-" + Math.min(index + 1, 4);
+    const rank = document.createElement("span");
+    rank.className = "result-rank";
+    rank.textContent = ["👑", "🥈", "🥉"][index] || String(index + 1);
+    const identity = document.createElement("div");
+    const name = document.createElement("b");
+    name.textContent = (player.avatar || "🐈") + " " + player.name;
+    const wordCount = document.createElement("small");
+    wordCount.textContent = (player.words?.length || 0) + " words";
+    identity.append(name, wordCount);
+    if (player.session) {
+      const sessionRecord = document.createElement("small");
+      sessionRecord.className = "result-session-record";
+      sessionRecord.textContent =
+        (Number(player.session.wins) || 0) + "W · " +
+        (Number(player.session.losses) || 0) + "L · " +
+        (Number(player.session.points) || 0).toLocaleString() + " session pts";
+      identity.append(sessionRecord);
+    }
     const score = document.createElement("b");
+    score.className = "result-player-score";
     score.textContent = Number(player.score || 0).toLocaleString();
-    row.append(score);
+    row.append(rank, identity, score);
     target.append(row);
   });
 }
@@ -661,7 +679,15 @@ $("#exitParty").onclick = () => { s.party = false; $("#exitParty").hidden = true
 $("#endGame").onclick = end;
 document
   .querySelectorAll("[data-mode]")
-  .forEach((x) => (x.onclick = () => start(x.dataset.mode)));
+  .forEach((x) => (x.onclick = () => {
+    if (x.dataset.mode !== "classic") return start(x.dataset.mode);
+    if (window.wordrushStartSessionGame?.({
+      mode: "classic",
+      config: null,
+      randomRush: false,
+    })) return;
+    openRushBuilder(true);
+  }));
 $("#dictionary").onclick = () => {
   let w = prompt("Add a word to your personal dictionary")
     ?.trim()
@@ -672,36 +698,80 @@ $("#dictionary").onclick = () => {
     toast(w + " added");
   } else if (w) toast("Letters only, 3+ characters");
 };
-$("#customGame").onclick = () => $("#customDialog").showModal();
+let rushBuilder = { type: "classic", min: 3, size: 4, seconds: 120 };
+function syncRushBuilder() {
+  for (const [attribute, value] of [
+    ["customType", rushBuilder.type],
+    ["customMin", rushBuilder.min],
+    ["customSize", rushBuilder.size],
+    ["customTime", rushBuilder.seconds],
+  ])
+    document.querySelectorAll(`[data-${attribute.replace(/[A-Z]/g, (letter) => "-" + letter.toLowerCase())}]`).forEach((button) => {
+      const active = String(button.dataset[attribute]) === String(value);
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+  const names = {
+    classic: "Classic remix",
+    minimum: "Big-word stretch",
+    sudden: "Sudden showdown",
+    race: "Race to 500",
+    dirty: "After-dark rush",
+  };
+  $("#customTitle").textContent = names[rushBuilder.type];
+  $("#customSummary").textContent =
+    rushBuilder.min + "+ letters · " + rushBuilder.size + "×" + rushBuilder.size +
+    " · " + formatTimer(rushBuilder.seconds);
+}
+function openRushBuilder(reset = false) {
+  if (reset)
+    rushBuilder = { type: "classic", min: 3, size: 4, seconds: 120 };
+  syncRushBuilder();
+  $("#customDialog").showModal();
+}
+$("#customGame").onclick = () => openRushBuilder();
+document.querySelectorAll("[data-custom-type]").forEach((button) => button.onclick = () => {
+  rushBuilder.type = button.dataset.customType;
+  if (rushBuilder.type === "minimum" && rushBuilder.min < 5) rushBuilder.min = 5;
+  syncRushBuilder();
+});
+document.querySelectorAll("[data-custom-min]").forEach((button) => button.onclick = () => {
+  rushBuilder.min = +button.dataset.customMin;
+  syncRushBuilder();
+});
+document.querySelectorAll("[data-custom-size]").forEach((button) => button.onclick = () => {
+  rushBuilder.size = +button.dataset.customSize;
+  syncRushBuilder();
+});
+document.querySelectorAll("[data-custom-time]").forEach((button) => button.onclick = () => {
+  rushBuilder.seconds = +button.dataset.customTime;
+  syncRushBuilder();
+});
 $("#customForm")?.addEventListener("submit", (event) => {
   if (event.submitter?.value !== "start") return;
-  const type = $("#customType").value,
-    rules = $("#customRules").value,
-    min = Math.max(3, Math.min(12, Number($("#customMin").value) || 3)),
-    size = Math.max(4, Math.min(8, Number($("#customBoard").value) || 4)),
-    seconds = Math.max(
-      15,
-      Math.min(600, Number($("#customTime").value) || 120),
-    );
-  const ruleMin = rules === "long" ? Math.max(5, min) : min;
-  const label =
-    type === "classic" ? "CUSTOM CLASSIC" : type.toUpperCase() + " CUSTOM";
-  const rule =
-    rules === "first"
-      ? "First to 500 points"
-      : rules === "long"
-        ? "Minimum " + ruleMin + " letters"
-        : "Minimum " + ruleMin + " letters · " + seconds + " seconds";
+  const { type, min, size, seconds } = rushBuilder;
+  const labels = {
+    classic: "CLASSIC",
+    minimum: "WORD STRETCH",
+    sudden: "SUDDEN DEATH",
+    race: "RACE MODE",
+    dirty: "DIRTY MODE · 18+",
+  };
+  const rule = type === "race"
+    ? "First to 500 points"
+    : type === "sudden"
+      ? "One invalid word ends the round · minimum " + min
+      : "Minimum " + min + " letters · " + seconds + " seconds";
   start(
     "custom",
     [
-      label,
-      ruleMin,
+      labels[type],
+      min,
       size,
       seconds,
       rule,
       {
-        target: rules === "first" ? 500 : null,
+        target: type === "race" ? 500 : null,
         sudden: type === "sudden",
       },
     ],

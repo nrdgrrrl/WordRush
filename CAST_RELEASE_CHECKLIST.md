@@ -2,13 +2,13 @@
 
 ## Automated / production checks — completed
 
-- [x] Private-beta, room-scoped display-token, display read-only, origin/host,
+- [x] Room-scoped display-token, display read-only, origin/host,
   rate-limit, capacity, and cross-room authorization tests pass.
 - [x] HTTPS/WSS reverse proxy, loopback-only Node listener, service hardening,
   valid certificate, renewal timer, and rollback copies are present.
 - [x] Registered device launched Custom Receiver `87810A91`; it showed the
-  authorized lobby and QR code. A real phone scan passed the beta login and
-  joined the intended room.
+  authorized lobby and QR code. A real phone scan opened the game and joined
+  the intended room.
 - [x] Receiver browser coverage renders ten long-name score cards at 1080p and
   clears stale score state on a display connection drop. Sender/receiver token
   handoff retries a dropped display connection.
@@ -20,8 +20,8 @@
 - [ ] Start and stop a Cast session; re-open it from the same Chrome profile.
 - [ ] Test one, two, five, and ten players with long names; confirm live score
   changes and final results are readable from normal viewing distance.
-- [ ] Scan the lobby QR code from a separate phone and confirm the beta gate and
-  intended room join work.
+- [ ] Scan the lobby QR code from a separate phone and confirm the game opens
+  and the intended room join works.
 - [ ] While the room is cast, refresh the sender browser, reload/restart the
   receiver, and briefly interrupt Wi-Fi; confirm the display clears stale state
   and a new Cast handoff restores the current room.

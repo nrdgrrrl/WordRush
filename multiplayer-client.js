@@ -141,9 +141,11 @@
     creator = creatorId === guestId;
     $("#sessionHostControls").hidden = !creator;
     $("#sessionType").disabled = !creator;
-    $("#lobbyStatus").textContent = creator
-      ? "You’re the host — pick a game and start when everybody’s ready!"
-      : "Waiting for the host to start. Get your fingers ready!";
+    $("#lobbyStatus").textContent = roomStatus === "playing"
+      ? "Round in progress — new players can scan this QR code and jump in!"
+      : creator
+        ? "You’re the host — pick a game and start when everybody’s ready!"
+        : "Waiting for the host to start. Get your fingers ready!";
     $("#endGame").hidden = !creator;
   }
   function sessionDialog(open = true) {

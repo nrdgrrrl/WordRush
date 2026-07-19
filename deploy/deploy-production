@@ -161,19 +161,17 @@ if [ "$restart" = 1 ]; then
 fi
 systemctl is-active --quiet wordrush
 # systemd can report active just before Node has bound its loopback socket.
-# Wait briefly for Apache to observe the expected unauthenticated beta redirect.
+# Wait briefly for Apache to observe the public application response.
 headers=""
 for _ in $(seq 1 15); do
   headers="$(curl -fsSI --max-time 15 "$url" || true)"
-  if printf '%s\n' "$headers" | grep -Eq '^HTTP/[0-9.]+ 30[23]' && \
-    printf '%s\n' "$headers" | grep -Eqi '^location: /auth/login'; then
+  if printf '%s\n' "$headers" | grep -Eq '^HTTP/[0-9.]+ 200'; then
     break
   fi
   sleep 1
 done
-printf '%s\n' "$headers" | grep -Eq '^HTTP/[0-9.]+ 30[23]'
-printf '%s\n' "$headers" | grep -Eqi '^location: /auth/login'
-echo "HTTPS beta gate: ok"
+printf '%s\n' "$headers" | grep -Eq '^HTTP/[0-9.]+ 200'
+echo "Public HTTPS app: ok"
 echo "Deployed hashes:"
 cd "$app"
 sha256sum .wordrush-release index.html styles.css app.js server.js

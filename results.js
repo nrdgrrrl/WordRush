@@ -38,21 +38,53 @@
     score.className = "reveal-player-total";
     score.textContent = "0";
     heading.append(identity, score);
+    if (player.session) {
+      const sessionRecord = document.createElement("p");
+      sessionRecord.className = "reveal-session-record";
+      sessionRecord.textContent =
+        `${Number(player.session.wins) || 0}W · ` +
+        `${Number(player.session.losses) || 0}L · ` +
+        `${(Number(player.session.points) || 0).toLocaleString()} session pts`;
+      card.append(heading, sessionRecord);
+    } else card.append(heading);
     const list = document.createElement("div");
     list.className = "reveal-word-list";
-    card.append(heading, list);
+    card.append(list);
     return card;
   }
 
   function appendWord(card, item) {
     const line = document.createElement("div");
-    line.className = "reveal-word reveal-in";
+    const length = String(item.word || "").length;
+    const lengthClass = length >= 7 ? "long" : length >= 5 ? "medium" : "short";
+    line.className = "reveal-word reveal-in word-length-" + lengthClass;
     const word = document.createElement("span");
     word.textContent = item.word;
     const points = document.createElement("b");
     points.textContent = "+" + item.points;
     line.append(word, points);
     card.querySelector(".reveal-word-list").append(line);
+  }
+
+  function renderHighlights(players) {
+    const topPlayer = [...players].sort(
+      (a, b) => (Number(b.score) || 0) - (Number(a.score) || 0),
+    )[0];
+    const words = players.flatMap((player) =>
+      (player.words || []).map((item) => ({ ...item, player })),
+    );
+    const longest = words.sort((a, b) =>
+      String(b.word || "").length - String(a.word || "").length ||
+      (Number(b.points) || 0) - (Number(a.points) || 0),
+    )[0];
+    if ($("#resultTopPlayer"))
+      $("#resultTopPlayer").textContent = topPlayer
+        ? (topPlayer.avatar || "🐈") + " " + topPlayer.name
+        : "—";
+    if ($("#resultLongestWord"))
+      $("#resultLongestWord").textContent = longest
+        ? String(longest.word).toUpperCase() + " · " + longest.points + " pts"
+        : "—";
   }
 
   function renderReveal() {
@@ -179,6 +211,7 @@
     }));
     if (detail.result?.results)
       settings = { ...settings, ...detail.result.results };
+    renderHighlights(rows());
     applyResults();
   });
 

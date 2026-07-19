@@ -1,6 +1,8 @@
 (() => {
   const NAMESPACE = "urn:x-cast:com.nrdgrrrl.wordrush";
   const button = document.querySelector("#castButton");
+  const gameButton = document.querySelector("#gameCastButton");
+  const buttons = [...document.querySelectorAll("[data-cast-action]")];
   const control = document.querySelector("#castControl");
   const status = document.querySelector("#castStatus");
   const secureOrigin = window.isSecureContext && location.protocol === "https:";
@@ -8,20 +10,44 @@
   let initialized = false;
   let sharing = false;
   let receiverMessageSession = null;
+  let receiverHealthy = false;
+  let receiverHealthTimer = null;
 
   if (!button || !control || !status) return;
 
   const setStatus = (message, enabled = false) => {
     status.textContent = message;
-    button.disabled = !enabled;
+    buttons.forEach((castButton) => {
+      castButton.disabled = !enabled;
+      castButton.title = message;
+    });
   };
   const hasRoom = () => Boolean(window.wordrushSessionCode);
   const updateAvailability = () => {
     control.hidden = !hasRoom();
+    if (gameButton)
+      gameButton.hidden = !hasRoom() || !secureOrigin || !initialized;
     if (!hasRoom()) return;
     if (!secureOrigin) return setStatus("Casting is available on secure Wordrush only");
     if (!initialized) return setStatus("Cast is unavailable in this browser");
-    setStatus("Ready to cast this room", true);
+    if (!receiverHealthy) setStatus("Ready to cast this room", true);
+  };
+  const markReceiverHealth = (healthy) => {
+    receiverHealthy = healthy;
+    clearTimeout(receiverHealthTimer);
+    receiverHealthTimer = null;
+    if (healthy) {
+      setStatus("TV is live with this room", true);
+      if (gameButton) gameButton.textContent = "📺 Refresh TV";
+      receiverHealthTimer = setTimeout(() => {
+        receiverHealthy = false;
+        setStatus("TV stopped responding — tap Re-cast", true);
+        if (gameButton) gameButton.textContent = "📺 Re-cast TV";
+      }, window.wordrushCastHealthTimeoutMs ?? 75_000);
+    } else {
+      setStatus("TV connection dropped — tap Re-cast", true);
+      if (gameButton) gameButton.textContent = "📺 Re-cast TV";
+    }
   };
   const shareRoom = async () => {
     if (sharing || !hasRoom() || !context) return;
@@ -32,7 +58,7 @@
     try {
       const { token } = await window.wordrushRequestDisplayToken();
       await session.sendMessage(NAMESPACE, { type: "display_token", token });
-      setStatus("Casting this room", true);
+      setStatus("Waiting for the TV to confirm…", true);
     } catch (error) {
       setStatus("Could not connect the TV. Your game is unchanged.", true);
       console.warn("Wordrush Cast room handoff failed", error);
@@ -44,8 +70,14 @@
     if (!session || session === receiverMessageSession) return;
     receiverMessageSession = session;
     session.addMessageListener(NAMESPACE, (_namespace, message) => {
-      if (message?.type !== "display_reconnect_needed" || !hasRoom()) return;
-      shareRoom();
+      if (message?.type === "display_status") {
+        markReceiverHealth(message.status === "connected");
+        return;
+      }
+      if (message?.type === "display_reconnect_needed" && hasRoom()) {
+        markReceiverHealth(false);
+        shareRoom();
+      }
     });
   };
   const initialize = async () => {
@@ -70,6 +102,9 @@
             shareRoom();
           } else if (state === cast.framework.SessionState.SESSION_ENDED) {
             receiverMessageSession = null;
+            receiverHealthy = false;
+            clearTimeout(receiverHealthTimer);
+            if (gameButton) gameButton.textContent = "📺 Cast to TV";
             updateAvailability();
           }
         },
@@ -86,9 +121,14 @@
     if (available) initialize();
     else setStatus("Cast is unavailable in this browser");
   };
-  button.addEventListener("click", async () => {
+  const requestOrRefreshCast = async () => {
     if (!hasRoom() || !context) return;
     try {
+      if (context.getCurrentSession()) {
+        listenForReceiverMessages(context.getCurrentSession());
+        await shareRoom();
+        return;
+      }
       setStatus("Choose a TV…");
       await context.requestSession();
       listenForReceiverMessages(context.getCurrentSession());
@@ -97,7 +137,9 @@
       setStatus("Cast cancelled or unavailable. Your game is unchanged.", true);
       console.warn("Wordrush Cast session request failed", error);
     }
-  });
+  };
+  buttons.forEach((castButton) =>
+    castButton.addEventListener("click", requestOrRefreshCast));
   window.addEventListener("wordrush:room-change", updateAvailability);
   updateAvailability();
   if (secureOrigin) {
