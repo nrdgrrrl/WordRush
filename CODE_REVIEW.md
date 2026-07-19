@@ -197,13 +197,29 @@ Reviewed: client gameplay, touch input, results, achievements, statistics, leade
 
 - Problem: after the creator refreshed, a guest could remain displayed in a one-player room without creator controls.
 - Cause: cleanup depended entirely on WebSocket close detection, which can be delayed after page navigation or an unclean network loss.
-- Recommended solution: explicitly leave on page unload and retain server-side dead-connection detection as a fallback.
-- Fix: creators send `leave_session` on `pagehide`, room shutdown now invalidates its state, and WebSocket heartbeat checks terminate stale connections.
+- Recommended solution: retain the creator seat through a bounded reconnect grace period and keep server-side dead-connection detection as a fallback.
+- Fix: creators resume with a private reconnect token, room shutdown invalidates its state, and WebSocket heartbeat checks terminate stale connections.
 
 ## Verification
 
-- `npm test`: 19 unit/integration tests passing.
-- `npm run test:browser`: 20 browser/three-client soak tests passing.
+### 2026-07-18 production follow-up
+
+The deployed multiplayer/Cast release received a second full audit. Confirmed findings were fixed individually:
+
+- stale room sockets can no longer intercept later solo submissions;
+- leaving a solo game or multiplayer room now disposes active timers, while players who open the main-screen QR can return to the live board;
+- repeated WebSocket identity initialization is rejected, cross-room resume is blocked, and a disconnected seat requires its private reconnect token;
+- tied top scorers all receive a win, consistently on the server, local profile, leaderboard, phone, and TV;
+- completed multiplayer rounds carry stable IDs and cannot be counted twice after a results-page refresh;
+- Cast health is reset when the room changes, preventing a new room from inheriting a stale “TV live” state;
+- browser and server board generation now use the shared `board-core.js` implementation;
+- malformed saved profile values are normalized, duplicate navigation handling and invalid result markup were removed, and redundant grid CSS was consolidated;
+- expired rate-limit records are pruned, closed-room display tokens are released, and forwarded client IPs are trusted only behind the loopback proxy.
+
+The release gate now covers 30 unit/integration tests, 35 browser tests, and 2 three-client soak tests.
+
+- `npm test`: 30 unit/integration tests passing.
+- `npm run test:browser`: 35 browser tests and 2 three-client soak tests passing.
 - Syntax checks pass for server and browser JavaScript.
 - `git diff --check` passes.
 - `bash -n serve-lan.sh` passes.

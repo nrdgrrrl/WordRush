@@ -1,5 +1,6 @@
 const $ = (s) => document.querySelector(s),
   sharedConfig = window.WordrushConfig,
+  sharedBoardCore = window.WordrushBoardCore,
   MODE = Object.fromEntries(
     Object.entries(sharedConfig.MODE_CONFIG)
       .filter(([mode]) => mode !== "coop")
@@ -29,8 +30,7 @@ function nextRandomMode() {
   return randomModeQueue.shift() || RANDOM_MODES[0];
 }
 const common = sharedConfig.COMMON_WORDS,
-  adult = sharedConfig.ADULT_WORDS,
-  bag = sharedConfig.LETTER_BAG;
+  adult = sharedConfig.ADULT_WORDS;
 let custom = new Set();
 try {
   custom = new Set(
@@ -171,6 +171,7 @@ const profile = (() => {
         multiplayerLosses: 0,
         speedAchievement: false,
         maxGridWin: 0,
+        completedMultiplayerRounds: [],
         days: [],
       },
       JSON.parse(localStorage.getItem("wordrush-profile") || "{}"),
@@ -194,10 +195,26 @@ const profile = (() => {
       multiplayerLosses: 0,
       speedAchievement: false,
       maxGridWin: 0,
+      completedMultiplayerRounds: [],
       days: [],
     };
   }
 })();
+for (const key of [
+  "score", "words", "streak", "longest", "rounds", "correct", "incorrect",
+  "totalWordLength", "totalGameSeconds", "gamesWon", "gamesLost",
+  "multiplayerWins", "multiplayerLosses", "maxGridWin",
+]) {
+  const value = Number(profile[key]);
+  profile[key] = Number.isFinite(value) && value >= 0 ? value : 0;
+}
+profile.days = Array.isArray(profile.days)
+  ? profile.days.filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day)).slice(-400)
+  : [];
+profile.completedMultiplayerRounds = Array.isArray(profile.completedMultiplayerRounds)
+  ? profile.completedMultiplayerRounds.filter((id) => typeof id === "string").slice(-50)
+  : [];
+profile.name = typeof profile.name === "string" ? profile.name.slice(0, 20) : "";
 if (!profile.name || profile.name === "Jordan")
   profile.name = randomGuestName();
 if (!avatarOptions.includes(profile.avatar)) profile.avatar = "🐈";
@@ -276,51 +293,7 @@ function lex() {
   return lexiconCache;
 }
 function near(i) {
-  let r = Math.floor(i / s.n),
-    c = i % s.n,
-    a = [];
-  for (let y = -1; y < 2; y++)
-    for (let x = -1; x < 2; x++) {
-      let R = r + y,
-        C = c + x;
-      if ((y || x) && R >= 0 && C >= 0 && R < s.n && C < s.n)
-        a.push(R * s.n + C);
-    }
-  return a;
-}
-function place(w, c) {
-  for (let start = 0; start < s.n * s.n; start++) {
-    let p = [start],
-      u = new Set(p);
-    function go() {
-      if (p.length === w.length) return 1;
-      for (let i of near(p.at(-1)).filter(
-        (i) => !u.has(i) && (c[i] === "" || c[i] === w[p.length]),
-      )) {
-        p.push(i);
-        u.add(i);
-        if (go()) return 1;
-        p.pop();
-        u.delete(i);
-      }
-      return 0;
-    }
-    if (go()) return p;
-  }
-  return null;
-}
-function path(w) {
-  function d(i, k, u) {
-    if (k === w.length) return 1;
-    for (let n of near(i))
-      if (!u.has(n) && s.b[n] === w[k]) {
-        u.add(n);
-        if (d(n, k + 1, u)) return 1;
-        u.delete(n);
-      }
-    return 0;
-  }
-  return s.b.some((x, i) => x === w[0] && d(i, 1, new Set([i])));
+  return sharedBoardCore.neighbors(i, s.n);
 }
 function render() {
   let g = $("#grid");
@@ -453,10 +426,33 @@ function show(id) {
     );
   emit("screen-change", { id });
 }
-function stopRush() {
-  s.rush = false;
+function abandonActiveRound() {
+  clearInterval(s.timer);
   clearTimeout(s.rushTimer);
   clearInterval(s.rushCountdown);
+  s.done = 1;
+  s.onlineRoundKey = null;
+  s.pendingOnlineTrace = null;
+  clearPick(true);
+  clearTrace();
+}
+window.wordrushAbandonOnlineRound = () => {
+  if (s.onlineRoundKey) abandonActiveRound();
+};
+window.wordrushReturnToOnlineRound = () => {
+  if (s.onlineRoundKey && !s.done) show("gameScreen");
+};
+$("#gameBack")?.addEventListener("click", () => {
+  if (!window.wordrushSessionCode || !s.onlineRoundKey) abandonActiveRound();
+  show("homeScreen");
+});
+function stopRush() {
+  s.rush = false;
+  if (!s.done) abandonActiveRound();
+  else {
+    clearTimeout(s.rushTimer);
+    clearInterval(s.rushCountdown);
+  }
   $("#stopRush").hidden = true;
   $("#stopRushResults").hidden = true;
   show("homeScreen");
@@ -545,7 +541,10 @@ function pickedPathIsValid(trace, word) {
 async function submit() {
   let trace = s.pick.slice(),
     w = s.pick.map((i) => s.b[i]).join("");
-  if (window.wordrushSocket && window.wordrushSocket.readyState === 1) {
+  if (
+    window.wordrushSessionCode &&
+    window.wordrushSocket?.readyState === WebSocket.OPEN
+  ) {
     s.pendingOnlineTrace = { word: w, trace };
     window.wordrushSocket.send(
       JSON.stringify({ type: "submit_word", word: w, path: trace }),
@@ -655,7 +654,6 @@ function pulseWord(trace, className) {
 function pulseAcceptedWord(trace) { pulseWord(trace, "word-correct"); }
 function pulseIncorrectWord(trace) { pulseWord(trace, "word-incorrect"); }
 $("#quickPlay")?.addEventListener("click", () => start("classic"));
-$("#navStats").onclick = () => show("statsScreen");
 $("#stopRush").onclick = stopRush;
 $("#stopRushResults").onclick = stopRush;
 let partyConfig = { size: 4, min: 3, seconds: 120 };
@@ -803,7 +801,7 @@ window.wordrushRecordOnlineIncorrect = () => {
   updateProfile();
 };
 window.wordrushOnlineRound = (round, config, mode) => {
-  const roundKey = round.endsAt + ":" + round.board.join("");
+  const roundKey = round.id || round.endsAt + ":" + round.board.join("");
   if (s.onlineRoundKey === roundKey && !s.done) return;
   s.onlineRoundKey = roundKey;
   const match = Object.entries(MODE).find(
@@ -876,29 +874,51 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   $("#resultAchievementTitle").textContent = result.cooperative
     ? "Co-op complete"
     : "Multiplayer round";
+  const leaders = normalizedRanking.filter(
+    (player) => player.score === normalizedRanking[0]?.score,
+  );
   $("#resultAchievementDetail").textContent = result.cooperative
     ? "Team score: " +
       (result.teamScore || 0) +
       " · " +
       (result.stats?.wordsFound || 0) +
       " shared words."
-    : (normalizedRanking[0]?.name || "Winner") +
-      " wins · " +
+    : (leaders.length > 1
+        ? leaders.map((player) => player.name).join(" & ") + " tie"
+        : (normalizedRanking[0]?.name || "Winner") + " wins") +
+      " · " +
       ownWords.length +
       " word" +
       (ownWords.length === 1 ? "" : "s") +
       " found by you.";
-  profile.score += mine;
-  profile.rounds++;
-  profile.totalGameSeconds += (Date.now() - s.startedAt) / 1000;
-  const won = result.cooperative || normalizedRanking[0]?.id === guestId;
-  profile.gamesWon += won ? 1 : 0;
-  profile.gamesLost += won ? 0 : 1;
-  profile.multiplayerWins = (profile.multiplayerWins || 0) + (won ? 1 : 0);
-  profile.multiplayerLosses = (profile.multiplayerLosses || 0) + (won ? 0 : 1);
-  if (won) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
-  recordPlayDay();
-  updateProfile();
+  const winningScore = normalizedRanking[0]?.score;
+  const won =
+    result.cooperative ||
+    (ownPlayer && ownPlayer.score === winningScore);
+  profile.completedMultiplayerRounds = Array.isArray(
+    profile.completedMultiplayerRounds,
+  ) ? profile.completedMultiplayerRounds : [];
+  const alreadyRecorded =
+    result.roundId && profile.completedMultiplayerRounds.includes(result.roundId);
+  if (!alreadyRecorded) {
+    profile.score += mine;
+    profile.rounds++;
+    profile.totalGameSeconds += s.startedAt
+      ? Math.max(0, (Date.now() - s.startedAt) / 1000)
+      : Math.max(0, Number(result.gameSeconds) || 0);
+    profile.gamesWon += won ? 1 : 0;
+    profile.gamesLost += won ? 0 : 1;
+    profile.multiplayerWins = (profile.multiplayerWins || 0) + (won ? 1 : 0);
+    profile.multiplayerLosses = (profile.multiplayerLosses || 0) + (won ? 0 : 1);
+    if (won) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
+    if (result.roundId)
+      profile.completedMultiplayerRounds = [
+        ...profile.completedMultiplayerRounds,
+        result.roundId,
+      ].slice(-50);
+    recordPlayDay();
+    updateProfile();
+  }
   show("resultsScreen");
   $("#again").textContent = s.party ? "Continue party mode →" : "Play again →";
   $("#exitParty").hidden = !s.party;
@@ -943,61 +963,9 @@ const saveProfile = () => {
 };
 $("#profileForm")?.addEventListener("submit", saveProfile);
 function make() {
-  let all = [...lex()],
-    dirty = s.mode === "dirty" || customAdult;
-  for (let attempt = 0; attempt < 200; attempt++) {
-    let c = Array(s.n * s.n).fill(""),
-      preferred = dirty
-        ? [...adult].sort(() => Math.random() - 0.5).slice(0, 7)
-        : [],
-      targets = preferred.concat(
-        [3, 4, 5, 6]
-          .map((length, bucket) => {
-            const matches = (word) =>
-              bucket === 3 ? word.length >= length : word.length === length;
-            const preferredCandidates = preferred.filter(matches);
-            const candidates = preferredCandidates.length
-              ? preferredCandidates
-              : all.filter(matches);
-            return candidates[Math.floor(Math.random() * candidates.length)];
-          })
-          .filter(Boolean),
-      );
-    targets
-      .sort((a, b) => b.length - a.length)
-      .forEach((word) => {
-        let p = place(word, c);
-        if (p) p.forEach((i, j) => (c[i] = word[j]));
-      });
-    let board = c.map((x) => x || bag[Math.floor(Math.random() * bag.length)]);
-    if (!dirty) return board;
-    let old = s.b;
-    s.b = board;
-    let dirtyCount = adult.filter((word) => path(word)).length;
-    s.b = old;
-    if (dirtyCount >= 5) return board;
-  }
-  if (dirty && s.n >= 4) {
-    // This 4×4 seed contains playable paths for BITCH, COCK, DICK, SHIT and
-    // TIT. Embed it in larger custom boards so dirty mode can never silently
-    // fall back to a board without adult words.
-    const seed = "NOLKCDCSITHIBITD";
-    const board = Array.from(
-      { length: s.n * s.n },
-      () => bag[Math.floor(Math.random() * bag.length)],
-    );
-    const offsetRow = Math.floor(Math.random() * (s.n - 3));
-    const offsetColumn = Math.floor(Math.random() * (s.n - 3));
-    for (let row = 0; row < 4; row++)
-      for (let column = 0; column < 4; column++)
-        board[(row + offsetRow) * s.n + column + offsetColumn] =
-          seed[row * 4 + column];
-    return board;
-  }
-  return Array.from(
-    { length: s.n * s.n },
-    () => bag[Math.floor(Math.random() * bag.length)],
-  );
+  return sharedBoardCore.generateBoard(s.n, [...lex()], {
+    preferredWords: s.mode === "dirty" || customAdult ? adult : common,
+  });
 }
 let selectionClearTimer = null;
 function clearPick(immediate = false) {

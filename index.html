@@ -33,6 +33,9 @@
             ><strong id="multiplayerBannerText">1 player in session</strong>
           </div>
           <div class="multiplayer-banner-actions">
+            <button type="button" id="resumeMultiplayer" hidden>
+              <span aria-hidden="true">↩</span> Game
+            </button>
             <button
               type="button"
               id="multiplayerShare"
@@ -117,7 +120,7 @@
       </section>
       <section class="screen" id="gameScreen">
         <div class="game-head">
-          <button data-screen="homeScreen">←</button>
+          <button id="gameBack" type="button" aria-label="Back to home">←</button>
           <div>
             <p class="eyebrow" id="gameMode">Friday night grid</p>
             <h2 id="gameTitle">Round 01 · 4×4</h2>
@@ -203,7 +206,7 @@
         </div>
         <button class="primary" id="again">Play again →</button>
         <button class="secondary" id="exitParty" hidden>Exit party mode</button>
-        ><button class="secondary" id="stopRushResults" hidden>Stop rush</button
+        <button class="secondary" id="stopRushResults" hidden>Stop rush</button
         ><button class="secondary" data-screen="homeScreen">
           Back to home
         </button>
@@ -464,6 +467,7 @@
     </main>
     <div id="toast"></div>
     <script src="game-config.js"></script>
+    <script src="board-core.js"></script>
     <script src="app.js"></script>
     <script src="stats.js"></script>
     <script src="achievements.js"></script>

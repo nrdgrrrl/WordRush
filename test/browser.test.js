@@ -281,7 +281,7 @@ test("browser can start, play, persist stats, and toggle dark mode", async () =>
   await browser.close();
 });
 
-test("solo play validates a traced word without downloading the dictionary", async () => {
+test("solo play ignores a stale multiplayer socket and validates without downloading the dictionary", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const dictionaryRequests = [];
@@ -330,6 +330,18 @@ test("solo play validates a traced word without downloading the dictionary", asy
     return null;
   });
   assert.ok(found, "generated board should contain a seeded common word");
+  await page.evaluate(() => {
+    window.wordrushSessionCode = "";
+    window.wordrushSocket = {
+      readyState: WebSocket.OPEN,
+      send(message) {
+        window.__staleSocketMessages = [
+          ...(window.__staleSocketMessages || []),
+          JSON.parse(message),
+        ];
+      },
+    };
+  });
   const traceWord = async () => {
     const boxes = await Promise.all(
       found.trail.map((index) => page.locator(".tile").nth(index).boundingBox()),
@@ -350,6 +362,10 @@ test("solo play validates a traced word without downloading the dictionary", asy
   await page.waitForFunction(() => Number(document.querySelector("#gameScore").textContent) > 0);
   await traceWord();
   await page.waitForTimeout(50);
+  assert.deepEqual(
+    await page.evaluate(() => window.__staleSocketMessages || []),
+    [],
+  );
   assert.equal(dictionaryRequests.length, 0);
   assert.equal(wordCheckRequests.length, 1, "duplicate word should use local state");
   await browser.close();
@@ -729,7 +745,7 @@ test("multiplayer creates a five-letter session and launches co-op", async () =>
   await page.waitForSelector("#gameScreen.active");
   assert.equal(await page.locator("#gameMode").textContent(), "CO-OP");
   assert.equal(await page.locator("#livePlayers .live-player").count(), 0);
-  await page.locator('#gameScreen [data-screen="homeScreen"]').click();
+  await page.locator("#gameBack").click();
   page.on("dialog", (dialog) => dialog.accept());
   await page.locator("#exitMultiplayer").click();
   await page.waitForFunction(
@@ -794,7 +810,7 @@ test("main screen join QR remains available after a multiplayer round starts", a
   await host.locator("#sessionType").selectOption("classic");
   await host.locator("#sessionStart").click();
   await host.waitForSelector("#gameScreen.active");
-  await host.locator('#gameScreen [data-screen="homeScreen"]').click();
+  await host.locator("#gameBack").click();
 
   assert.equal(await host.locator("#multiplayerBanner").isVisible(), true);
   assert.match(await host.locator("#multiplayerShare").textContent(), /Join QR/);
@@ -802,11 +818,50 @@ test("main screen join QR remains available after a multiplayer round starts", a
   await host.waitForFunction(() => document.querySelector("#sessionQr").naturalWidth > 0);
   assert.match(await host.locator("#sessionQr").getAttribute("src"), new RegExp("join=" + code));
   assert.match(await host.locator("#lobbyStatus").textContent(), /new players.*scan/i);
+  await host.locator('#multiplayerDialog button[value="cancel"]').click();
+  assert.equal(await host.locator("#resumeMultiplayer").isVisible(), true);
+  await host.locator("#resumeMultiplayer").click();
+  assert.equal(await host.locator("#gameScreen").isVisible(), true);
 
   const returningPlayer = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await returningPlayer.goto(baseUrl + "/?join=" + code);
   await returningPlayer.waitForSelector("#gameScreen.active");
   assert.equal(await returningPlayer.locator("#gameMode").textContent(), "CLASSIC");
+  await browser.close();
+});
+
+test("leaving a solo round disposes its timer instead of finishing in the background", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await startClassic(page);
+  await page.locator("#gameBack").click();
+  await page.evaluate(() => window.end());
+  assert.equal(await page.locator("#homeScreen").isVisible(), true);
+  assert.equal(await page.locator("#resultsScreen").isVisible(), false);
+  await browser.close();
+});
+
+test("refreshing finished multiplayer results does not count the round twice", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  const finish = () => page.evaluate(() => {
+    const id = window.wordrushGuestId;
+    window.wordrushOnlineFinish(
+      [{ id, name: "Player", avatar: "🐈", score: 25, words: [] }],
+      { roundId: "stable-round-id", gameSeconds: 30 },
+    );
+  });
+  await finish();
+  await page.reload();
+  await finish();
+  const stored = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("wordrush-profile")),
+  );
+  assert.equal(stored.rounds, 1);
+  assert.equal(stored.score, 25);
+  assert.deepEqual(stored.completedMultiplayerRounds, ["stable-round-id"]);
   await browser.close();
 });
 
@@ -937,6 +992,13 @@ test("Cast health status exposes an in-game re-cast action with fresh credential
   }));
   assert.match(await page.locator("#castStatus").textContent(), /TV is live/);
   assert.match(await page.locator("#gameCastButton").textContent(), /Refresh TV/);
+
+  await page.evaluate(() => {
+    window.wordrushSessionCode = "FGHIJ";
+    window.dispatchEvent(new CustomEvent("wordrush:room-change"));
+  });
+  assert.match(await page.locator("#castStatus").textContent(), /Ready to cast this room/);
+  assert.match(await page.locator("#gameCastButton").textContent(), /Cast to TV/);
 
   await page.evaluate(() => window.__castReceiverListener("namespace", {
     type: "display_status",
@@ -1107,6 +1169,25 @@ test("banner X exits a newly created session from the landing page", async () =>
       .evaluate((node) => node.classList.contains("active")),
     true,
   );
+  await browser.close();
+});
+
+test("malformed saved profile values are normalized without breaking startup", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.evaluate(() => localStorage.setItem("wordrush-profile", JSON.stringify({
+    name: 42,
+    score: "broken",
+    rounds: -10,
+    days: null,
+    completedMultiplayerRounds: {},
+  })));
+  await page.reload();
+  assert.equal(await page.locator("#homeScore").textContent(), "0");
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")));
+  assert.deepEqual(stored.days, []);
+  assert.equal(stored.rounds, 0);
   await browser.close();
 });
 

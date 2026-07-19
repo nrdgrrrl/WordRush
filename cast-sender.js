@@ -12,6 +12,7 @@
   let receiverMessageSession = null;
   let receiverHealthy = false;
   let receiverHealthTimer = null;
+  let activeRoomCode = "";
 
   if (!button || !control || !status) return;
 
@@ -24,6 +25,14 @@
   };
   const hasRoom = () => Boolean(window.wordrushSessionCode);
   const updateAvailability = () => {
+    const nextRoomCode = window.wordrushSessionCode || "";
+    if (nextRoomCode !== activeRoomCode) {
+      activeRoomCode = nextRoomCode;
+      receiverHealthy = false;
+      clearTimeout(receiverHealthTimer);
+      receiverHealthTimer = null;
+      if (gameButton) gameButton.textContent = "📺 Cast to TV";
+    }
     control.hidden = !hasRoom();
     if (gameButton)
       gameButton.hidden = !hasRoom() || !secureOrigin || !initialized;

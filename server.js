@@ -59,10 +59,14 @@ if (
     "A system word list is required in production (install wamerican)",
   );
 
-function clientIp(req) {
+function clientIp(req, trustProxy = IS_LOOPBACK) {
   // Apache is trusted only when Node is bound to loopback. Configure it to pass
   // X-Forwarded-For; the first value is the original client.
-  return String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")
+  return String(
+    (trustProxy ? req.headers["x-forwarded-for"] : "") ||
+      req.socket.remoteAddress ||
+      "",
+  )
     .split(",")[0]
     .trim();
 }
@@ -75,6 +79,10 @@ function rateLimit(key, limit, window = RATE_WINDOW_MS) {
   }
   current.count += 1;
   return current.count <= limit;
+}
+function pruneExpiredRateLimits(now = Date.now()) {
+  for (const [key, record] of rateLimits)
+    if (record.expiresAt <= now) rateLimits.delete(key);
 }
 function allowedHost(req) {
   const host = String(req.headers.host || "").toLowerCase();
@@ -206,6 +214,7 @@ function state(room) {
     })),
     round: room.round
       ? {
+          id: room.round.id,
           board: room.round.board,
           size: room.round.size,
           endsAt: room.round.endsAt,
@@ -233,6 +242,7 @@ function displayState(room) {
     })),
     round: room.round
       ? {
+          id: room.round.id,
           board: room.round.board,
           size: room.round.size,
           endsAt: room.round.endsAt,
@@ -268,6 +278,8 @@ function closeRoom(room, reason) {
   room.displays.clear();
   for (const [token, credential] of displayCredentials)
     if (credential.roomCode === room.code) displayCredentials.delete(token);
+  for (const [token, displayToken] of displayTokens)
+    if (displayToken.roomCode === room.code) displayTokens.delete(token);
   room.players.clear();
   room.round = null;
   room.status = "closed";
@@ -301,11 +313,14 @@ function startRound(room, selected = room.mode, rawConfig = null) {
       { preferredWords: COMMON_WORDS },
     );
   room.config = config;
+  const startedAt = Date.now();
   room.round = {
+    id: crypto.randomUUID(),
     board: board,
     size: config.size,
     found: new Set(),
-    endsAt: Date.now() + config.seconds * 1000,
+    startedAt,
+    endsAt: startedAt + config.seconds * 1000,
     timer: null,
     config,
     validationMode,
@@ -332,12 +347,20 @@ function finishRound(room, reason = "complete") {
   room.status = "finished";
   const rankedPlayers = [...room.players.values()]
     .sort((a, b) => b.score - a.score);
-  rankedPlayers.forEach((player, index) => {
+  const winningScore = rankedPlayers[0]?.score;
+  rankedPlayers.forEach((player) => {
     player.sessionPoints += player.score;
-    if (room.mode === "coop" || index === 0) player.sessionWins += 1;
+    if (room.mode === "coop" || player.score === winningScore)
+      player.sessionWins += 1;
     else player.sessionLosses += 1;
   });
+  const gameSeconds = Math.min(
+    roomConfig(room).seconds,
+    Math.max(0, (Date.now() - room.round.startedAt) / 1000),
+  );
   const result = {
+    roundId: room.round.id,
+    gameSeconds,
     cooperative: room.mode === "coop",
     teamScore: room.teamScore,
     stats: { wordsFound: room.round.found.size },
@@ -357,17 +380,9 @@ function finishRound(room, reason = "complete") {
       })),
   };
   room.lastResult = result;
-  const gameSeconds = Math.min(
-    roomConfig(room).seconds,
-    Math.max(
-      0,
-      (Date.now() - (room.round.endsAt - roomConfig(room).seconds * 1000)) /
-        1000,
-    ),
-  );
   try {
     leaderboard.recordScores(
-      result.ranking.map((rankedPlayer, index) => {
+      result.ranking.map((rankedPlayer) => {
         const words = rankedPlayer.words || [];
         return {
           id: rankedPlayer.id,
@@ -383,7 +398,8 @@ function finishRound(room, reason = "complete") {
           ),
           gameSeconds,
           multiplayer: true,
-          multiplayerWin: result.cooperative || index === 0,
+          multiplayerWin:
+            result.cooperative || rankedPlayer.score === winningScore,
         };
       }),
     );
@@ -540,6 +556,8 @@ function handle(ws, message) {
     });
   }
   if (type === "hello") {
+    if (clients.has(ws))
+      return send(ws, { type: "error", code: "HELLO_ALREADY_RECEIVED" });
     const id = String(message.guestId || crypto.randomUUID());
     clients.set(ws, {
       id,
@@ -553,6 +571,12 @@ function handle(ws, message) {
   if (!client) return send(ws, { type: "error", code: "HELLO_REQUIRED" });
   if (type === "resume_room") {
     const room = rooms.get(String(message.code || "").toUpperCase());
+    if (
+      client.roomCode &&
+      client.roomCode !== room?.code &&
+      rooms.has(client.roomCode)
+    )
+      return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
     const player = room?.players.get(client.id);
     if (!room || !player || player.reconnectToken !== message.reconnectToken)
       return send(ws, { type: "error", code: "RESUME_FAILED" });
@@ -629,6 +653,8 @@ function handle(ws, message) {
     if (existingPlayer) {
       if (existingPlayer.ws?.readyState === 1)
         return send(ws, { type: "error", code: "ALREADY_JOINED" });
+      if (existingPlayer.reconnectToken !== message.reconnectToken)
+        return send(ws, { type: "error", code: "RECONNECT_TOKEN_REQUIRED" });
       const oldSocket = existingPlayer.ws;
       clearTimeout(existingPlayer.disconnectTimer);
       existingPlayer.disconnectTimer = null;
@@ -899,6 +925,7 @@ server.on("upgrade", (req, socket, head) => {
 });
 const heartbeat = setInterval(() => {
   const now = Date.now();
+  pruneExpiredRateLimits(now);
   for (const [token, display] of displayTokens)
     if (display.expiresAt <= now) displayTokens.delete(token);
   for (const [token, credential] of displayCredentials)
@@ -927,6 +954,9 @@ module.exports = {
   MAX_PLAYERS,
   displayTokens,
   displayCredentials,
+  rateLimits,
+  clientIp,
+  pruneExpiredRateLimits,
 };
 
 const { Leaderboard } = require("./leaderboard");

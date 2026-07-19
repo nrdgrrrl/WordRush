@@ -39,7 +39,8 @@
   gap: 6px;
   align-items: center;
 }
-.multiplayer-banner #multiplayerShare {
+.multiplayer-banner #multiplayerShare,
+.multiplayer-banner #resumeMultiplayer {
   padding: 8px 10px;
   border: 2px solid #2c1c37;
   border-radius: 10px;
@@ -49,6 +50,7 @@
   box-shadow: 0 3px 0 #2c1c37;
   white-space: nowrap;
 }
+.multiplayer-banner #resumeMultiplayer[hidden] { display: none; }
 .multiplayer-banner #multiplayerShare span { margin-right: 3px; font-size: 16px; }
 .cast-control {
   display: flex;

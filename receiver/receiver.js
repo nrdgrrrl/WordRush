@@ -38,8 +38,13 @@
       .filter(({ item }) => String(item.word || "").length === longestLength)
       .sort((a, b) => Number(b.item.points || 0) - Number(a.item.points || 0))[0];
     const winner = ranking[0];
+    const leaders = winner
+      ? ranking.filter((player) => Number(player.score || 0) === Number(winner.score || 0))
+      : [];
     const headline = result.cooperative
       ? "Team word power!"
+      : leaders.length > 1
+        ? `${leaders.map((player) => `${escape(player.avatar || "🐈")} ${escape(player.name)}`).join(" & ")} tie for the crown!`
       : winner
         ? `${escape(winner.avatar || "🐈")} ${escape(winner.name)} takes the crown!`
         : "What a word rush!";

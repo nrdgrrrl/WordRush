@@ -49,6 +49,7 @@
     creator = false;
     creatorId = "";
     roomStatus = "";
+    window.wordrushAbandonOnlineRound?.();
     pendingSession = false;
     localStorage.removeItem("wordrush-room");
     localStorage.removeItem("wordrush-room-token");
@@ -147,6 +148,7 @@
         ? "You’re the host — pick a game and start when everybody’s ready!"
         : "Waiting for the host to start. Get your fingers ready!";
     $("#endGame").hidden = !creator;
+    $("#resumeMultiplayer").hidden = roomStatus !== "playing";
   }
   function sessionDialog(open = true) {
     if (open) $("#multiplayerDialog").showModal();
@@ -190,6 +192,19 @@
     pendingSession = false;
     localStorage.setItem("wordrush-room", message.code);
     localStorage.setItem("wordrush-room-token", message.reconnectToken);
+  }
+  function joinRoom(code) {
+    const saved = savedSession();
+    intentionalLeave = false;
+    pendingSession = true;
+    if (saved?.code === code) {
+      connect(saved);
+      return;
+    }
+    localStorage.removeItem("wordrush-room");
+    localStorage.removeItem("wordrush-room-token");
+    socket = connect();
+    sendWhenReady({ type: "join_room", code, ...identity() });
   }
   function scheduleReconnect() {
     if (reconnectTimer || intentionalLeave) return;
@@ -439,12 +454,7 @@
       ?.trim()
       .toUpperCase();
     if (!/^[A-Z]{5}$/.test(code || "")) return toast("Enter a 5-letter code");
-    localStorage.removeItem("wordrush-room");
-    localStorage.removeItem("wordrush-room-token");
-    intentionalLeave = false;
-    pendingSession = true;
-    socket = connect();
-    sendWhenReady({ type: "join_room", code, ...identity() });
+    joinRoom(code);
   });
   const joinFromLink = new URLSearchParams(location.search).get("join")
     ?.trim()
@@ -452,11 +462,7 @@
   if (joinFromLink) {
     history.replaceState({}, "", location.pathname + location.hash);
     if (/^[A-Z]{5}$/.test(joinFromLink)) {
-      localStorage.removeItem("wordrush-room");
-      localStorage.removeItem("wordrush-room-token");
-      pendingSession = true;
-      socket = connect();
-      sendWhenReady({ type: "join_room", code: joinFromLink, ...identity() });
+      joinRoom(joinFromLink);
     } else toast("That room code is invalid");
   } else {
     const saved = savedSession();
@@ -465,6 +471,9 @@
   $("#multiplayerShare")?.addEventListener("click", () => {
     if (sessionCode) sessionDialog();
   });
+  $("#resumeMultiplayer")?.addEventListener("click", () =>
+    window.wordrushReturnToOnlineRound?.(),
+  );
   $("#sessionShare")?.addEventListener("click", async () => {
     if (!sessionCode) return;
     const url = new URL("/", location.origin);

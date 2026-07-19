@@ -12,7 +12,15 @@ process.env.WORDRUSH_LEADERBOARD_FILE = path.join(
   fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-server-")),
   "leaderboard.json",
 );
-const { server, rooms, displayTokens, displayCredentials } = require("../server");
+const {
+  server,
+  rooms,
+  displayTokens,
+  displayCredentials,
+  rateLimits,
+  clientIp,
+  pruneExpiredRateLimits,
+} = require("../server");
 function message(ws, type, payload = {}) {
   ws.send(JSON.stringify({ type, ...payload }));
 }
@@ -450,6 +458,22 @@ test("multiplayer results accumulate session wins, losses, and total points", as
     "session-record-guest": { wins: 1, losses: 1, points: 45 },
   });
 
+  const tiedStarted = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  await tiedStarted;
+  rooms.get(created.code).players.get("session-record-host").score = 16;
+  rooms.get(created.code).players.get("session-record-guest").score = 16;
+  const tiedFinished = next(host, "round_finished");
+  message(host, "end_round");
+  const tied = await tiedFinished;
+  assert.deepEqual(
+    Object.fromEntries(tied.ranking.map((player) => [player.id, player.session])),
+    {
+      "session-record-host": { wins: 2, losses: 1, points: 45 },
+      "session-record-guest": { wins: 2, losses: 1, points: 61 },
+    },
+  );
+
   const closed = next(guest, "session_closed");
   message(host, "leave_session");
   await closed;
@@ -535,7 +559,7 @@ test("creator can resume after a transient disconnect before the grace period ex
   guest.close();
 });
 
-test("a disconnected guest retains and can reclaim their room seat from an invite", async () => {
+test("a disconnected guest needs its private token to reclaim a room seat", async () => {
   const host = await client("persistent-guest-host");
   const guest = await client("persistent-guest");
   const createdPromise = next(host, "room_created");
@@ -552,8 +576,14 @@ test("a disconnected guest retains and can reclaim their room seat from an invit
   assert.equal(rooms.get(created.code).players.has("persistent-guest"), true);
 
   const resumedGuest = await client("persistent-guest");
-  const rejoinedPromise = next(resumedGuest, "joined_room");
+  const rejectedPromise = next(resumedGuest, "error");
   message(resumedGuest, "join_room", { code: created.code });
+  assert.equal((await rejectedPromise).code, "RECONNECT_TOKEN_REQUIRED");
+  const rejoinedPromise = next(resumedGuest, "joined_room");
+  message(resumedGuest, "join_room", {
+    code: created.code,
+    reconnectToken: joined.reconnectToken,
+  });
   const rejoined = await rejoinedPromise;
   assert.equal(rejoined.code, created.code);
   assert.notEqual(rejoined.reconnectToken, joined.reconnectToken);
@@ -564,6 +594,21 @@ test("a disconnected guest retains and can reclaim their room seat from an invit
   await closedGuest;
   host.close();
   resumedGuest.close();
+});
+
+test("connection identity cannot be reset with a second hello", async () => {
+  const host = await client("single-hello-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const rejectedPromise = next(host, "error");
+  message(host, "hello", { guestId: "replacement-id" });
+  assert.equal((await rejectedPromise).code, "HELLO_ALREADY_RECEIVED");
+  assert.equal(rooms.get(created.code).creatorId, "single-hello-host");
+  message(host, "leave_session");
+  host.close();
 });
 
 test("random multiplayer sessions automatically advance to another round", async () => {
@@ -742,6 +787,18 @@ test("room cleanup releases guests so they can create a new session", async () =
   assert.equal(replacement.code.length, 5);
   guest.close();
   host.close();
+});
+
+test("security bookkeeping expires and direct LAN clients cannot spoof proxy IPs", () => {
+  rateLimits.set("expired-test", { count: 1, expiresAt: 10 });
+  pruneExpiredRateLimits(11);
+  assert.equal(rateLimits.has("expired-test"), false);
+  const request = {
+    headers: { "x-forwarded-for": "203.0.113.8" },
+    socket: { remoteAddress: "192.0.2.4" },
+  };
+  assert.equal(clientIp(request, true), "203.0.113.8");
+  assert.equal(clientIp(request, false), "192.0.2.4");
 });
 
 test("static file serving rejects encoded paths outside the project root", async () => {

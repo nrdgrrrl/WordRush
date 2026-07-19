@@ -805,15 +805,10 @@ body:has(#gameScreen.active) .app-shell {
   padding: 6px;
 }
 .grid {
-  width: min(100%, 100%);
-  height: min(100%, 100%);
-  aspect-ratio: 1/1;
-  flex: 0 0 auto;
-  max-height: 100%;
-}
-.grid {
   width: min(100%, calc(100svh - 200px), calc(100vw - 56px));
   height: auto;
+  aspect-ratio: 1/1;
+  flex: 0 0 auto;
   max-height: none;
 }
 .tile {
