@@ -15,6 +15,17 @@ function fail(message) {
 function checksum(file) {
   return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
+function report(file) {
+  const finalStat = fs.statSync(file);
+  try {
+    fs.accessSync(file, fs.constants.R_OK | fs.constants.W_OK);
+  } catch (error) {
+    fail(`resulting file is not readable and writable by the executing account: ${error.message}`);
+    return;
+  }
+  console.log(`Final file: ${file}`);
+  console.log(`UID: ${finalStat.uid}; GID: ${finalStat.gid}; mode: ${(finalStat.mode & 0o7777).toString(8).padStart(4, "0")}; checksum: ${checksum(file)}; size: ${finalStat.size} bytes`);
+}
 function isEmptyTrusted(file) {
   try {
     const data = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -39,7 +50,7 @@ else {
   }
   if (stat && isEmptyTrusted(resolved)) {
     console.log(`Leaderboard already empty and trusted: ${resolved}`);
-    console.log(`Active checksum: ${checksum(resolved)}; size: ${stat.size} bytes`);
+    report(resolved);
   } else {
     let backup = null;
     if (stat) {
@@ -59,6 +70,6 @@ else {
     fs.renameSync(temporary, resolved);
     console.log(`Reset installed: ${resolved}`);
     if (backup) console.log(`Backup: ${backup}`);
-    console.log(`Active checksum: ${checksum(resolved)}; size: ${fs.statSync(resolved).size} bytes`);
+    report(resolved);
   }
 }

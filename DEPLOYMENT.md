@@ -36,7 +36,8 @@ discard pre-release test data explicitly, while the service is stopped:
 
 ```sh
 sudo install -o wordrush -g wordrush -m 0750 -d /var/lib/wordrush
-sudo env WORDRUSH_LEADERBOARD_FILE=/var/lib/wordrush/leaderboard.json \
+sudo -u wordrush env \
+  WORDRUSH_LEADERBOARD_FILE=/var/lib/wordrush/leaderboard.json \
   /opt/node/bin/node /home/victoria/sites/rush/wordrush/scripts/reset-leaderboard.js \
   --confirm-reset
 ```
