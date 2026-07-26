@@ -24,6 +24,13 @@ reconnect credential.
 QR codes contain only the public game URL and a room code. They grant no room
 authority.
 
+The global leaderboard has an explicit trust boundary: browser-local solo
+rounds are not accepted as public leaderboard submissions because their score,
+identity, and timing cannot be verified by the server. Public leaderboard
+records come only from authoritative multiplayer room results. The former
+`POST /api/leaderboard/score` endpoint is retained as a rate-limited rejection
+for stale clients and returns `UNVERIFIED_SCORE` without touching persistence.
+
 ## Configure the service
 
 Store runtime configuration in a root-readable environment file based on

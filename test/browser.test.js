@@ -534,14 +534,14 @@ test("active games hide the title bar and preserve a no-scroll compact layout", 
   await browser.close();
 });
 
-test("global scoreboard lists players and opens their stats", async () => {
+test("global scoreboard rejects unverified browser scores", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   const id = "browser-score-" + Date.now();
-  await page.evaluate(
+  const response = await page.evaluate(
     async ({ id }) =>
-      fetch("/api/leaderboard/score", {
+      (await fetch("/api/leaderboard/score", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -551,47 +551,14 @@ test("global scoreboard lists players and opens their stats", async () => {
           score: 321,
           words: 9,
         }),
-      }),
+      })).status,
     { id },
   );
+  assert.equal(response, 410);
   await page.locator("#scoreboardButton").click();
   await page.waitForSelector("#scoreboardScreen.active");
   await page.waitForFunction(() =>
-    document.querySelector("#scoreboardList").textContent.includes("BoardCat"),
-  );
-  assert.equal(
-    await page
-      .locator(".scoreboard-row")
-      .first()
-      .locator(".scoreboard-avatar")
-      .textContent(),
-    "🐯",
-  );
-  await page.locator(".scoreboard-row").first().click();
-  await page.waitForFunction(
-    () => document.querySelector("#leaderboardProfileDialog").open,
-  );
-  assert.equal(
-    await page
-      .locator("#leaderboardProfileDialog")
-      .evaluate((dialog) => dialog.open),
-    true,
-  );
-  assert.match(
-    await page.locator("#leaderboardProfileName").textContent(),
-    /BoardCat/,
-  );
-  assert.match(
-    await page.locator("#leaderboardProfileBody").textContent(),
-    /321/,
-  );
-  await page.locator("#leaderboardProfileClose").click();
-  await page.locator('[data-period="total"]').click();
-  assert.equal(
-    await page
-      .locator('.scoreboard-tabs [data-period="total"]')
-      .evaluate((node) => node.classList.contains("active")),
-    true,
+    !document.querySelector("#scoreboardList").textContent.includes("BoardCat"),
   );
   await browser.close();
 });
@@ -1879,6 +1846,7 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
   });
   await page.waitForSelector("#resultsScreen.active");
   assert.equal(await page.locator(".result-player-card").count(), 2);
+  assert.equal(await page.locator("#staticResultsView").isHidden(), false);
   assert.match(await page.locator("#resultLongestWord").textContent(), /PLANETS · 49 pts/);
   assert.match(await page.locator("#resultTopPlayer").textContent(), /Comet/);
   assert.match(await page.locator(".result-session-record").first().textContent(), /2W · 1L · 149 session pts/);
@@ -1975,6 +1943,9 @@ test("Word Party is forced for every player and celebrates sudden death", async 
     );
   });
   await page.waitForSelector("#resultsScreen.active");
+  assert.equal(await page.locator("#animatedResultsView").isHidden(), true);
+  assert.equal(await page.locator("#staticResultsView").isHidden(), false);
+  await page.locator("#animatedResultsButton").click();
   assert.equal(await page.locator("#animatedResultsView").isHidden(), false);
   assert.equal(await page.locator("#staticResultsView").isHidden(), true);
   assert.equal(await page.locator(".reveal-player").count(), 3);

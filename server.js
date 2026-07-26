@@ -229,6 +229,7 @@ function state(room) {
       id: p.id,
       name: p.name,
       avatar: p.avatar || "🐈",
+      connected: p.ws?.readyState === 1,
       score: playerScore(room, p),
       session: {
         wins: p.sessionWins,
@@ -557,12 +558,9 @@ function leave(ws) {
   if (!player || player.ws !== ws) return;
   clearTimeout(player.disconnectTimer);
   player.disconnectTimer = null;
-  // The active host owns the room lifetime. Keep a disconnected guest's seat
-  // and score until that room closes because mobile browsers can suspend guest
-  // reconnect timers for far longer than the host recovery grace period.
-  if (info.id === room.creatorId) {
-    schedulePlayerExpiry(room, player, ws);
-  }
+  // Preserve the seat during the bounded reconnect grace period for both host
+  // and guest, then remove stale guests or close an abandoned room.
+  schedulePlayerExpiry(room, player, ws);
   broadcast(room, state(room));
 }
 function handle(ws, message) {
@@ -841,7 +839,7 @@ function handle(ws, message) {
   if (type === "set_results_settings") {
     if (room.status !== "finished")
       return send(ws, { type: "error", code: "RESULTS_NOT_READY" });
-    const view = "reveal";
+    const view = message.view === "static" ? "static" : "reveal";
     const speed = ["slow", "medium", "fast"].includes(message.speed)
       ? message.speed
       : room.results.speed;
@@ -1252,13 +1250,22 @@ async function leaderboardRequest(req, res) {
     return res.end(JSON.stringify(player));
   }
   if (url.pathname === "/api/leaderboard/score" && req.method === "POST") {
-    const body = await readJson(req);
-    if (!body || !body.id) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ error: "INVALID_SCORE" }));
+    if (!rateLimit("leaderboard-score:" + clientIp(req), 30)) {
+      res.writeHead(429, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      return res.end(JSON.stringify({ error: "RATE_LIMITED" }));
     }
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify(leaderboard.recordScore(body)));
+    // Solo rounds run entirely in the browser, so their reported score and
+    // identity cannot be verified here. Multiplayer results are recorded only
+    // from authoritative room state in finishRound(). Never accept a public
+    // payload that could spoof a player or inflate the global leaderboard.
+    res.writeHead(410, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    return res.end(JSON.stringify({ error: "UNVERIFIED_SCORE" }));
   }
   return false;
 }

@@ -1,9 +1,10 @@
 (() => {
   const $ = (selector) => document.querySelector(selector);
   const SPEEDS = { slow: 1800, medium: 900, fast: 350 };
+  const storedView = localStorage.getItem("wordrush-results-view");
   const storedSpeed = localStorage.getItem("wordrush-results-speed");
   let settings = {
-    view: "reveal",
+    view: storedView === "static" ? "static" : "reveal",
     speed: Object.hasOwn(SPEEDS, storedSpeed) ? storedSpeed : "medium",
   };
   let localWords = [];
@@ -163,7 +164,7 @@
 
   function setSettings(next, broadcast = false) {
     settings = {
-      view: "reveal",
+      view: next.view === "static" ? "static" : "reveal",
       speed: Object.hasOwn(SPEEDS, next.speed) ? next.speed : settings.speed,
     };
     localStorage.setItem("wordrush-results-view", settings.view);
@@ -205,7 +206,11 @@
       words: player.words || [],
     }));
     if (detail.result?.results)
-      settings = { ...settings, ...detail.result.results, view: "reveal" };
+      settings = {
+        ...settings,
+        ...detail.result.results,
+        view: detail.result.results.view === "static" ? "static" : "reveal",
+      };
     renderHighlights(rows());
     applyResults();
   });
