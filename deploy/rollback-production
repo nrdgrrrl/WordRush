@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Restore a rollback artifact made by deploy/deploy-production.
+set -euo pipefail
+readonly HOST="${WORDRUSH_DEPLOY_HOST:-racknerd}"
+readonly APP="/home/victoria/sites/rush/wordrush"
+readonly BASE="/home/victoria/sites/rush"
+
+if [[ $# -ne 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+  echo "Usage: deploy/rollback-production wordrush.rollback-<timestamp>.tgz" >&2
+  exit 2
+fi
+artifact="$1"
+case "$artifact" in wordrush.rollback-*.tgz) ;; *) echo "Refusing unexpected artifact name" >&2; exit 2;; esac
+
+ssh -o BatchMode=yes "$HOST" bash -s -- "$APP" "$BASE/$artifact" <<'REMOTE'
+set -euo pipefail
+app="$1"; artifact="$2"; restore="${artifact%.tgz}.restore-$$"
+[ -f "$artifact" ] || { echo "Rollback artifact not found: $artifact" >&2; exit 1; }
+mkdir "$restore"
+trap 'rm -rf "$restore"' EXIT
+tar -xzf "$artifact" -C "$restore"
+rsync -a --delete --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r \
+  --exclude='.env' --exclude='data/' --exclude='*.log' "$restore/" "$app/"
+sudo -n systemctl restart wordrush
+systemctl is-active --quiet wordrush
+echo "Restored $artifact; wordrush is active."
+REMOTE

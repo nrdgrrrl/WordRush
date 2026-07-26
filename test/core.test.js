@@ -2,12 +2,42 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   MODE_CONFIG,
+  RANDOM_RUSH_MODES,
+  RANDOM_RUSH_EXCLUDED_MODES,
   ADULT_WORDS,
   generateBoard,
   createLexicon,
+  isDictionaryWord,
   hasPath,
   validateSubmission,
 } = require("../game-core");
+test("Random Rush includes every eligible built-in game mode", () => {
+  assert.deepEqual(RANDOM_RUSH_EXCLUDED_MODES, ["coop", "dirty"]);
+  assert.deepEqual(
+    RANDOM_RUSH_MODES,
+    Object.keys(MODE_CONFIG).filter(
+      (mode) => !RANDOM_RUSH_EXCLUDED_MODES.includes(mode),
+    ),
+  );
+  assert.deepEqual(RANDOM_RUSH_MODES, [
+    "classic",
+    "minimum",
+    "sudden",
+    "race",
+    "blitz",
+    "longhaul",
+    "storm",
+    "scoreattack",
+    "chain",
+  ]);
+});
+test("dictionary membership uses the shared server lexicon", () => {
+  assert.equal(isDictionaryWord("tea"), true);
+  assert.equal(isDictionaryWord("CAR"), true);
+  assert.equal(isDictionaryWord("WORDRUSHISNOTAWORD"), false);
+  assert.equal(isDictionaryWord("SHIT"), false);
+  assert.equal(isDictionaryWord("SHIT", "dirty"), true);
+});
 test("configured boards are full and pathable", () => {
   for (const [mode, config] of Object.entries(MODE_CONFIG)) {
     const board = generateBoard(config.size, createLexicon(mode));
@@ -119,14 +149,14 @@ test("dirty words are opt-in and custom words are accepted", () => {
   );
 });
 test("dirty boards strongly favor playable adult words", () => {
-  for (let round = 0; round < 10; round++) {
-    const board = generateBoard(5, createLexicon("dirty"));
+  for (const size of [4, 5, 6, 7, 8]) {
+    const board = generateBoard(size, createLexicon("dirty"));
     const playableAdultWords = ADULT_WORDS.filter(
-      (word) => word.length <= 25 && hasPath(board, 5, word),
+      (word) => word.length <= size * size && hasPath(board, size, word),
     );
     assert.ok(
       playableAdultWords.length >= 5,
-      `expected at least 5 dirty words, found ${playableAdultWords.length}`,
+      `expected at least 5 dirty words on ${size}×${size}, found ${playableAdultWords.length}`,
     );
   }
 });

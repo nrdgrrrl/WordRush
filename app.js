@@ -1,25 +1,50 @@
 const $ = (s) => document.querySelector(s),
   sharedConfig = window.WordrushConfig,
+  sharedBoardCore = window.WordrushBoardCore,
   MODE = Object.fromEntries(
     Object.entries(sharedConfig.MODE_CONFIG)
       .filter(([mode]) => mode !== "coop")
       .map(([mode, config]) => [
         mode,
-        [config.label, config.min, config.size, config.seconds, config.rule],
+        [
+          config.label,
+          config.min,
+          config.size,
+          config.seconds,
+          config.rule,
+          config.target || null,
+          Boolean(config.chain),
+        ],
       ]),
   );
 let customAdult = false;
 function emit(name, detail = {}) {
   document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
 }
-const RANDOM_MODES = ["classic", "minimum", "sudden", "race"];
+const RANDOM_MODES = Object.freeze([...sharedConfig.RANDOM_RUSH_MODES]);
+window.wordrushRandomRushModes = RANDOM_MODES;
+let randomModeQueue = [];
+function shuffledModes(modes, previous) {
+  const shuffled = modes.filter((mode) => mode !== previous);
+  for (let index = shuffled.length - 1; index > 0; index--) {
+    const swap = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swap]] = [shuffled[swap], shuffled[index]];
+  }
+  if (modes.includes(previous)) shuffled.push(previous);
+  return shuffled;
+}
 function nextRandomMode() {
-  const choices = RANDOM_MODES.filter((mode) => mode !== s.mode);
-  return choices[Math.floor(Math.random() * choices.length)] || RANDOM_MODES[0];
+  if (!randomModeQueue.length)
+    randomModeQueue = shuffledModes(RANDOM_MODES, s.mode);
+  return randomModeQueue.shift() || RANDOM_MODES[0];
+}
+function consumeNextRushMode() {
+  const mode = s.nextRushMode || nextRandomMode();
+  s.nextRushMode = null;
+  return mode;
 }
 const common = sharedConfig.COMMON_WORDS,
-  adult = sharedConfig.ADULT_WORDS,
-  bag = sharedConfig.LETTER_BAG;
+  adult = sharedConfig.ADULT_WORDS;
 let custom = new Set();
 try {
   custom = new Set(
@@ -28,6 +53,28 @@ try {
     ),
   );
 } catch {}
+const wordCheckCache = new Map();
+async function isServerDictionaryWord(word, adultMode) {
+  const key = (adultMode ? "dirty:" : "classic:") + word;
+  if (wordCheckCache.has(key)) return wordCheckCache.get(key);
+  const check = fetch(
+    "/api/word-check?word=" +
+      encodeURIComponent(word) +
+      "&adult=" +
+      (adultMode ? "1" : "0"),
+  )
+    .then((response) => {
+      if (!response.ok) throw new Error("Word check failed");
+      return response.json();
+    })
+    .then((result) => result.valid === true)
+    .catch(() => {
+      wordCheckCache.delete(key);
+      return lex().has(word);
+    });
+  wordCheckCache.set(key, check);
+  return check;
+}
 const s = {
   mode: "classic",
   n: 4,
@@ -47,8 +94,15 @@ const s = {
   rush: false,
   rushTimer: 0,
   rushCountdown: 0,
+  nextRushMode: null,
   roundWordTimes: [],
   onlineRoundKey: null,
+  onlineRandomRush: false,
+  pendingOnlineTrace: null,
+  party: false,
+  suddenDeath: null,
+  chain: false,
+  lastWord: "",
 };
 const avatarOptions = [
     "🐈",
@@ -136,6 +190,7 @@ const profile = (() => {
         multiplayerLosses: 0,
         speedAchievement: false,
         maxGridWin: 0,
+        completedMultiplayerRounds: [],
         days: [],
       },
       JSON.parse(localStorage.getItem("wordrush-profile") || "{}"),
@@ -159,10 +214,26 @@ const profile = (() => {
       multiplayerLosses: 0,
       speedAchievement: false,
       maxGridWin: 0,
+      completedMultiplayerRounds: [],
       days: [],
     };
   }
 })();
+for (const key of [
+  "score", "words", "streak", "longest", "rounds", "correct", "incorrect",
+  "totalWordLength", "totalGameSeconds", "gamesWon", "gamesLost",
+  "multiplayerWins", "multiplayerLosses", "maxGridWin",
+]) {
+  const value = Number(profile[key]);
+  profile[key] = Number.isFinite(value) && value >= 0 ? value : 0;
+}
+profile.days = Array.isArray(profile.days)
+  ? profile.days.filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day)).slice(-400)
+  : [];
+profile.completedMultiplayerRounds = Array.isArray(profile.completedMultiplayerRounds)
+  ? profile.completedMultiplayerRounds.filter((id) => typeof id === "string").slice(-50)
+  : [];
+profile.name = typeof profile.name === "string" ? profile.name.slice(0, 20) : "";
 if (!profile.name || profile.name === "Jordan")
   profile.name = randomGuestName();
 if (!avatarOptions.includes(profile.avatar)) profile.avatar = "🐈";
@@ -241,51 +312,7 @@ function lex() {
   return lexiconCache;
 }
 function near(i) {
-  let r = Math.floor(i / s.n),
-    c = i % s.n,
-    a = [];
-  for (let y = -1; y < 2; y++)
-    for (let x = -1; x < 2; x++) {
-      let R = r + y,
-        C = c + x;
-      if ((y || x) && R >= 0 && C >= 0 && R < s.n && C < s.n)
-        a.push(R * s.n + C);
-    }
-  return a;
-}
-function place(w, c) {
-  for (let start = 0; start < s.n * s.n; start++) {
-    let p = [start],
-      u = new Set(p);
-    function go() {
-      if (p.length === w.length) return 1;
-      for (let i of near(p.at(-1)).filter(
-        (i) => !u.has(i) && (c[i] === "" || c[i] === w[p.length]),
-      )) {
-        p.push(i);
-        u.add(i);
-        if (go()) return 1;
-        p.pop();
-        u.delete(i);
-      }
-      return 0;
-    }
-    if (go()) return p;
-  }
-  return null;
-}
-function path(w) {
-  function d(i, k, u) {
-    if (k === w.length) return 1;
-    for (let n of near(i))
-      if (!u.has(n) && s.b[n] === w[k]) {
-        u.add(n);
-        if (d(n, k + 1, u)) return 1;
-        u.delete(n);
-      }
-    return 0;
-  }
-  return s.b.some((x, i) => x === w[0] && d(i, 1, new Set([i])));
+  return sharedBoardCore.neighbors(i, s.n);
 }
 function render() {
   let g = $("#grid");
@@ -297,24 +324,109 @@ function render() {
 function renderResults(ranking) {
   const rows = ranking?.length
     ? ranking
-    : [{ name: profile.name, avatar: profile.avatar, score: s.score }];
-  $("#resultName").textContent = profile.name + ".";
+    : [{
+        name: profile.name,
+        avatar: profile.avatar,
+        score: s.score,
+        words: [...s.found].map((word) => ({ word, points: word.length ** 2 })),
+      }];
+  const nextRushLabel = s.rush && s.nextRushMode
+    ? MODE[s.nextRushMode]?.[0]
+    : "";
+  $("#resultName").textContent = nextRushLabel
+    ? "Up next: " + nextRushLabel
+    : profile.name + ".";
+  renderHeroScores(rows);
   const target = $("#resultPlayers");
   target.replaceChildren();
-  const header = document.createElement("p");
-  header.append("PLAYER ");
-  const scoreHeading = document.createElement("b");
-  scoreHeading.textContent = "SCORE";
-  header.append(scoreHeading);
-  target.append(header);
-  rows.forEach((player) => {
-    const row = document.createElement("p");
-    row.append((player.avatar || "🐈") + " " + player.name + " ");
+  rows.forEach((player, index) => {
+    const row = document.createElement("article");
+    row.className = "result-player-card rank-" + Math.min(index + 1, 4);
+    const rank = document.createElement("span");
+    rank.className = "result-rank";
+    rank.textContent = ["👑", "🥈", "🥉"][index] || String(index + 1);
+    const identity = document.createElement("div");
+    const name = document.createElement("b");
+    name.textContent = (player.avatar || "🐈") + " " + player.name;
+    const wordCount = document.createElement("small");
+    wordCount.textContent = (player.words?.length || 0) + " words";
+    identity.append(name, wordCount);
+    if (player.session) {
+      const sessionRecord = document.createElement("small");
+      sessionRecord.className = "result-session-record";
+      sessionRecord.textContent =
+        (Number(player.session.wins) || 0) + "W · " +
+        (Number(player.session.losses) || 0) + "L · " +
+        (Number(player.session.points) || 0).toLocaleString() + " session pts";
+      identity.append(sessionRecord);
+    }
     const score = document.createElement("b");
+    score.className = "result-player-score";
     score.textContent = Number(player.score || 0).toLocaleString();
-    row.append(score);
+    row.append(rank, identity, score);
     target.append(row);
   });
+}
+function renderHeroScores(players) {
+  const target = $("#resultHeroScores");
+  if (!target) return;
+  const ordered = [...players].sort(
+    (a, b) => (Number(b.score) || 0) - (Number(a.score) || 0),
+  );
+  const displayed = ordered.slice(0, 2);
+  const winningScore = Number(displayed[0]?.score) || 0;
+  const tied = displayed.filter(
+    (player) => (Number(player.score) || 0) === winningScore,
+  ).length > 1;
+  target.replaceChildren(
+    ...displayed.map((player) => {
+      const card = document.createElement("article");
+      const isWinner = (Number(player.score) || 0) === winningScore;
+      card.className = "result-hero-score-card" +
+        (isWinner ? " is-winner" : "") +
+        (player.id === window.wordrushGuestId ? " is-you" : "");
+      const badge = document.createElement("small");
+      badge.className = "hero-score-badge";
+      badge.textContent = isWinner ? (tied ? "LEADER" : "WINNER") : "RUNNER-UP";
+      const name = document.createElement("b");
+      name.className = "hero-score-name";
+      name.textContent = (player.avatar || "🐈") + " " + player.name;
+      const score = document.createElement("strong");
+      score.textContent = Number(player.score || 0).toLocaleString();
+      card.append(badge, name, score);
+      return card;
+    }),
+  );
+}
+function renderSuddenDeath(details) {
+  const callout = $("#suddenDeathCallout");
+  if (!callout) return;
+  const valid = details && details.word && (details.playerName || details.name);
+  callout.hidden = !valid;
+  if (!valid) return;
+  $("#suddenDeathCalloutTitle").textContent =
+    (details.playerAvatar || details.avatar || "🐈") + " " +
+    (details.playerName || details.name) + " ended it!";
+  $("#suddenDeathCalloutDetail").textContent =
+    String(details.word).toUpperCase() + " was the wrong word — boom!";
+}
+function triggerSuddenDeathExplosion(details) {
+  const explosion = $("#suddenDeathExplosion");
+  if (!explosion || !details?.word) return;
+  $("#suddenDeathExplosionTitle").textContent = "💥 SUDDEN DEATH!";
+  $("#suddenDeathExplosionDetail").textContent =
+    (details.playerAvatar || details.avatar || "🐈") + " " +
+    (details.playerName || details.name || "Someone") +
+    " detonated the round with “" + String(details.word).toUpperCase() + "”";
+  explosion.hidden = false;
+  explosion.classList.remove("is-active");
+  void explosion.offsetWidth;
+  explosion.classList.add("is-active");
+  clearTimeout(triggerSuddenDeathExplosion.timer);
+  triggerSuddenDeathExplosion.timer = setTimeout(() => {
+    explosion.hidden = true;
+    explosion.classList.remove("is-active");
+  }, 2600);
 }
 function end() {
   if (
@@ -328,9 +440,19 @@ function end() {
   if (s.done) return;
   s.done = 1;
   clearInterval(s.timer);
+  if (s.rush && !s.nextRushMode) {
+    s.nextRushMode = nextRandomMode();
+    emit("random-rush", {
+      action: "upcoming",
+      current_mode: s.mode,
+      upcoming_mode: s.nextRushMode,
+    });
+  }
   $("#finalScore").textContent = s.score;
   $("#resultWordCount").textContent = s.found.size;
   renderResults();
+  renderSuddenDeath(s.suddenDeath);
+  if (s.suddenDeath) triggerSuddenDeathExplosion(s.suddenDeath);
   $("#resultAchievement").hidden = !s.found.size;
   $("#resultAchievementTitle").textContent = s.found.size
     ? "Round complete"
@@ -346,6 +468,12 @@ function end() {
   if (s.score > 0) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
   recordPlayDay();
   updateProfile();
+  $("#again").textContent = s.rush
+    ? "Continue Random Rush →"
+    : s.party
+      ? "Continue party mode →"
+      : "Play again →";
+  $("#exitParty").hidden = !s.party;
   show("resultsScreen");
   emit("round-complete", {
     ranking: [
@@ -361,6 +489,9 @@ function end() {
     ],
     multiplayer: false,
     cooperative: false,
+    mode: s.mode,
+    randomRush: s.rush,
+    suddenDeath: s.suddenDeath,
   });
   if (s.rush) {
     const rushDelay = window.wordrushRushDelay || 20000;
@@ -368,7 +499,7 @@ function end() {
     let left = Math.ceil(rushDelay / 1000);
     $("#resultAchievementTitle").textContent = "Next rush in " + left + "s";
     $("#resultAchievementDetail").textContent =
-      "Your score is saved. The next random game will start automatically.";
+      "Your score is saved. Continue now or let the next rush arrive automatically.";
     s.rushCountdown = setInterval(() => {
       left--;
       if (left > 0)
@@ -376,16 +507,23 @@ function end() {
     }, 1000);
     s.rushTimer = setTimeout(() => {
       clearInterval(s.rushCountdown);
-      if (s.rush) start(nextRandomMode(), null, false, true);
+      if (s.rush) {
+        emit("random-rush", { action: "auto_advance" });
+        start(consumeNextRushMode(), null, false, true);
+      }
     }, rushDelay);
   }
 }
-function toast(m) {
+function toast(m, tone = "default") {
   const t = $("#toast");
   t.textContent = m;
+  t.classList.remove("toast-duplicate", "toast-wrong");
+  if (tone !== "default") t.classList.add("toast-" + tone);
   t.classList.add("show");
   clearTimeout(toast.id);
-  toast.id = setTimeout(() => t.classList.remove("show"), 1800);
+  toast.id = setTimeout(() => {
+    t.classList.remove("show", "toast-duplicate", "toast-wrong");
+  }, 1800);
 }
 function show(id) {
   document
@@ -398,34 +536,144 @@ function show(id) {
     );
   emit("screen-change", { id });
 }
-function stopRush() {
-  s.rush = false;
+let roundIntroTimer = 0;
+let roundIntroCountdown = 0;
+let roundIntroFinish = null;
+function cancelRoundIntro() {
+  clearTimeout(roundIntroTimer);
+  clearInterval(roundIntroCountdown);
+  roundIntroTimer = 0;
+  roundIntroCountdown = 0;
+  roundIntroFinish = null;
+}
+function finishRoundIntro() {
+  const finish = roundIntroFinish;
+  cancelRoundIntro();
+  if (finish) finish();
+}
+function showRoundIntro({
+  label,
+  rule,
+  detail,
+  duration = 4000,
+  analytics = {},
+  onStart,
+}) {
+  cancelRoundIntro();
+  roundIntroFinish = onStart;
+  $("#introMode").textContent = label || "NEXT ROUND";
+  $("#introRule").textContent = rule || "Make words. Make noise.";
+  $("#introDetail").textContent = detail || "Get ready to trace";
+  const deadline = Date.now() + Math.max(0, duration);
+  const updateCountdown = () => {
+    const remaining = Math.max(0, deadline - Date.now());
+    $("#introCountdown").textContent = remaining
+      ? String(Math.ceil(remaining / 1000))
+      : "GO";
+  };
+  updateCountdown();
+  roundIntroCountdown = setInterval(updateCountdown, 100);
+  roundIntroTimer = setTimeout(finishRoundIntro, Math.max(0, duration));
+  emit("round-intro", {
+    ...analytics,
+    label,
+    duration_ms: Math.round(Math.max(0, duration)),
+  });
+  show("roundIntroScreen");
+}
+$("#introStart")?.addEventListener("click", () => {
+  if (window.wordrushStartRoundNow?.()) return;
+  finishRoundIntro();
+});
+function abandonActiveRound() {
+  clearInterval(s.timer);
   clearTimeout(s.rushTimer);
   clearInterval(s.rushCountdown);
+  cancelRoundIntro();
+  s.done = 1;
+  s.onlineRoundKey = null;
+  s.pendingOnlineTrace = null;
+  clearPick(true);
+  clearTrace();
+}
+window.wordrushAbandonOnlineRound = () => {
+  if (s.onlineRoundKey) abandonActiveRound();
+  // A host can close the room while another player is still looking at the
+  // board. The room shutdown is authoritative, so do not leave that player
+  // stranded on a dead game screen.
+  show("homeScreen");
+};
+window.wordrushReturnToOnlineRound = () => {
+  if (s.onlineRoundKey && !s.done) show("gameScreen");
+};
+$("#gameBack")?.addEventListener("click", () => {
+  if (!window.wordrushSessionCode || !s.onlineRoundKey) abandonActiveRound();
+  show("homeScreen");
+});
+function stopRush() {
+  emit("random-rush", { action: "stop", mode: s.mode });
+  s.rush = false;
+  s.nextRushMode = null;
+  if (!s.done) abandonActiveRound();
+  else {
+    clearTimeout(s.rushTimer);
+    clearInterval(s.rushCountdown);
+  }
   $("#stopRush").hidden = true;
   $("#stopRushResults").hidden = true;
   show("homeScreen");
 }
-function start(mode, override = null, adultMode = false, rush = false) {
+async function start(mode, override = null, adultMode = false, rush = false) {
   if (
-    mode === "dirty" &&
+    (mode === "dirty" || adultMode) &&
     !confirm("Dirty Mode contains adult language. Continue?")
   )
     return;
+  if (
+    window.wordrushStartSessionGame?.({
+      mode,
+      config: override
+        ? {
+            label: override[0],
+            min: override[1],
+            size: override[2],
+            seconds: override[3],
+            rule: override[4],
+            target: override[5]?.target || null,
+            adult: adultMode,
+            sudden: Boolean(override[5]?.sudden),
+          }
+        : null,
+      randomRush: rush,
+    })
+  )
+    return;
   let m = override || MODE[mode];
+  if (rush && !s.rush) {
+    randomModeQueue = [];
+    s.nextRushMode = null;
+  }
   customAdult = adultMode || mode === "dirty";
   s.customConfig = override;
   s.rush = rush;
   clearTimeout(s.rushTimer);
   clearInterval(s.rushCountdown);
-  s.target = override?.[5]?.target || null;
+  s.target =
+    override?.[5]?.target || (typeof m[5] === "number" ? m[5] : null);
+  s.chain = Boolean(
+    override?.[5]?.chain ?? (typeof m[6] === "boolean" ? m[6] : false),
+  );
   s.mode = mode;
+  s.party = Boolean(override?.[0] === "PARTY MODE");
   s.onlineRoundKey = null;
+  s.pendingOnlineTrace = null;
+  s.suddenDeath = null;
   document.body.dataset.mode = mode;
   s.n = m[2];
   s.time = m[3];
   s.score = 0;
   s.found.clear();
+  s.lastWord = "";
   s.roundWordTimes = [];
   s.pick = [];
   s.done = 0;
@@ -442,19 +690,60 @@ function start(mode, override = null, adultMode = false, rush = false) {
   $("#endGame").hidden = false;
   $("#stopRushResults").hidden = true;
   render();
-  show("gameScreen");
-  emit("round-started");
-  clearInterval(s.timer);
-  s.timer = setInterval(() => {
-    s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
-    $("#timer").textContent = formatTimer(s.time);
-    if (s.time <= 0) end();
-  }, 250);
+  showRoundIntro({
+    label: m[0],
+    rule: m[4],
+    detail: s.rush ? "Random Rush · next challenge loading" : "Your board is ready",
+    analytics: {
+      mode,
+      multiplayer: false,
+      random_rush: s.rush,
+      party: s.party,
+      grid_size: s.n,
+      minimum_length: m[1],
+    },
+    onStart: () => {
+      show("gameScreen");
+      emit("round-started", {
+        mode,
+        multiplayer: false,
+        random_rush: s.rush,
+        party: s.party,
+        grid_size: s.n,
+        minimum_length: m[1],
+        duration_seconds: m[3],
+      });
+      clearInterval(s.timer);
+      s.timer = setInterval(() => {
+        s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
+        $("#timer").textContent = formatTimer(s.time);
+        if (s.time <= 0) end();
+      }, 250);
+    },
+  });
 }
-function submit() {
+function pickedPathIsValid(trace, word) {
+  return (
+    trace.length === word.length &&
+    trace.every(
+      (index, position) =>
+        Number.isInteger(index) &&
+        index >= 0 &&
+        index < s.b.length &&
+        s.b[index] === word[position] &&
+        trace.indexOf(index) === position &&
+        (position === 0 || near(trace[position - 1]).includes(index)),
+    )
+  );
+}
+async function submit() {
   let trace = s.pick.slice(),
     w = s.pick.map((i) => s.b[i]).join("");
-  if (window.wordrushSocket && window.wordrushSocket.readyState === 1) {
+  if (
+    window.wordrushSessionCode &&
+    window.wordrushSocket?.readyState === WebSocket.OPEN
+  ) {
+    s.pendingOnlineTrace = { word: w, trace };
     window.wordrushSocket.send(
       JSON.stringify({ type: "submit_word", word: w, path: trace }),
     );
@@ -462,35 +751,92 @@ function submit() {
     return;
   }
   let m = s.customConfig || MODE[s.mode],
-    ok = w.length >= m[1] && lex().has(w) && path(w);
+    validPath = pickedPathIsValid(trace, w),
+    duplicate = s.found.has(w),
+    roundStartedAt = s.startedAt;
+  clearPick();
+  const inDictionary =
+    w.length >= m[1] && validPath && !duplicate
+      ? custom.has(w) || await isServerDictionaryWord(w, customAdult)
+      : false;
+  if (
+    s.done ||
+    s.startedAt !== roundStartedAt ||
+    (s.endsAt && Date.now() >= s.endsAt)
+  )
+    return;
+  const chainBreak =
+    s.chain && s.lastWord && w[0] !== s.lastWord.at(-1);
+  const ok = w.length >= m[1] && validPath && inDictionary && !chainBreak;
   if (ok && !s.found.has(w)) {
     const points = w.length * w.length;
     s.found.add(w);
+    s.lastWord = w;
     s.score += points;
     recordAcceptedWord(w);
     updateProfile();
     $("#gameScore").textContent = s.score;
     $("#preview").textContent = w + " +" + points;
     $("#preview").classList.add("found");
-    emit("word-accepted", { word: w, points });
-    if ((s.mode === "race" || s.target) && s.score >= 500) end();
-  } else if (s.found.has(w)) {
+    pulseAcceptedWord(trace);
+    emit("word-accepted", {
+      word: w,
+      points,
+      mode: s.mode,
+      multiplayer: false,
+      randomRush: s.rush,
+    });
+    if ((s.mode === "race" || s.target) && s.score >= (s.target || 500))
+      end();
+  } else if (duplicate || s.found.has(w)) {
+    pulseDuplicateWord(trace);
     profile.incorrect++;
     updateProfile();
-    toast("Already found");
+    toast("Already found — try a new word", "duplicate");
+    emit("word-rejected", {
+      mode: s.mode,
+      reason: "duplicate",
+      word_length: w.length,
+      multiplayer: false,
+      random_rush: s.rush,
+    });
   } else {
+    pulseIncorrectWord(trace);
     profile.incorrect++;
     updateProfile();
     toast(
       w.length < m[1]
-        ? "Need " + m[1] + " letters"
-        : !path(w)
-          ? "Tiles must connect"
-          : "Not in dictionary",
+        ? "Wrong word · need " + m[1] + " letters"
+        : chainBreak
+          ? "Wrong word · chain starts with " + s.lastWord.at(-1)
+        : !validPath
+          ? "Wrong word · tiles must connect"
+          : "Wrong word · not in dictionary",
+      "wrong",
     );
-    if (s.mode === "sudden") setTimeout(end, 300);
+    emit("word-rejected", {
+      mode: s.mode,
+      reason: w.length < m[1]
+        ? "minimum"
+        : chainBreak
+          ? "chain"
+          : !validPath
+            ? "path"
+            : "dictionary",
+      word_length: w.length,
+      multiplayer: false,
+      random_rush: s.rush,
+    });
+    if (s.mode === "sudden") {
+      s.suddenDeath = {
+        playerName: profile.name,
+        playerAvatar: profile.avatar,
+        word: w,
+      };
+      triggerSuddenDeathExplosion(s.suddenDeath);
+      setTimeout(end, 300);
+    }
   }
-  clearPick();
   setTimeout(() => {
     $("#preview").classList.remove("found");
     $("#preview").textContent = "Trace a word";
@@ -534,15 +880,78 @@ function pick(t) {
   t.classList.add("selected");
   $("#preview").textContent = s.pick.map((i) => s.b[i]).join("");
 }
-$("#quickPlay").onclick = () => start("classic");
-$("#navStats").onclick = () => show("statsScreen");
+function pulseWord(trace, className) {
+  const tiles = trace
+    .map((index) => document.querySelector('.tile[data-i="' + index + '"]'))
+    .filter(Boolean);
+  tiles.forEach((tile) => {
+    tile.classList.remove("word-correct", "word-incorrect", "word-duplicate");
+    // Restart the animation when a player finds another word before the
+    // previous completion animation has fully finished.
+    void tile.offsetWidth;
+    tile.classList.add(className);
+  });
+  setTimeout(() => {
+    tiles.forEach((tile) => tile.classList.remove(className));
+  }, 650);
+}
+function pulseAcceptedWord(trace) { pulseWord(trace, "word-correct"); }
+function pulseIncorrectWord(trace) { pulseWord(trace, "word-incorrect"); }
+function pulseDuplicateWord(trace) { pulseWord(trace, "word-duplicate"); }
+$("#quickPlay")?.addEventListener("click", () => start("classic"));
 $("#stopRush").onclick = stopRush;
 $("#stopRushResults").onclick = stopRush;
-$("#again").onclick = () => start(s.mode);
+let partyConfig = { size: 4, min: 3, seconds: 120 };
+function syncPartyOptions() {
+  for (const [attribute, value] of [
+    ["partySize", partyConfig.size],
+    ["partyMin", partyConfig.min],
+    ["partyTime", partyConfig.seconds],
+  ])
+    document.querySelectorAll(`[data-${attribute.replace(/[A-Z]/g, (letter) => "-" + letter.toLowerCase())}]`).forEach((button) => {
+      const active = +button.dataset[attribute] === value;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+  $("#partySummary").textContent =
+    partyConfig.min + "+ letters · " + partyConfig.size + "×" + partyConfig.size +
+    " · " + formatTimer(partyConfig.seconds);
+}
+function openParty() { syncPartyOptions(); $("#partyDialog").showModal(); }
+$("#partyMode").onclick = openParty;
+document.querySelectorAll("[data-party-size]").forEach((button) => button.onclick = () => { partyConfig.size = +button.dataset.partySize; syncPartyOptions(); });
+document.querySelectorAll("[data-party-min]").forEach((button) => button.onclick = () => { partyConfig.min = +button.dataset.partyMin; syncPartyOptions(); });
+document.querySelectorAll("[data-party-time]").forEach((button) => button.onclick = () => { partyConfig.seconds = +button.dataset.partyTime; syncPartyOptions(); });
+$("#partyForm").addEventListener("submit", (event) => {
+  if (event.submitter?.value !== "start") return;
+  const config = ["PARTY MODE", partyConfig.min, partyConfig.size, partyConfig.seconds, `Party round · minimum ${partyConfig.min} letters`, { party: true }];
+  start("custom", config);
+});
+$("#again").onclick = () => {
+  if (s.rush) {
+    clearTimeout(s.rushTimer);
+    clearInterval(s.rushCountdown);
+    s.rushTimer = 0;
+    s.rushCountdown = 0;
+    emit("random-rush", { action: "continue", upcoming_mode: s.nextRushMode });
+    return start(consumeNextRushMode(), null, false, true);
+  }
+  if (s.party) return openParty();
+  start(s.mode, s.customConfig, customAdult);
+};
+$("#exitParty").onclick = () => { s.party = false; $("#exitParty").hidden = true; $("#again").textContent = "Play again →"; show("homeScreen"); };
 $("#endGame").onclick = end;
 document
   .querySelectorAll("[data-mode]")
-  .forEach((x) => (x.onclick = () => start(x.dataset.mode)));
+  .forEach((x) => (x.onclick = () => {
+    if (x.dataset.mode !== "classic") return start(x.dataset.mode);
+    if (window.wordrushStartSessionGame?.({
+      mode: "classic",
+      config: null,
+      randomRush: false,
+    })) return;
+    openRushBuilder(true);
+  }));
 $("#dictionary").onclick = () => {
   let w = prompt("Add a word to your personal dictionary")
     ?.trim()
@@ -553,43 +962,86 @@ $("#dictionary").onclick = () => {
     toast(w + " added");
   } else if (w) toast("Letters only, 3+ characters");
 };
-$("#customGame").onclick = () => $("#customDialog").showModal();
+let rushBuilder = { type: "classic", min: 3, size: 4, seconds: 120 };
+function syncRushBuilder() {
+  for (const [attribute, value] of [
+    ["customType", rushBuilder.type],
+    ["customMin", rushBuilder.min],
+    ["customSize", rushBuilder.size],
+    ["customTime", rushBuilder.seconds],
+  ])
+    document.querySelectorAll(`[data-${attribute.replace(/[A-Z]/g, (letter) => "-" + letter.toLowerCase())}]`).forEach((button) => {
+      const active = String(button.dataset[attribute]) === String(value);
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+  const names = {
+    classic: "Classic remix",
+    minimum: "Big-word stretch",
+    sudden: "Sudden showdown",
+    race: "Race to 500",
+    dirty: "After-dark rush",
+  };
+  $("#customTitle").textContent = names[rushBuilder.type];
+  $("#customSummary").textContent =
+    rushBuilder.min + "+ letters · " + rushBuilder.size + "×" + rushBuilder.size +
+    " · " + formatTimer(rushBuilder.seconds);
+}
+function openRushBuilder(reset = false) {
+  if (reset)
+    rushBuilder = { type: "classic", min: 3, size: 4, seconds: 120 };
+  syncRushBuilder();
+  $("#customDialog").showModal();
+}
+$("#customGame").onclick = () => openRushBuilder();
+document.querySelectorAll("[data-custom-type]").forEach((button) => button.onclick = () => {
+  rushBuilder.type = button.dataset.customType;
+  if (rushBuilder.type === "minimum" && rushBuilder.min < 5) rushBuilder.min = 5;
+  syncRushBuilder();
+});
+document.querySelectorAll("[data-custom-min]").forEach((button) => button.onclick = () => {
+  rushBuilder.min = +button.dataset.customMin;
+  syncRushBuilder();
+});
+document.querySelectorAll("[data-custom-size]").forEach((button) => button.onclick = () => {
+  rushBuilder.size = +button.dataset.customSize;
+  syncRushBuilder();
+});
+document.querySelectorAll("[data-custom-time]").forEach((button) => button.onclick = () => {
+  rushBuilder.seconds = +button.dataset.customTime;
+  syncRushBuilder();
+});
 $("#customForm")?.addEventListener("submit", (event) => {
   if (event.submitter?.value !== "start") return;
-  const type = $("#customType").value,
-    rules = $("#customRules").value,
-    min = Math.max(3, Math.min(12, Number($("#customMin").value) || 3)),
-    size = Math.max(4, Math.min(8, Number($("#customBoard").value) || 4)),
-    seconds = Math.max(
-      15,
-      Math.min(600, Number($("#customTime").value) || 120),
-    );
-  const ruleMin = rules === "long" ? Math.max(5, min) : min;
-  const label =
-    type === "classic" ? "CUSTOM CLASSIC" : type.toUpperCase() + " CUSTOM";
-  const rule =
-    rules === "first"
-      ? "First to 500 points"
-      : rules === "long"
-        ? "Minimum " + ruleMin + " letters"
-        : "Minimum " + ruleMin + " letters · " + seconds + " seconds";
+  const { type, min, size, seconds } = rushBuilder;
+  const labels = {
+    classic: "CLASSIC",
+    minimum: "WORD STRETCH",
+    sudden: "SUDDEN DEATH",
+    race: "RACE MODE",
+    dirty: "DIRTY MODE · 18+",
+  };
+  const rule = type === "race"
+    ? "First to 500 points"
+    : type === "sudden"
+      ? "One invalid word ends the round · minimum " + min
+      : "Minimum " + min + " letters · " + seconds + " seconds";
   start(
     "custom",
     [
-      label,
-      ruleMin,
+      labels[type],
+      min,
       size,
       seconds,
       rule,
-      { target: rules === "first" ? 500 : null },
+      {
+        target: type === "race" ? 500 : null,
+        sudden: type === "sudden",
+      },
     ],
     type === "dirty",
   );
 });
-fetch("/dictionary.json")
-  .then((response) => (response.ok ? response.json() : []))
-  .then((words) => words.forEach((word) => custom.add(word)))
-  .catch(() => {});
 show("homeScreen");
 document.addEventListener("click", (event) => {
   const target = event.target.closest?.("[data-screen]");
@@ -597,25 +1049,66 @@ document.addEventListener("click", (event) => {
 });
 
 window.wordrushRecordOnlineWord = (word, points) => {
+  if (s.pendingOnlineTrace?.word === word) {
+    pulseAcceptedWord(s.pendingOnlineTrace.trace);
+  }
+  s.pendingOnlineTrace = null;
+  s.lastWord = word;
   recordAcceptedWord(word);
   updateProfile();
   emit("word-accepted", {
     word,
     points: Number(points) || word.length * word.length,
+    mode: s.mode,
+    multiplayer: true,
+    randomRush: s.onlineRandomRush,
   });
 };
-window.wordrushRecordOnlineIncorrect = () => {
+window.wordrushRecordOnlineIncorrect = (reason, word = "") => {
+  if (s.pendingOnlineTrace) {
+    if (reason === "duplicate") pulseDuplicateWord(s.pendingOnlineTrace.trace);
+    else pulseIncorrectWord(s.pendingOnlineTrace.trace);
+  }
+  s.pendingOnlineTrace = null;
   profile.incorrect++;
   updateProfile();
+  emit("word-rejected", {
+    mode: s.mode,
+    reason,
+    word_length: String(word).length,
+    multiplayer: true,
+    random_rush: s.onlineRandomRush,
+  });
 };
-window.wordrushOnlineRound = (round, config, mode) => {
-  const roundKey = round.endsAt + ":" + round.board.join("");
+window.wordrushOnlineRound = (round, config, mode, randomRush = false) => {
+  const roundKey = round.id || round.endsAt + ":" + round.board.join("");
   if (s.onlineRoundKey === roundKey && !s.done) return;
   s.onlineRoundKey = roundKey;
   const match = Object.entries(MODE).find(
     ([, value]) => value[0] === config?.label,
   );
   s.mode = mode || match?.[0] || "classic";
+  s.onlineRandomRush = Boolean(randomRush);
+  s.party = config?.label === "PARTY MODE";
+  s.target = config?.target || (s.mode === "race" ? 500 : null);
+  s.chain = Boolean(config?.chain);
+  s.pendingOnlineTrace = null;
+  s.suddenDeath = null;
+  s.lastWord = "";
+  customAdult = Boolean(config?.adult);
+  s.customConfig = [
+    config?.label || "MULTIPLAYER",
+    config?.min || 3,
+    round.size,
+    config?.seconds ||
+      Math.max(1, Math.ceil((round.endsAt - Date.now()) / 1000)),
+    config?.rule || "Multiplayer round",
+    {
+      target: config?.target || null,
+      sudden: Boolean(config?.sudden),
+      chain: Boolean(config?.chain),
+    },
+  ];
   document.body.dataset.mode = s.mode;
   s.n = round.size;
   s.b = round.board;
@@ -623,64 +1116,145 @@ window.wordrushOnlineRound = (round, config, mode) => {
   s.found.clear();
   s.roundWordTimes = [];
   s.done = 0;
-  s.startedAt = Date.now();
+  s.startedAt = round.startsAt || Date.now();
+  s.endsAt = round.endsAt || Date.now();
   $("#gameMode").textContent = config?.label || "MULTIPLAYER";
   $("#gameTitle").textContent = "Round 01 · " + round.size + "×" + round.size;
   $("#ruleBanner").textContent = config?.rule || "";
   $("#gameHint").textContent = "Minimum " + (config?.min || 3) + " letters";
   const updateOnlineTimer = () => {
-    s.time = Math.max(0, Math.ceil((round.endsAt - Date.now()) / 1000));
+    s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
     $("#timer").textContent = formatTimer(s.time);
   };
   clearInterval(s.timer);
-  updateOnlineTimer();
-  s.timer = setInterval(updateOnlineTimer, 250);
   render();
-  show("gameScreen");
-  emit("round-started");
+  showRoundIntro({
+    label: config?.label || "MULTIPLAYER",
+    rule: config?.rule || "Multiplayer round",
+    detail: "Everyone is in · start when you’re ready",
+    duration: Math.max(0, (round.introEndsAt || Date.now() + 4000) - Date.now()),
+    analytics: {
+      mode: s.mode,
+      multiplayer: true,
+      random_rush: s.onlineRandomRush,
+      party: s.party,
+      grid_size: s.n,
+      minimum_length: config?.min || 3,
+    },
+    onStart: () => {
+      show("gameScreen");
+      updateOnlineTimer();
+      s.timer = setInterval(updateOnlineTimer, 250);
+      emit("round-started", {
+        mode: s.mode,
+        multiplayer: true,
+        random_rush: s.onlineRandomRush,
+        party: s.party,
+        grid_size: s.n,
+        minimum_length: config?.min || 3,
+        duration_seconds: config?.seconds || 0,
+      });
+    },
+  });
+};
+window.wordrushRoundStartNow = (timing = {}) => {
+  if (!s.onlineRoundKey || s.done) return;
+  if (timing.startsAt) s.startedAt = timing.startsAt;
+  if (timing.endsAt) {
+    s.endsAt = timing.endsAt;
+    $("#timer").textContent = formatTimer(
+      Math.max(0, Math.ceil((timing.endsAt - Date.now()) / 1000)),
+    );
+  }
+  finishRoundIntro();
 };
 window.wordrushOnlineFinish = (ranking, result = {}) => {
   if (s.done) return;
+  cancelRoundIntro();
   s.done = 1;
   clearInterval(s.timer);
   const guestId = window.wordrushGuestId;
-  const mine =
-    ranking?.find((player) => player.id === guestId)?.score ?? s.score;
-  const ownWords =
-    ranking?.find((player) => player.id === guestId)?.words?.length || 0;
+  const normalizedRanking = (ranking || []).map((player) => ({
+    ...player,
+    score: Number(player.score) || 0,
+    words: Array.isArray(player.words)
+      ? player.words.map((item) => ({
+          word: String(item.word || ""),
+          points: Number(item.points) || 0,
+        }))
+      : [],
+  }));
+  const ownPlayer = normalizedRanking.find((player) => player.id === guestId);
+  const mine = ownPlayer?.score ?? s.score;
+  const ownWords = ownPlayer?.words || [];
+  const suddenDeath = result.reason === "invalid_word" ? result.suddenDeath : null;
+  s.suddenDeath = suddenDeath || null;
+  s.score = mine;
+  s.found.clear();
+  ownWords.forEach((item) => s.found.add(item.word));
   $("#finalScore").textContent = mine;
-  $("#resultWordCount").textContent = ownWords;
-  renderResults(ranking);
+  $("#resultWordCount").textContent = ownWords.length;
+  renderResults(normalizedRanking);
+  renderSuddenDeath(suddenDeath);
+  if (suddenDeath) triggerSuddenDeathExplosion(suddenDeath);
   $("#resultAchievement").hidden = false;
   $("#resultAchievementTitle").textContent = result.cooperative
     ? "Co-op complete"
     : "Multiplayer round";
+  const leaders = normalizedRanking.filter(
+    (player) => player.score === normalizedRanking[0]?.score,
+  );
   $("#resultAchievementDetail").textContent = result.cooperative
     ? "Team score: " +
       (result.teamScore || 0) +
       " · " +
       (result.stats?.wordsFound || 0) +
       " shared words."
-    : (ranking?.[0]?.name || "Winner") +
-      " wins · " +
-      (result.stats?.wordsFound || 0) +
-      " words found.";
-  profile.score += mine;
-  profile.rounds++;
-  profile.totalGameSeconds += (Date.now() - s.startedAt) / 1000;
-  const won = result.cooperative || ranking?.[0]?.id === guestId;
-  profile.gamesWon += won ? 1 : 0;
-  profile.gamesLost += won ? 0 : 1;
-  profile.multiplayerWins = (profile.multiplayerWins || 0) + (won ? 1 : 0);
-  profile.multiplayerLosses = (profile.multiplayerLosses || 0) + (won ? 0 : 1);
-  if (won) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
-  recordPlayDay();
-  updateProfile();
+    : (leaders.length > 1
+        ? leaders.map((player) => player.name).join(" & ") + " tie"
+        : (normalizedRanking[0]?.name || "Winner") + " wins") +
+      " · " +
+      ownWords.length +
+      " word" +
+      (ownWords.length === 1 ? "" : "s") +
+      " found by you.";
+  const winningScore = normalizedRanking[0]?.score;
+  const won =
+    result.cooperative ||
+    (ownPlayer && ownPlayer.score === winningScore);
+  profile.completedMultiplayerRounds = Array.isArray(
+    profile.completedMultiplayerRounds,
+  ) ? profile.completedMultiplayerRounds : [];
+  const alreadyRecorded =
+    result.roundId && profile.completedMultiplayerRounds.includes(result.roundId);
+  if (!alreadyRecorded) {
+    profile.score += mine;
+    profile.rounds++;
+    profile.totalGameSeconds += s.startedAt
+      ? Math.max(0, (Date.now() - s.startedAt) / 1000)
+      : Math.max(0, Number(result.gameSeconds) || 0);
+    profile.gamesWon += won ? 1 : 0;
+    profile.gamesLost += won ? 0 : 1;
+    profile.multiplayerWins = (profile.multiplayerWins || 0) + (won ? 1 : 0);
+    profile.multiplayerLosses = (profile.multiplayerLosses || 0) + (won ? 0 : 1);
+    if (won) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
+    if (result.roundId)
+      profile.completedMultiplayerRounds = [
+        ...profile.completedMultiplayerRounds,
+        result.roundId,
+      ].slice(-50);
+    recordPlayDay();
+    updateProfile();
+  }
   show("resultsScreen");
+  $("#again").textContent = s.party ? "Continue party mode →" : "Play again →";
+  $("#exitParty").hidden = !s.party;
   emit("round-complete", {
-    ranking,
+    ranking: normalizedRanking,
     multiplayer: true,
     cooperative: Boolean(result.cooperative),
+    mode: s.mode,
+    randomRush: Boolean(result.randomRush || s.onlineRandomRush),
     result,
   });
 };
@@ -692,6 +1266,7 @@ $("#themeToggle")?.addEventListener("click", () => {
     document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   document.documentElement.dataset.theme = next;
   localStorage.setItem("wordrush-theme", next);
+  emit("theme-change", { theme: next });
 });
 
 $("#profileButton")?.addEventListener("click", () => {
@@ -718,43 +1293,9 @@ const saveProfile = () => {
 };
 $("#profileForm")?.addEventListener("submit", saveProfile);
 function make() {
-  let all = [...lex()],
-    dirty = s.mode === "dirty" || customAdult;
-  for (let attempt = 0; attempt < 40; attempt++) {
-    let c = Array(s.n * s.n).fill(""),
-      preferred = dirty
-        ? [...adult].sort(() => Math.random() - 0.5).slice(0, 7)
-        : [],
-      targets = preferred.concat(
-        [3, 4, 5, 6]
-          .map((length, bucket) => {
-            const matches = (word) =>
-              bucket === 3 ? word.length >= length : word.length === length;
-            const preferredCandidates = preferred.filter(matches);
-            const candidates = preferredCandidates.length
-              ? preferredCandidates
-              : all.filter(matches);
-            return candidates[Math.floor(Math.random() * candidates.length)];
-          })
-          .filter(Boolean),
-      );
-    targets
-      .sort((a, b) => b.length - a.length)
-      .forEach((word) => {
-        let p = place(word, c);
-        if (p) p.forEach((i, j) => (c[i] = word[j]));
-      });
-    let board = c.map((x) => x || bag[Math.floor(Math.random() * bag.length)]);
-    if (!dirty) return board;
-    let old = s.b;
-    s.b = board;
-    let dirtyCount = adult.filter((word) => path(word)).length;
-    s.b = old;
-    if (dirtyCount >= 5) return board;
-  }
-  return Array(s.n * s.n)
-    .fill(0)
-    .map(() => bag[Math.floor(Math.random() * bag.length)]);
+  return sharedBoardCore.generateBoard(s.n, [...lex()], {
+    preferredWords: s.mode === "dirty" || customAdult ? adult : common,
+  });
 }
 let selectionClearTimer = null;
 function clearPick(immediate = false) {
@@ -781,7 +1322,24 @@ function safeCandidateAt(x, y, target = null, starting = false) {
     direct =
       target?.closest?.(".tile") ||
       document.elementFromPoint(x, y)?.closest?.(".tile");
-  if (starting) return direct && grid.contains(direct) ? direct : null;
+  if (starting) {
+    if (direct && grid.contains(direct)) return direct;
+    // Rounded tile corners can make the browser report the board as the
+    // target. Keep the full tile rectangle touchable at the start of a trace.
+    const gridRect = grid.getBoundingClientRect();
+    return (
+      [...grid.querySelectorAll(".tile")].find((candidate) => {
+        const left = gridRect.left + candidate.offsetLeft;
+        const top = gridRect.top + candidate.offsetTop;
+        return (
+          x >= left &&
+          x <= left + candidate.offsetWidth &&
+          y >= top &&
+          y <= top + candidate.offsetHeight
+        );
+      }) || null
+    );
+  }
   const gridRect = grid.getBoundingClientRect(),
     tile = [...grid.querySelectorAll(".tile")].find((candidate) => {
       const left = gridRect.left + candidate.offsetLeft,

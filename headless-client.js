@@ -1,6 +1,10 @@
 const WebSocket = require("ws");
-const count = Number(process.argv[process.argv.indexOf("--clients") + 1] || 2);
-const mode = process.argv[process.argv.indexOf("--mode") + 1] || "classic";
+function option(name, fallback) {
+  const index = process.argv.indexOf(name);
+  return index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : fallback;
+}
+const count = Number(option("--clients", 2));
+const mode = option("--mode", "classic");
 const port = Number(process.env.PORT || 8000);
 const clients = [];
 function next(ws, type) {
@@ -47,7 +51,7 @@ function connect(index) {
   });
 }
 (async () => {
-  if (count < 1 || count > 10)
+  if (!Number.isInteger(count) || count < 1 || count > 10)
     throw new Error("--clients must be between 1 and 10");
   if (
     ![
@@ -57,6 +61,11 @@ function connect(index) {
       "race",
       "coop",
       "dirty",
+      "blitz",
+      "longhaul",
+      "storm",
+      "scoreattack",
+      "chain",
       "random",
     ].includes(mode)
   )

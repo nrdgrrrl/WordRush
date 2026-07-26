@@ -163,6 +163,11 @@
         "%)";
     if (announce && !document.querySelector("#resultsScreen.active"))
       newly.forEach((item) => toast(item.title + " — " + item.detail));
+    newly.forEach((item) =>
+      document.dispatchEvent(new CustomEvent("wordrush:achievement-unlocked", {
+        detail: { id: item.id },
+      })),
+    );
   }
   render(readProfile());
   window.wordrushAchievementEvent = (profile = readProfile()) =>

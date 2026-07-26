@@ -21,7 +21,7 @@ if command -v ss >/dev/null 2>&1 && ss -ltn | grep -q ":${PORT} "; then
   echo "Port ${PORT} is already in use."
   exit 1
 fi
-nohup setsid env PORT="${PORT}" node server.js >"${LOG}" 2>&1 </dev/null &
+nohup setsid env PORT="${PORT}" HOST="0.0.0.0" WORDRUSH_LAN_MODE=1 node server.js >"${LOG}" 2>&1 </dev/null &
 PID=$!
 echo "Started Wordrush server in background (PID ${PID})"
 echo "Log: ${LOG}"

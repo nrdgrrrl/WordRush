@@ -1,0 +1,30 @@
+[Unit]
+Description=Wordrush game server
+After=network.target
+
+[Service]
+Type=simple
+User=wordrush
+Group=wordrush
+WorkingDirectory=/home/victoria/sites/rush/wordrush
+Environment=PATH=/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=WORDRUSH_LEADERBOARD_FILE=/var/lib/wordrush/leaderboard.json
+EnvironmentFile=/etc/wordrush/rush.env
+ExecStart=/opt/node/bin/node /home/victoria/sites/rush/wordrush/server.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/wordrush
+StateDirectory=wordrush
+StateDirectoryMode=0750
+UMask=0077
+MemoryMax=256M
+TasksMax=64
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

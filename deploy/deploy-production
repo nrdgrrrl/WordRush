@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# Safely deploy a committed WordRush revision to wordrush.party.
+#
+# This script intentionally targets only /home/victoria/sites/rush/wordrush
+# and the wordrush systemd unit.  It never changes Apache, certificates, or
+# any sibling site.  It defaults to a non-mutating dry run.
+set -euo pipefail
+
+readonly HOST="${WORDRUSH_DEPLOY_HOST:-racknerd}"
+readonly APP="/home/victoria/sites/rush/wordrush"
+readonly BASE="/home/victoria/sites/rush"
+readonly URL="${WORDRUSH_DEPLOY_URL:-https://wordrush.party/}"
+MODE="dry-run"
+COMMIT="HEAD"
+
+usage() {
+  cat <<'EOF'
+Usage: deploy/deploy-production [--commit REV] [--dry-run | --deploy]
+
+  --commit REV  Deploy this local Git commit (default: HEAD).
+  --dry-run     Run all local checks and show the remote change/restart plan.
+                This is the default and never changes production.
+  --deploy      Stage, verify, activate, and verify the selected revision.
+
+Set WORDRUSH_DEPLOY_HOST or WORDRUSH_DEPLOY_URL only when an approved
+replacement target is required.  No passwords, cookies, or environment files
+are transferred or printed.
+EOF
+}
+
+while (($#)); do
+  case "$1" in
+    --commit) COMMIT="${2:?--commit needs a revision}"; shift 2 ;;
+    --dry-run) MODE="dry-run"; shift ;;
+    --deploy) MODE="deploy"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+command -v git >/dev/null
+command -v ssh >/dev/null
+command -v scp >/dev/null
+command -v tar >/dev/null
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+REVISION="$(git rev-parse --verify "${COMMIT}^{commit}")"
+SHORT_REVISION="$(git rev-parse --short "$REVISION")"
+WORKTREE="$(mktemp -d "${TMPDIR:-/tmp}/wordrush-release.XXXXXX")"
+ARCHIVE="$(mktemp "${TMPDIR:-/tmp}/wordrush-${SHORT_REVISION}.XXXXXX.tgz")"
+cleanup() {
+  rm -f "$ARCHIVE"
+  git worktree remove --force "$WORKTREE" 2>/dev/null || rm -rf "$WORKTREE"
+}
+trap cleanup EXIT
+
+git worktree add --detach --quiet "$WORKTREE" "$REVISION"
+printf 'Checking revision %s (%s) locally...\n' "$SHORT_REVISION" "$REVISION"
+(
+  cd "$WORKTREE"
+  npm ci --ignore-scripts
+  npm run check
+  # A broken browser/soak worker must fail closed before any upload or service
+  # action, rather than leaving an unattended deploy waiting forever.
+  timeout --preserve-status 5m npm run test:all
+)
+
+REMOTE_MARKER="$(ssh -o BatchMode=yes "$HOST" "test -r '$APP/.wordrush-release' && head -n1 '$APP/.wordrush-release' || true")"
+if [[ "$REMOTE_MARKER" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "${REMOTE_MARKER}^{commit}" 2>/dev/null; then
+  CHANGED_FILES="$(git diff --name-only "$REMOTE_MARKER" "$REVISION")"
+else
+  REMOTE_MARKER="(no prior automated release marker)"
+  CHANGED_FILES="(unknown first deployment; using safe service restart)"
+fi
+
+# A static-only release never changes the running Node process.  Keep this
+# allow-list small: anything not explicitly browser-only causes a safe restart.
+STATIC_ONLY=1
+if [[ "$REMOTE_MARKER" == "(no prior automated release marker)" ]]; then
+  STATIC_ONLY=0
+else
+  while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    case "$file" in
+      index.html|styles.css|custom.css|multiplayer.css|stats.css|\
+      analytics.js|app.js|cast-sender.js|leaderboard-client.js|multiplayer-client.js|\
+      random-rush.js|results.js|stats.js|assets/*|receiver/*)
+        ;;
+      *) STATIC_ONLY=0 ;;
+    esac
+  done <<< "$CHANGED_FILES"
+fi
+if (( STATIC_ONLY )); then RESTART=0; else RESTART=1; fi
+
+printf '\nProduction target: %s:%s\n' "$HOST" "$APP"
+printf 'Remote release: %s\nSelected release: %s\n' "$REMOTE_MARKER" "$REVISION"
+printf 'Changed files:\n%s\n' "${CHANGED_FILES:-none}"
+printf 'Service action: %s\n' "$([[ "$RESTART" == 1 ]] && echo 'restart wordrush' || echo 'static-only; no restart')"
+if [[ "$MODE" == "dry-run" ]]; then
+  printf '\nDry run complete. No production files or services were changed.\n'
+  exit 0
+fi
+
+# git archive contains only tracked files: no .git metadata, local data,
+# credentials, session files, node_modules, or ignored environment files.
+git archive --format=tar "$REVISION" | gzip -n > "$ARCHIVE"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)-${SHORT_REVISION}"
+REMOTE_ARCHIVE="/tmp/wordrush-${STAMP}.tgz"
+REMOTE_STAGE="$BASE/.wordrush-stage-${STAMP}"
+printf '\nUploading staged release (%s)...\n' "$SHORT_REVISION"
+scp -q "$ARCHIVE" "$HOST:$REMOTE_ARCHIVE"
+
+ssh -o BatchMode=yes "$HOST" bash -s -- "$APP" "$BASE" "$REMOTE_ARCHIVE" "$REMOTE_STAGE" "$STAMP" "$REVISION" "$RESTART" "$URL" <<'REMOTE'
+set -euo pipefail
+app="$1"; base="$2"; archive="$3"; stage="$4"; stamp="$5"; revision="$6"; restart="$7"; url="$8"
+case "$app" in /home/victoria/sites/rush/wordrush) ;; *) echo "Refusing unexpected app path" >&2; exit 2;; esac
+case "$stage" in /home/victoria/sites/rush/.wordrush-stage-*) ;; *) echo "Refusing unexpected stage path" >&2; exit 2;; esac
+umask 022
+activated=0
+rollback=""
+cleanup() { rm -rf "$stage" "$archive" "${restore:-}"; }
+recover() {
+  status=$?
+  if [ "$activated" = 1 ] && [ -n "$rollback" ] && [ -f "$rollback" ]; then
+    echo "Deployment failed after activation; restoring $rollback" >&2
+    restore="$base/.wordrush-restore-$stamp"
+    mkdir -p "$restore"
+    tar -xzf "$rollback" -C "$restore"
+    rsync -a --delete --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r \
+      --exclude='.env' --exclude='data/' --exclude='*.log' "$restore/" "$app/"
+    if [ "$restart" = 1 ]; then sudo -n systemctl restart wordrush; fi
+  fi
+  exit "$status"
+}
+trap recover ERR
+trap cleanup EXIT
+
+mkdir -p "$stage"
+tar -xzf "$archive" -C "$stage"
+PATH=/opt/node/bin:$PATH npm --prefix "$stage" ci --omit=dev --ignore-scripts
+PATH=/opt/node/bin:$PATH node --check "$stage/server.js"
+
+# Archive only application files. Runtime data and the secret environment live
+# outside this archive and are explicitly excluded from both activation paths.
+rollback="$base/wordrush.rollback-$stamp.tgz"
+tar -C "$app" --exclude='.env' --exclude='data' --exclude='*.log' -czf "$rollback" .
+chmod 600 "$rollback"
+echo "Rollback artifact: $rollback"
+
+# This is a bounded WordRush-only file swap. rsync does not traverse the base
+# directory, and preserves ownership/modes already used by the live app.
+rsync -a --delete --chmod=Du=rwx,Dg=rwx,Do=rx,Fu=rw,Fg=rw,Fo=r \
+  --exclude='.env' --exclude='data/' --exclude='*.log' --exclude='.wordrush-release' \
+  "$stage/" "$app/"
+printf '%s\n' "$revision" > "$app/.wordrush-release"
+chmod 664 "$app/.wordrush-release"
+activated=1
+if [ "$restart" = 1 ]; then
+  sudo -n systemctl restart wordrush
+fi
+systemctl is-active --quiet wordrush
+# systemd can report active just before Node has bound its loopback socket.
+# Wait briefly for Apache to observe the public application response.
+headers=""
+for _ in $(seq 1 15); do
+  headers="$(curl -fsSI --max-time 15 "$url" || true)"
+  if printf '%s\n' "$headers" | grep -Eq '^HTTP/[0-9.]+ 200'; then
+    break
+  fi
+  sleep 1
+done
+printf '%s\n' "$headers" | grep -Eq '^HTTP/[0-9.]+ 200'
+echo "Public HTTPS app: ok"
+echo "Deployed hashes:"
+cd "$app"
+sha256sum .wordrush-release index.html styles.css app.js server.js
+
+# Keep the three newest compact artifacts; all temporary release material is
+# removed by the EXIT trap. Do not prune any application or sibling-site data.
+ls -1t "$base"/wordrush.rollback-*.tgz 2>/dev/null | tail -n +4 | xargs -r rm -f --
+REMOTE
+
+printf '\nDeployment complete: %s\n' "$REVISION"

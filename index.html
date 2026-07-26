@@ -6,7 +6,72 @@
       name="viewport"
       content="width=device-width,initial-scale=1,viewport-fit=cover"
     />
-    <title>Wordrush</title>
+    <title>Wordrush — Fast Multiplayer Word Game</title>
+    <meta
+      name="description"
+      content="Play Wordrush, a fast online word game with solo challenges, Random Rush, and multiplayer word battles."
+    />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="theme-color" content="#f5f3ee" />
+    <link rel="canonical" href="https://wordrush.party/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Wordrush" />
+    <meta property="og:url" content="https://wordrush.party/" />
+    <meta property="og:title" content="Wordrush — Fast Multiplayer Word Game" />
+    <meta
+      property="og:description"
+      content="Play Wordrush, a fast online word game with solo challenges, Random Rush, and multiplayer word battles."
+    />
+    <meta property="og:image" content="https://wordrush.party/assets/cat-rush.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1536" />
+    <meta property="og:image:height" content="1024" />
+    <meta property="og:image:alt" content="Wordrush word game board with playful cats" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Wordrush — Fast Multiplayer Word Game" />
+    <meta
+      name="twitter:description"
+      content="Play Wordrush, a fast online word game with solo challenges, Random Rush, and multiplayer word battles."
+    />
+    <meta name="twitter:image" content="https://wordrush.party/assets/cat-rush.png" />
+    <meta name="twitter:image:alt" content="Wordrush word game board with playful cats" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://wordrush.party/#website",
+            "url": "https://wordrush.party/",
+            "name": "Wordrush",
+            "inLanguage": "en"
+          },
+          {
+            "@type": ["WebApplication", "VideoGame"],
+            "@id": "https://wordrush.party/#game",
+            "url": "https://wordrush.party/",
+            "name": "Wordrush",
+            "description": "A fast online word game with solo challenges, Random Rush, and multiplayer word battles.",
+            "applicationCategory": "GameApplication",
+            "operatingSystem": "Any",
+            "browserRequirements": "Requires JavaScript",
+            "isAccessibleForFree": true,
+            "offers": {
+              "@type": "Offer",
+              "price": 0,
+              "priceCurrency": "USD"
+            },
+            "inLanguage": "en",
+            "isPartOf": {"@id": "https://wordrush.party/#website"}
+          }
+        ]
+      }
+    </script>
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="stats.css" />
     <link rel="stylesheet" href="custom.css" />
@@ -27,97 +92,109 @@
         </button>
       </header>
       <section class="screen active" id="homeScreen">
-        <div class="hero-art">
-          <img src="assets/cat-rush.png" alt="Cats playing with letter tiles" />
-        </div>
-        <div class="multiplayer-banner" id="multiplayerBanner" hidden>
-          <div>
-            <small>MULTIPLAYER</small
-            ><strong id="multiplayerBannerText">1 player in session</strong>
-          </div>
-          <button id="exitMultiplayer" aria-label="Exit multiplayer mode">
-            ×
-          </button>
-        </div>
-        <div
-          class="mode-panel"
-          id="randomPanel"
-          role="button"
-          tabindex="0"
-          aria-label="Start Random Rush"
-        >
-          <div>
-            <small>RANDOM RUSH</small
-            ><strong id="randomPreview">Minimum 4 · Sudden death</strong
-            ><span id="randomPreviewSub">3 minutes · 5×5 grid</span>
-          </div>
-          <button id="reroll">↻</button>
-        </div>
-        <h2>Choose your battle</h2>
-        <div class="mode-grid">
-          <button data-mode="minimum">
-            <b>03</b><strong>Minimum</strong
-            ><small>Long words only</small></button
-          ><button data-mode="sudden">
-            <b>⚡</b><strong>Sudden death</strong
-            ><small>One miss ends it</small></button
-          ><button data-mode="race">
-            <b>↯</b><strong>Race mode</strong
-            ><small>First to 500 wins</small></button
-          ><button data-mode="dirty">
-            <b>😼</b><strong>Dirty mode</strong
-            ><small>18+ dictionary</small></button
-          ><button data-mode="classic">
-            <b>∞</b><strong>Classic</strong
-            ><small>2 minutes · free play</small></button
-          ><button id="dictionary">
-            <b>＋</b><strong>My dictionary</strong
-            ><small>Add your own words</small></button
-          ><button id="customGame">
-            <b>⚙</b><strong>Custom game</strong
-            ><small>Build your own rules</small>
-          </button>
-        </div>
-        <p class="eyebrow">A daily word battle</p>
-        <h1>Trace fast.<br /><em>Think longer.</em></h1>
-        <p class="subcopy">
-          Build words by connecting letters. Longer words, bigger scores. Your
-          brain versus the clock.
-        </p>
-        <div class="actions">
-          <button class="primary" id="multiplayerButton">
-            👥 Multiplayer <span>→</span></button
-          ><button class="secondary" id="quickPlay">
-            Quick play <span>→</span>
-          </button>
-        </div>
-        <div class="stats">
+        <h1 class="hero-art" aria-label="Wordrush">
+          <span>W</span><span>O</span><span>R</span><span>D</span><b>✦</b><span>R</span><span>U</span><span>S</span><span>H</span>
+        </h1>
+        <div class="stats home-stats">
           <div><b id="homeScore">0</b><small>all-time score</small></div>
           <div><b id="homeWords">0</b><small>words found</small></div>
           <div><b id="homeStreak">0</b><small>day streak</small></div>
         </div>
-        <h2>Play with friends</h2>
-        <div class="room" id="sessionCard">
-          <i>⌁</i>
-          <div>
-            <b id="roomTitle">No active session</b
-            ><small id="roomSubtitle"
-              >Create or join a multiplayer session</small
-            >
+        <section class="home-friends" aria-labelledby="friendsHeading">
+          <div class="home-friends-heading">
+            <h2 id="friendsHeading">Play with friends</h2>
+            <span>LIVE TOGETHER</span>
           </div>
-          <button
-            class="round"
-            id="sessionManage"
-            aria-label="Manage multiplayer session"
-          >
-            →
+          <div class="multiplayer-banner" id="multiplayerBanner" hidden>
+            <div>
+              <small>LIVE MULTIPLAYER ROOM</small
+              ><strong id="multiplayerBannerText">1 player in session</strong>
+            </div>
+            <div class="multiplayer-banner-actions">
+              <button type="button" id="resumeMultiplayer" hidden>
+                <span aria-hidden="true">↩</span> Game
+              </button>
+              <button
+                type="button"
+                id="multiplayerShare"
+                aria-label="Show multiplayer join QR code"
+              >
+                <span aria-hidden="true">▦</span> Join QR
+              </button>
+              <button id="exitMultiplayer" aria-label="Exit multiplayer mode">
+                ×
+              </button>
+            </div>
+          </div>
+          <div class="room" id="sessionCard">
+            <i aria-hidden="true">⌁</i>
+            <div>
+              <b id="roomTitle">No active session</b
+              ><small id="roomSubtitle"
+                >Create or join a multiplayer session</small
+              >
+            </div>
+            <button
+              class="round"
+              id="sessionManage"
+              aria-label="Manage multiplayer session"
+            >
+              →
+            </button>
+          </div>
+        </section>
+        <button class="party-panel" id="partyMode" type="button">
+          <span>🎉</span><div><small>PARTY MODE</small><strong>Build the next round together</strong><em>Pick grid · words · time</em></div><b>→</b>
+        </button>
+        <div class="game-mode-stack" aria-label="Game modes">
+          <div class="game-mode-card mode-random is-featured" id="randomPanel" role="button" tabindex="0" aria-label="Start Random Rush">
+            <span>🎲</span><div><small>RANDOM RUSH</small><strong id="randomPreview">Minimum 4 · Sudden death</strong><em id="randomPreviewSub">3 minutes · 5×5 grid</em></div><button id="reroll" type="button" aria-label="Reroll Random Rush">↻</button>
+          </div>
+          <button class="game-mode-card mode-classic" data-mode="classic">
+            <span>🌈</span><div><small>CLASSIC</small><strong>Two minutes of word joy</strong><em>Free play · 4×4 grid</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-sudden" data-mode="sudden">
+            <span>⚡</span><div><small>SUDDEN DEATH</small><strong>One miss ends the round</strong><em>All thrill · no safety net</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-dirty" data-mode="dirty">
+            <span>😼</span><div><small>DIRTY MODE</small><strong>Wordplay after dark</strong><em>18+ dictionary</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-race" data-mode="race">
+            <span>🏁</span><div><small>RACE TO 500</small><strong>Score fast. Finish first.</strong><em>Beat the clock to 500 points</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-minimum" data-mode="minimum">
+            <span>🦒</span><div><small>WORD STRETCH</small><strong>Make every word count</strong><em>Long words only</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-blitz" data-mode="blitz">
+            <span>⚡</span><div><small>BLITZ</small><strong>Move fast, score faster</strong><em>60 seconds · lightning words</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-longhaul" data-mode="longhaul">
+            <span>🗻</span><div><small>LONG HAUL</small><strong>Go big or go home</strong><em>6+ letters · 6×6 grid</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-storm" data-mode="storm">
+            <span>🌪️</span><div><small>LETTER STORM</small><strong>Search every corner</strong><em>8×8 grid · 120 seconds</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-scoreattack" data-mode="scoreattack">
+            <span>🎯</span><div><small>SCORE ATTACK</small><strong>Hit 250 before time</strong><em>First to 250 points wins</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-chain" data-mode="chain">
+            <span>🔗</span><div><small>WORD CHAIN</small><strong>Keep the chain alive</strong><em>Each word follows the last</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-custom" id="customGame">
+            <span>⚙️</span><div><small>CUSTOM GAME</small><strong>Make the rules yours</strong><em>Choose the grid, goal, and timer</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-dictionary" id="dictionary">
+            <span>📚</span><div><small>MY DICTIONARY</small><strong>Bring your own words</strong><em>Add a favorite to your personal list</em></div><b>→</b>
           </button>
         </div>
-        <div class="section-title">
-          <h2>Recent achievements</h2>
+        <div class="section-title home-achievements-heading">
+          <div>
+            <p class="eyebrow">Tiny wins, big energy</p>
+            <h2>Recent achievements</h2>
+          </div>
           <button data-screen="achievementsScreen">See all →</button>
         </div>
-        <div class="chips">
+        <div class="chips home-achievements">
           <article>
             <strong>✦</strong><b>Long haul</b><small>10+ letter word</small>
           </article>
@@ -128,10 +205,28 @@
             <strong>♢</strong><b>Grid master</b><small>Win on 8×8</small>
           </article>
         </div>
+        <footer class="site-footer">
+          Wordrush is a fast, free online word game for solo play and multiplayer word battles.
+        </footer>
+      </section>
+      <section class="screen round-intro-screen" id="roundIntroScreen">
+        <div class="intro-orbit" aria-hidden="true">
+          <i>W</i><i>O</i><i>R</i><i>D</i><b>✦</b><i>R</i><i>U</i><i>S</i><i>H</i>
+        </div>
+        <p class="eyebrow">NEXT UP</p>
+        <h1 id="introMode">CLASSIC</h1>
+        <div class="intro-rule-card">
+          <small>THE RULE</small>
+          <h2 id="introRule">Make words. Make noise.</h2>
+          <p id="introDetail">Your board is ready</p>
+        </div>
+        <div class="intro-countdown" id="introCountdown" aria-live="polite">4</div>
+        <button class="primary intro-start" id="introStart" type="button">Start now →</button>
+        <small class="intro-auto">Auto-starts when the countdown hits GO</small>
       </section>
       <section class="screen" id="gameScreen">
         <div class="game-head">
-          <button data-screen="homeScreen">←</button>
+          <button id="gameBack" type="button" aria-label="Back to home">←</button>
           <div>
             <p class="eyebrow" id="gameMode">Friday night grid</p>
             <h2 id="gameTitle">Round 01 · 4×4</h2>
@@ -163,26 +258,40 @@
         </div>
         <div class="game-foot">
           <small id="gameHint">Minimum 3 letters</small
+          ><button id="gameCastButton" class="game-cast-button" type="button" data-cast-action hidden>📺 Re-cast TV</button
           ><button id="stopRush" hidden>Stop rush</button
           ><button id="endGame">End round</button>
         </div>
       </section>
       <section class="screen" id="resultsScreen">
-        <p class="eyebrow coral">ROUND COMPLETE</p>
-        <h1>Nice run,<br /><em id="resultName">Player.</em></h1>
-        <div class="result">
-          <small>YOUR SCORE</small><strong id="finalScore">0</strong
-          ><small><b id="resultWordCount">0</b> words found</small>
+        <div class="result-hero">
+          <div class="result-confetti" aria-hidden="true"><i>✦</i><i>●</i><i>▲</i><i>★</i><i>◆</i></div>
+          <p class="eyebrow">ROUND COMPLETE!</p>
+          <h1>What a rush,<br /><em id="resultName">Player.</em></h1>
+          <div class="sudden-death-callout" id="suddenDeathCallout" hidden>
+            <span aria-hidden="true">💥</span>
+            <div>
+              <b id="suddenDeathCalloutTitle">Sudden death!</b>
+              <small id="suddenDeathCalloutDetail"></small>
+            </div>
+          </div>
+          <div class="result-score-burst result">
+            <small>FINAL SCORES</small>
+            <div class="result-hero-scores" id="resultHeroScores"></div>
+            <span><b id="resultWordCount">0</b> words found</span>
+            <strong id="finalScore" hidden>0</strong>
+          </div>
+        </div>
+        <div class="result-highlights" aria-label="Round highlights">
+          <article><span>🔠</span><div><small>LONGEST WORD</small><b id="resultLongestWord">—</b></div></article>
+          <article><span>👑</span><div><small>ROUND LEADER</small><b id="resultTopPlayer">—</b></div></article>
         </div>
         <div class="results-switcher" aria-label="Results view">
-          <button class="active" id="staticResultsButton" type="button">
-            Score page</button
-          ><button id="animatedResultsButton" type="button">Word reveal</button>
+          <button id="staticResultsButton" type="button" hidden>🏆 Score party</button
+          ><button class="active" id="animatedResultsButton" type="button">✨ Word Party · everyone’s invited</button>
         </div>
         <div id="staticResultsView">
-          <div class="leader" id="resultPlayers">
-            <p>PLAYER <b>SCORE</b></p>
-          </div>
+          <div class="result-podium" id="resultPlayers"></div>
         </div>
         <div id="animatedResultsView" hidden>
           <div class="reveal-toolbar">
@@ -209,8 +318,9 @@
             >
           </div>
         </div>
-        <button class="primary" id="again">Play again →</button
-        ><button class="secondary" id="stopRushResults" hidden>Stop rush</button
+        <button class="primary" id="again">Play again →</button>
+        <button class="secondary" id="exitParty" hidden>Exit party mode</button>
+        <button class="secondary" id="stopRushResults" hidden>Stop rush</button
         ><button class="secondary" data-screen="homeScreen">
           Back to home
         </button>
@@ -288,95 +398,228 @@
             </div>
             <button value="cancel" aria-label="Close">×</button>
           </div>
-          <div id="sessionChoices">
-            <button
-              type="button"
-              class="primary dialog-action"
-              id="sessionCreate"
-            >
-              Create session →</button
-            ><button
-              type="button"
-              class="secondary dialog-action"
-              id="sessionJoin"
-            >
-              Join with code
+          <div id="sessionChoices" class="multiplayer-choices">
+            <div class="multiplayer-welcome">
+              <div class="multiplayer-burst" aria-hidden="true"><span>W</span><b>+</b><span>W</span></div>
+              <p class="eyebrow">MAKE IT A CROWD</p>
+              <h3>Pick a side.<br /><em>Start the chaos.</em></h3>
+              <p>Host a room for your crew, or scan a friend’s QR code to jump straight in.</p>
+            </div>
+            <div class="multiplayer-choice-grid">
+              <button type="button" class="multiplayer-choice multiplayer-choice-create" id="sessionCreate">
+                <span aria-hidden="true">✦</span><strong>Create a room</strong><small>Host the next word battle</small><b>→</b>
+              </button>
+              <button type="button" class="multiplayer-choice multiplayer-choice-scan" id="sessionJoinScan">
+                <span aria-hidden="true">▦</span><strong>Scan to join</strong><small>Use a friend’s QR code</small><b>→</b>
+              </button>
+            </div>
+            <button type="button" class="secondary dialog-action multiplayer-code-button" id="sessionJoin">
+              Enter a room code instead
             </button>
+            <small class="multiplayer-privacy-note">QR scanning stays on this device and only reads a Wordrush room link.</small>
           </div>
-          <div id="sessionLobby" hidden>
-            <p class="session-code-label">SESSION CODE</p>
+          <div id="sessionScanner" class="session-scanner" hidden>
+            <div class="scanner-heading"><span>▦</span><div><strong>Scan a Wordrush QR</strong><small>Point your camera at your friend’s room code.</small></div></div>
+            <video id="sessionScannerVideo" playsinline muted aria-label="QR code camera preview"></video>
+            <p id="sessionScannerStatus" role="status" aria-live="polite">Starting camera…</p>
+            <button type="button" class="secondary dialog-action" id="sessionScannerCancel">Cancel scan</button>
+          </div>
+          <div id="sessionLobby" class="waiting-lobby" hidden>
+            <div class="lobby-sparkles" aria-hidden="true">✦ 🎉 ✦</div>
+            <p class="session-code-label">YOUR PARTY LOBBY</p>
             <strong class="session-code" id="sessionCode">-----</strong>
+            <p class="lobby-share-hint">Share this code with your players</p>
+            <div class="session-invite" id="sessionInvite">
+              <img
+                id="sessionQr"
+                width="180"
+                height="180"
+                alt="Multiplayer join QR code"
+              />
+              <button type="button" class="secondary" id="sessionShare">
+                Share join link
+              </button>
+            </div>
             <p id="sessionPlayersText">1 player connected</p>
-            <label for="sessionType">Game type (creator only)</label
-            ><select id="sessionType">
-              <option value="classic">Classic</option>
-              <option value="minimum">Minimum word</option>
-              <option value="sudden">Sudden death</option>
-              <option value="race">Race mode</option>
-              <option value="dirty">Dirty mode</option>
-              <option value="coop">Co-op</option>
-              <option value="random">Random Rush</option></select
-            ><button
-              type="button"
-              class="primary dialog-action"
-              id="sessionStart"
-            >
-              Start game →</button
-            ><button
+            <p class="lobby-status" id="lobbyStatus" role="status" aria-live="polite">
+              Waiting for the host to start
+            </p>
+            <div
+              class="lobby-players"
+              id="lobbyPlayers"
+              role="list"
+              aria-label="Players in this lobby"
+              aria-live="polite"
+            ></div>
+            <div class="lobby-host-controls" id="sessionHostControls" hidden>
+              <label for="sessionType">Choose the first game</label>
+              <select id="sessionType">
+                <option value="classic">Classic</option>
+                <option value="minimum">Minimum word</option>
+                <option value="sudden">Sudden death</option>
+                <option value="race">Race mode</option>
+                <option value="dirty">Dirty mode</option>
+                <option value="coop">Co-op</option>
+                <option value="random">Random Rush</option>
+              </select>
+              <button
+                type="button"
+                class="primary dialog-action"
+                id="sessionStart"
+              >
+                Start game →
+              </button>
+            </div>
+            <div class="cast-control" id="castControl" hidden>
+              <div>
+                <small>TV COMPANION</small>
+                <strong id="castStatus" aria-live="polite">Checking Cast support…</strong>
+              </div>
+              <button
+                type="button"
+                class="secondary"
+                id="castButton"
+                data-cast-action
+                disabled
+                aria-describedby="castStatus"
+              >
+                Cast to TV
+              </button>
+            </div>
+            <button
               type="button"
               class="secondary dialog-action"
               id="sessionLeave"
             >
-              Leave session
+              Exit lobby
             </button>
           </div>
         </form>
       </dialog>
       <dialog id="customDialog">
-        <form method="dialog" id="customForm">
+        <form method="dialog" id="customForm" class="rush-builder">
           <div class="dialog-head">
             <div>
-              <p class="eyebrow">Make your match</p>
-              <h2>Custom game</h2>
+              <p class="eyebrow">BUILD YOUR RUSH</p>
+              <h2 id="customTitle">Classic remix</h2>
             </div>
             <button value="cancel" aria-label="Close">×</button>
           </div>
-          <label for="customType">Game type</label
-          ><select id="customType">
-            <option value="classic">Classic</option>
-            <option value="minimum">Minimum word</option>
-            <option value="sudden">Sudden death</option>
-            <option value="race">Race mode</option>
-            <option value="dirty">Dirty mode</option></select
-          ><label for="customRules">Game rules</label
-          ><select id="customRules">
-            <option value="classic">Classic rules</option>
-            <option value="long">Long words</option>
-            <option value="first">First to 500</option></select
-          ><label for="customMin">Minimum word length</label
-          ><input
-            id="customMin"
-            type="number"
-            min="3"
-            max="12"
-            value="3"
-          /><label for="customBoard">Board size</label
-          ><select id="customBoard">
-            <option>4</option>
-            <option>5</option>
-            <option>6</option>
-            <option>7</option>
-            <option>8</option></select
-          ><label for="customTime">Time limit (seconds)</label
-          ><input
-            id="customTime"
-            type="number"
-            min="15"
-            max="600"
-            step="15"
-            value="120"
-          /><button class="primary dialog-save" id="customStart" value="start">
-            Start custom game →
+          <div class="builder-marquee" aria-hidden="true">
+            <span>C</span><span>A</span><span>T</span><b>+</b><span>R</span><span>U</span><span>S</span><span>H</span>
+          </div>
+          <p class="builder-prompt">Tap the cards. Make the round yours.</p>
+          <fieldset class="builder-group builder-modes">
+            <legend>Pick your vibe</legend>
+            <div>
+              <button type="button" data-custom-type="classic"><span>🌈</span><b>Classic</b><small>Free play</small></button>
+              <button type="button" data-custom-type="minimum"><span>🦒</span><b>Stretch</b><small>Long words</small></button>
+              <button type="button" data-custom-type="sudden"><span>⚡</span><b>Sudden</b><small>One miss</small></button>
+              <button type="button" data-custom-type="race"><span>🏁</span><b>Race</b><small>To 500</small></button>
+              <button type="button" data-custom-type="dirty"><span>😼</span><b>Dirty</b><small>18+</small></button>
+            </div>
+          </fieldset>
+          <fieldset class="builder-group">
+            <legend>Shortest word</legend>
+            <div class="builder-pills" role="group" aria-label="Minimum word length">
+              <button type="button" data-custom-min="3"><b>3</b><small>letters</small></button>
+              <button type="button" data-custom-min="4"><b>4</b><small>letters</small></button>
+              <button type="button" data-custom-min="5"><b>5</b><small>letters</small></button>
+              <button type="button" data-custom-min="6"><b>6</b><small>letters</small></button>
+            </div>
+          </fieldset>
+          <div class="builder-split">
+            <fieldset class="builder-group">
+              <legend>Letter grid</legend>
+              <div class="builder-pills compact">
+                <button type="button" data-custom-size="4">4×4</button>
+                <button type="button" data-custom-size="5">5×5</button>
+                <button type="button" data-custom-size="6">6×6</button>
+                <button type="button" data-custom-size="8">8×8</button>
+              </div>
+            </fieldset>
+            <fieldset class="builder-group">
+              <legend>Beat the clock</legend>
+              <div class="builder-pills compact">
+                <button type="button" data-custom-time="30">0:30</button>
+                <button type="button" data-custom-time="60">1:00</button>
+                <button type="button" data-custom-time="120">2:00</button>
+                <button type="button" data-custom-time="180">3:00</button>
+              </div>
+            </fieldset>
+          </div>
+          <div class="builder-ticket">
+            <span>YOUR ROUND</span><strong id="customSummary">3+ letters · 4×4 · 2:00</strong>
+          </div>
+          <button class="primary dialog-save builder-start" id="customStart" value="start">
+            LET'S RUSH! →
+          </button>
+        </form>
+      </dialog>
+      <dialog id="partyDialog">
+        <form method="dialog" id="partyForm" class="rush-builder party-builder">
+          <div class="dialog-head">
+            <div>
+              <p class="eyebrow">🎉 PARTY MODE</p>
+              <h2>Choose the chaos</h2>
+            </div>
+            <button value="cancel" aria-label="Close">×</button>
+          </div>
+          <div class="builder-marquee party-marquee" aria-hidden="true">
+            <span>P</span><span>A</span><span>R</span><span>T</span><span>Y</span>
+          </div>
+          <p class="builder-prompt">Pass the phone. Pick the rules. Start the showdown!</p>
+          <fieldset class="builder-group party-grid-cards">
+            <legend>Pick your playground</legend>
+            <div role="group" aria-label="Grid size">
+              <button type="button" data-party-size="4">
+                <span class="party-grid-preview size-four" aria-hidden="true"></span>
+                <b>4×4</b><small>Quick &amp; cozy</small>
+              </button>
+              <button type="button" data-party-size="5">
+                <span class="party-grid-preview size-five" aria-hidden="true"></span>
+                <b>5×5</b><small>More to explore</small>
+              </button>
+              <button type="button" data-party-size="6">
+                <span class="party-grid-preview size-six" aria-hidden="true"></span>
+                <b>6×6</b><small>Maximum mayhem</small>
+              </button>
+            </div>
+          </fieldset>
+          <fieldset class="builder-group party-word-cards">
+            <legend>Shortest word</legend>
+            <div role="group" aria-label="Minimum word length">
+              <button type="button" data-party-min="3">
+                <span aria-hidden="true">CAT</span><b>3 letters</b><small>Fast &amp; friendly</small>
+              </button>
+              <button type="button" data-party-min="4">
+                <span aria-hidden="true">PLAY</span><b>4 letters</b><small>Tricky territory</small>
+              </button>
+              <button type="button" data-party-min="5">
+                <span aria-hidden="true">QUEST</span><b>5 letters</b><small>Big-brain battle</small>
+              </button>
+            </div>
+          </fieldset>
+          <fieldset class="builder-group party-clock-group">
+            <legend>Set the party clock</legend>
+            <div class="party-times" role="group" aria-label="Time limit">
+              <button type="button" data-party-time="30"><span>🧨</span><b>0:30</b></button>
+              <button type="button" data-party-time="60"><span>⚡</span><b>1:00</b></button>
+              <button type="button" data-party-time="90"><span>🚀</span><b>1:30</b></button>
+              <button type="button" data-party-time="120"><span>🎯</span><b>2:00</b></button>
+              <button type="button" data-party-time="150"><span>🎲</span><b>2:30</b></button>
+              <button type="button" data-party-time="180"><span>🎉</span><b>3:00</b></button>
+              <button type="button" data-party-time="210"><span>🏆</span><b>3:30</b></button>
+              <button type="button" data-party-time="240"><span>👑</span><b>4:00</b></button>
+              <button type="button" data-party-time="270"><span>🌟</span><b>4:30</b></button>
+              <button type="button" data-party-time="300"><span>🔥</span><b>5:00</b></button>
+            </div>
+          </fieldset>
+          <div class="builder-ticket party-ticket" aria-live="polite">
+            <span>YOUR PARTY</span><strong id="partySummary">3+ letters · 4×4 · 2:00</strong>
+          </div>
+          <button class="primary dialog-save builder-start party-start" id="partyStart" value="start">
+            START THE PARTY! →
           </button>
         </form>
       </dialog>
@@ -404,12 +647,20 @@
         </form>
       </dialog>
     </main>
+    <div class="sudden-death-explosion" id="suddenDeathExplosion" hidden role="status" aria-live="assertive">
+      <div class="explosion-confetti" aria-hidden="true"><i>✦</i><i>●</i><i>▲</i><i>★</i><i>◆</i><i>✹</i><i>✦</i></div>
+      <strong id="suddenDeathExplosionTitle">💥 SUDDEN DEATH!</strong>
+      <span id="suddenDeathExplosionDetail"></span>
+    </div>
     <div id="toast"></div>
     <script src="game-config.js"></script>
+    <script src="board-core.js"></script>
+    <script src="analytics.js"></script>
     <script src="app.js"></script>
     <script src="stats.js"></script>
     <script src="achievements.js"></script>
     <script src="multiplayer-client.js"></script>
+    <script src="cast-sender.js"></script>
     <script src="leaderboard-client.js"></script>
     <script src="random-rush.js"></script>
     <script src="results.js"></script>
