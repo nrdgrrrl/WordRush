@@ -1,6 +1,8 @@
 const fs = require("node:fs");
 const {
   MODE_CONFIG,
+  RANDOM_RUSH_MODES,
+  RANDOM_RUSH_EXCLUDED_MODES,
   COMMON_WORDS,
   ADULT_WORDS,
 } = require("./game-config");
@@ -93,6 +95,8 @@ function validateSubmission({
 }
 module.exports = {
   MODE_CONFIG,
+  RANDOM_RUSH_MODES,
+  RANDOM_RUSH_EXCLUDED_MODES,
   COMMON_WORDS,
   ADULT_WORDS,
   normalizeWords,

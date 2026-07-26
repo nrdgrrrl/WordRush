@@ -1621,30 +1621,47 @@ html[data-theme="dark"] #toast {
 .analytics-consent {
   position: fixed;
   z-index: 1200;
-  right: max(14px, env(safe-area-inset-right));
-  bottom: max(14px, env(safe-area-inset-bottom));
-  left: max(14px, env(safe-area-inset-left));
-  display: flex;
-  max-width: 680px;
-  margin: 0 auto;
-  padding: 14px;
+  top: 50%;
+  left: 50%;
+  width: min(420px, calc(100vw - 36px));
+  max-width: calc(100vw - 36px);
+  margin: 0;
+  padding: 22px;
   border: 2px solid #2c1c37;
-  border-radius: 16px;
-  background: #fff9f0;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffdf7, #fff0d6);
   color: #2c1c37;
-  box-shadow: 0 7px 0 #2c1c37, 0 18px 50px #0005;
+  box-shadow: 0 8px 0 #2c1c37, 0 24px 70px #0009;
+  transform: translate(-50%, -50%);
+  text-align: left;
+}
+.analytics-consent::backdrop {
+  background: #171121cc;
+  backdrop-filter: blur(3px);
+}
+.analytics-consent[open] {
+  display: grid;
   gap: 14px;
-  align-items: center;
+}
+.analytics-consent strong {
+  font-size: 20px;
+  line-height: 1.1;
 }
 .analytics-consent p {
-  flex: 1;
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
-  line-height: 1.35;
+  line-height: 1.4;
 }
-.analytics-consent div { display: flex; gap: 8px; }
-.analytics-consent button { white-space: nowrap; }
+.analytics-consent div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+.analytics-consent button {
+  justify-content: center;
+  white-space: normal;
+}
 .analytics-preferences {
   width: 100%;
   justify-content: center;
@@ -1652,12 +1669,11 @@ html[data-theme="dark"] #toast {
 }
 html[data-theme="dark"] .analytics-consent {
   border-color: #f6c85f;
-  background: #211b28;
+  background: linear-gradient(180deg, #2b2235, #1c1723);
   color: #fff9f0;
   box-shadow: 0 7px 0 #f6c85f, 0 18px 50px #0009;
 }
 @media (max-width: 540px) {
-  .analytics-consent { align-items: stretch; flex-direction: column; }
-  .analytics-consent div { display: grid; grid-template-columns: 1fr 1fr; }
-  .analytics-consent button { justify-content: center; }
+  .analytics-consent { padding: 18px; }
+  .analytics-consent div { grid-template-columns: 1fr; }
 }

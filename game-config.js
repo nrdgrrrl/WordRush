@@ -95,7 +95,20 @@
     "EEEEEEEEEEEEAAAAAAAARRRRRRIIIIIIIIOOOOOOOONNNNNNTTTTTTLLLLSSSSUUUUDDDDGGGBBCCMMPPHHFFVVWWYYKJXQZ";
   Object.values(MODE_CONFIG).forEach(Object.freeze);
   Object.freeze(MODE_CONFIG);
+  const RANDOM_RUSH_EXCLUDED_MODES = Object.freeze(["coop", "dirty"]);
+  const RANDOM_RUSH_MODES = Object.freeze(
+    Object.keys(MODE_CONFIG).filter(
+      (mode) => !RANDOM_RUSH_EXCLUDED_MODES.includes(mode),
+    ),
+  );
   Object.freeze(COMMON_WORDS);
   Object.freeze(ADULT_WORDS);
-  return Object.freeze({ MODE_CONFIG, COMMON_WORDS, ADULT_WORDS, LETTER_BAG });
+  return Object.freeze({
+    MODE_CONFIG,
+    RANDOM_RUSH_MODES,
+    RANDOM_RUSH_EXCLUDED_MODES,
+    COMMON_WORDS,
+    ADULT_WORDS,
+    LETTER_BAG,
+  });
 });

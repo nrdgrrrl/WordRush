@@ -57,7 +57,18 @@
     } catch {}
   }
   function removeConsentPrompt() {
-    document.querySelector("#analyticsConsent")?.remove();
+    const prompt = document.querySelector("#analyticsConsent");
+    if (!prompt) return;
+    if (typeof prompt.close === "function" && prompt.open) prompt.close();
+    prompt.remove();
+  }
+  function recordConsentChoice(granted) {
+    fetch("/api/analytics-consent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ choice: granted ? "granted" : "denied" }),
+      keepalive: true,
+    }).catch(() => {});
   }
   function loadGoogleTag() {
     if (state.ready || !state.enabled) return;
@@ -98,18 +109,33 @@
     flush();
   }
   function setConsent(granted) {
+    recordConsentChoice(granted);
     storeConsent(granted ? "granted" : "denied");
     state.blocked = !granted;
     removeConsentPrompt();
-    if (granted) loadGoogleTag();
+    if (granted) {
+      loadGoogleTag();
+      track("analytics_consent_choice", { choice: "granted" });
+    }
     else queue.length = 0;
   }
   function showConsentPrompt() {
     if (document.querySelector("#analyticsConsent")) return;
-    const prompt = document.createElement("aside");
+    const prompt = document.createElement("dialog");
     prompt.id = "analyticsConsent";
     prompt.className = "analytics-consent";
-    prompt.setAttribute("aria-label", "Analytics preference");
+    prompt.setAttribute("aria-modal", "true");
+    prompt.setAttribute("aria-labelledby", "analyticsConsentTitle");
+    prompt.addEventListener("cancel", (event) => event.preventDefault());
+    prompt.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.target.closest("button")) {
+        event.preventDefault();
+        setConsent(true);
+      }
+    });
+    const title = document.createElement("strong");
+    title.id = "analyticsConsentTitle";
+    title.textContent = "Help tune Wordrush";
     const copy = document.createElement("p");
     copy.textContent =
       "Help make Wordrush better by sharing anonymous gameplay and performance data. No names, room codes, or words are collected.";
@@ -125,8 +151,11 @@
     accept.addEventListener("click", () => setConsent(true));
     decline.addEventListener("click", () => setConsent(false));
     actions.append(accept, decline);
-    prompt.append(copy, actions);
+    prompt.append(title, copy, actions);
     document.body.append(prompt);
+    if (typeof prompt.showModal === "function") prompt.showModal();
+    else prompt.setAttribute("open", "");
+    accept.focus();
   }
   function addPreferencesButton() {
     const form = document.querySelector("#profileForm");

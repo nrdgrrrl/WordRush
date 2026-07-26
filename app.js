@@ -21,17 +21,8 @@ let customAdult = false;
 function emit(name, detail = {}) {
   document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
 }
-const RANDOM_MODES = [
-  "classic",
-  "minimum",
-  "sudden",
-  "race",
-  "blitz",
-  "longhaul",
-  "storm",
-  "scoreattack",
-  "chain",
-];
+const RANDOM_MODES = Object.freeze([...sharedConfig.RANDOM_RUSH_MODES]);
+window.wordrushRandomRushModes = RANDOM_MODES;
 let randomModeQueue = [];
 function shuffledModes(modes, previous) {
   const shuffled = modes.filter((mode) => mode !== previous);

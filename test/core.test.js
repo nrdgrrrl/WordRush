@@ -2,6 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   MODE_CONFIG,
+  RANDOM_RUSH_MODES,
+  RANDOM_RUSH_EXCLUDED_MODES,
   ADULT_WORDS,
   generateBoard,
   createLexicon,
@@ -9,6 +11,26 @@ const {
   hasPath,
   validateSubmission,
 } = require("../game-core");
+test("Random Rush includes every eligible built-in game mode", () => {
+  assert.deepEqual(RANDOM_RUSH_EXCLUDED_MODES, ["coop", "dirty"]);
+  assert.deepEqual(
+    RANDOM_RUSH_MODES,
+    Object.keys(MODE_CONFIG).filter(
+      (mode) => !RANDOM_RUSH_EXCLUDED_MODES.includes(mode),
+    ),
+  );
+  assert.deepEqual(RANDOM_RUSH_MODES, [
+    "classic",
+    "minimum",
+    "sudden",
+    "race",
+    "blitz",
+    "longhaul",
+    "storm",
+    "scoreattack",
+    "chain",
+  ]);
+});
 test("dictionary membership uses the shared server lexicon", () => {
   assert.equal(isDictionaryWord("tea"), true);
   assert.equal(isDictionaryWord("CAR"), true);

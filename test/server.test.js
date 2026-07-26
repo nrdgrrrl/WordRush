@@ -15,6 +15,10 @@ process.env.WORDRUSH_LEADERBOARD_FILE = path.join(
   fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-server-")),
   "leaderboard.json",
 );
+process.env.WORDRUSH_ANALYTICS_CONSENT_FILE = path.join(
+  fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-consent-")),
+  "analytics-consent.json",
+);
 const {
   server,
   rooms,
@@ -946,4 +950,30 @@ test("analytics configuration is disabled by default and validates GA4 IDs", asy
       delete process.env.WORDRUSH_ANALYTICS_REQUIRE_CONSENT;
     else process.env.WORDRUSH_ANALYTICS_REQUIRE_CONSENT = previousConsent;
   }
+});
+
+test("analytics consent endpoint records only aggregate accept and deny counts", async () => {
+  const endpoint =
+    "http://127.0.0.1:" + server.address().port + "/api/analytics-consent";
+  for (const choice of ["denied", "granted", "denied"]) {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ choice }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true });
+  }
+  const invalid = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ choice: "maybe" }),
+  });
+  assert.equal(invalid.status, 400);
+  const counts = JSON.parse(
+    fs.readFileSync(process.env.WORDRUSH_ANALYTICS_CONSENT_FILE, "utf8"),
+  );
+  assert.equal(counts.granted, 1);
+  assert.equal(counts.denied, 2);
+  assert.match(counts.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
 });

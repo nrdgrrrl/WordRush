@@ -9,6 +9,15 @@ process.env.WORDRUSH_LEADERBOARD_FILE = path.join(
   fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-browser-")),
   "leaderboard.json",
 );
+process.env.WORDRUSH_ANALYTICS_CONSENT_FILE = path.join(
+  fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-browser-consent-")),
+  "analytics-consent.json",
+);
+const {
+  MODE_CONFIG,
+  RANDOM_RUSH_MODES,
+  RANDOM_RUSH_EXCLUDED_MODES,
+} = require("../game-config");
 const { server } = require("../server");
 
 const executablePath =
@@ -479,6 +488,21 @@ test("new modes show animated rules and Random Rush can continue immediately", a
   await browser.close();
 });
 
+test("Random Rush browser rotation matches every eligible built-in game mode", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  const expected = Object.keys(MODE_CONFIG).filter(
+    (mode) => !RANDOM_RUSH_EXCLUDED_MODES.includes(mode),
+  );
+  assert.deepEqual(RANDOM_RUSH_MODES, expected);
+  assert.deepEqual(await page.evaluate(() => window.wordrushRandomRushModes), expected);
+  assert.deepEqual(await page.evaluate(() => window.wordrushRandomRushChoices), expected);
+  for (const mode of expected)
+    assert.equal(await page.locator(`[data-mode="${mode}"]`).count(), 1);
+  await browser.close();
+});
+
 test("active games hide the title bar and preserve a no-scroll compact layout", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -907,6 +931,73 @@ test("analytics honors a saved denial even when server consent is optional", asy
   });
   assert.equal(await page.locator("#analyticsConsent").count(), 0);
   assert.equal(googleRequests, 0);
+  await browser.close();
+});
+
+test("analytics consent uses a blocking centered dialog and records denial", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const routeConsentConfig = async (context) => {
+    await context.route("**/api/analytics-config", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          measurementId: "G-ABC12345",
+          requireConsent: true,
+        }),
+      }),
+    );
+    await context.route("https://www.googletagmanager.com/**", (route) =>
+      route.fulfill({ status: 200, contentType: "text/javascript", body: "" }),
+    );
+  };
+  const consentChoices = [];
+  const routeConsentCount = async (context) => {
+    await context.route("**/api/analytics-consent", async (route) => {
+      consentChoices.push((await route.request().postDataJSON()).choice);
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true }),
+      });
+    });
+  };
+  const context = await browser.newContext({ viewport: { width: 900, height: 900 } });
+  await routeConsentConfig(context);
+  await routeConsentCount(context);
+  const page = await context.newPage();
+  await page.goto(baseUrl);
+  await page.waitForSelector("#analyticsConsent[open]");
+  const layout = await page.evaluate(() => {
+    const main = document.querySelector("main").getBoundingClientRect();
+    const dialog = document.querySelector("#analyticsConsent").getBoundingClientRect();
+    return {
+      left: dialog.left,
+      right: dialog.right,
+      width: dialog.width,
+      centerDelta: Math.abs((dialog.left + dialog.right) / 2 - innerWidth / 2),
+      mainWidth: main.width,
+      active: document.activeElement.textContent,
+    };
+  });
+  assert.ok(layout.left >= 0);
+  assert.ok(layout.right <= 900);
+  assert.ok(layout.width < layout.mainWidth);
+  assert.ok(layout.centerDelta < 2);
+  assert.equal(layout.active, "Allow analytics");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => window.wordrushAnalytics.status().consent === "granted");
+  await context.close();
+
+  const denyContext = await browser.newContext({ viewport: { width: 900, height: 900 } });
+  await routeConsentConfig(denyContext);
+  await routeConsentCount(denyContext);
+  const denyPage = await denyContext.newPage();
+  await denyPage.goto(baseUrl);
+  await denyPage.waitForSelector("#analyticsConsent[open]");
+  await denyPage.locator("#analyticsConsent .secondary").click();
+  await denyPage.waitForFunction(() => window.wordrushAnalytics.status().consent === "denied");
+  await denyContext.close();
+  assert.deepEqual(consentChoices, ["granted", "denied"]);
   await browser.close();
 });
 

@@ -17,6 +17,9 @@ const {
 const PORT = Number(process.env.PORT || 8000),
   HOST = process.env.HOST || "127.0.0.1",
   MAX_PLAYERS = 10,
+  CONSENT_COUNT_FILE =
+    process.env.WORDRUSH_ANALYTICS_CONSENT_FILE ||
+    path.join(process.env.STATE_DIRECTORY || "/var/lib/wordrush", "analytics-consent.json"),
   rooms = new Map(),
   clients = new Map(),
   displays = new Map();
@@ -1084,6 +1087,25 @@ module.exports = {
 
 const { Leaderboard } = require("./leaderboard");
 const leaderboard = new Leaderboard();
+function recordAnalyticsConsentChoice(choice) {
+  const cleanChoice = choice === "granted" ? "granted" : choice === "denied" ? "denied" : "";
+  if (!cleanChoice) return null;
+  let data = { granted: 0, denied: 0 };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(CONSENT_COUNT_FILE, "utf8"));
+    data = {
+      granted: Math.max(0, Number(parsed.granted) || 0),
+      denied: Math.max(0, Number(parsed.denied) || 0),
+    };
+  } catch {}
+  data[cleanChoice] += 1;
+  data.updatedAt = new Date().toISOString();
+  fs.mkdirSync(path.dirname(CONSENT_COUNT_FILE), { recursive: true });
+  const temporary = CONSENT_COUNT_FILE + ".tmp";
+  fs.writeFileSync(temporary, JSON.stringify(data, null, 2));
+  fs.renameSync(temporary, CONSENT_COUNT_FILE);
+  return data;
+}
 function readJson(req) {
   return new Promise((resolve) => {
     let body = "";
@@ -1149,6 +1171,29 @@ async function leaderboardRequest(req, res) {
       requireConsent:
         process.env.WORDRUSH_ANALYTICS_REQUIRE_CONSENT !== "0",
     }));
+  }
+  if (url.pathname === "/api/analytics-consent" && req.method === "POST") {
+    if (!rateLimit("analytics-consent:" + clientIp(req), 30)) {
+      res.writeHead(429, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      return res.end(JSON.stringify({ error: "RATE_LIMITED" }));
+    }
+    const body = await readJson(req);
+    const counts = body && recordAnalyticsConsentChoice(body.choice);
+    if (!counts) {
+      res.writeHead(400, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      return res.end(JSON.stringify({ error: "INVALID_CHOICE" }));
+    }
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    return res.end(JSON.stringify({ ok: true }));
   }
   if (url.pathname === "/api/leaderboard" && req.method === "GET") {
     const period = [

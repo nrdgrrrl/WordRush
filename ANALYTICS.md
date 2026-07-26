@@ -22,6 +22,12 @@ the Google tag is not loaded until the player accepts analytics. Advertising
 storage, advertising user data, advertising personalization, Google signals,
 and ad-personalization signals remain disabled.
 
+Accept and deny clicks are also counted by the first-party
+`/api/analytics-consent` endpoint. That endpoint records only aggregate
+`granted` and `denied` totals in `WORDRUSH_ANALYTICS_CONSENT_FILE`, defaulting
+to `/var/lib/wordrush/analytics-consent.json`, so denied players are not sent
+to Google Analytics just to count the denial.
+
 Official references:
 
 - https://developers.google.com/analytics/devguides/collection/ga4/events
@@ -49,6 +55,8 @@ active screen.
 ### Navigation and interaction
 
 - `page_view`: initial application load without query parameters.
+- `analytics_consent_choice`: granted consent only. Denials are counted only by
+  the first-party aggregate endpoint.
 - `screen_view`: active Wordrush screen.
 - `ui_action`: stable button ID, active screen, selected mode, or destination.
 - `theme_change`: selected light/dark theme.
