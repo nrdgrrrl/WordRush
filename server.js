@@ -141,7 +141,7 @@ async function authorizeRequest(req, res) {
     res.setHeader("X-Robots-Tag", "noindex, nofollow");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://www.gstatic.com; script-src 'self' https://www.gstatic.com 'unsafe-eval'; media-src 'self' https://www.gstatic.com; font-src 'self' https://www.gstatic.com; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self'; script-src 'self' https://www.gstatic.com; base-uri 'none'; frame-ancestors 'none'",
     );
     return true;
   }
