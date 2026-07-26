@@ -183,7 +183,7 @@ test(
             Number(await page.locator("#resultWordCount").textContent()) > 0,
           );
         }
-        await pages[1].locator("#animatedResultsButton").click();
+        await pages[0].locator("#animatedResultsButton").click();
         await Promise.all(
           pages.map((page) =>
             page.waitForFunction(
