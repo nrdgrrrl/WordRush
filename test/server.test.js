@@ -381,7 +381,19 @@ test("every built-in multiplayer mode accepts a generated board word", async () 
   message(ws, "create_room", { mode: "classic" });
   await createdPromise;
   await lobbyPromise;
-  for (const mode of ["classic", "minimum", "sudden", "race", "coop", "dirty"]) {
+  for (const mode of [
+    "classic",
+    "minimum",
+    "sudden",
+    "race",
+    "coop",
+    "dirty",
+    "blitz",
+    "longhaul",
+    "storm",
+    "scoreattack",
+    "chain",
+  ]) {
     const startedPromise = next(ws, "round_started");
     message(ws, "start_game", { mode });
     const started = await startedPromise;

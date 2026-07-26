@@ -186,6 +186,7 @@ function requestedConfig(mode, raw) {
     target: raw?.target ? boundedNumber(raw.target, 500, 1, 100000) : null,
     adult: Boolean(raw?.adult),
     sudden: Boolean(raw?.sudden),
+    chain: Boolean(raw?.chain),
   };
 }
 function roomConfig(room) {
@@ -223,6 +224,8 @@ function state(room) {
           id: room.round.id,
           board: room.round.board,
           size: room.round.size,
+          startsAt: room.round.startedAt,
+          introEndsAt: room.round.introEndsAt,
           endsAt: room.round.endsAt,
         }
       : null,
@@ -251,6 +254,8 @@ function displayState(room) {
           id: room.round.id,
           board: room.round.board,
           size: room.round.size,
+          startsAt: room.round.startedAt,
+          introEndsAt: room.round.introEndsAt,
           endsAt: room.round.endsAt,
         }
       : null,
@@ -290,7 +295,20 @@ function closeRoom(room, reason) {
   room.round = null;
   room.status = "closed";
 }
-const RANDOM_MODES = ["classic", "minimum", "sudden", "race", "coop", "dirty"];
+const RANDOM_MODES = [
+  "classic",
+  "minimum",
+  "sudden",
+  "race",
+  "coop",
+  "dirty",
+  "blitz",
+  "longhaul",
+  "storm",
+  "scoreattack",
+  "chain",
+];
+const ROUND_INTRO_MS = 4000;
 function shuffledModes(previous) {
   const modes = RANDOM_MODES.filter((mode) => mode !== previous);
   for (let index = modes.length - 1; index > 0; index--) {
@@ -319,13 +337,16 @@ function startRound(room, selected = room.mode, rawConfig = null) {
       { preferredWords: COMMON_WORDS },
     );
   room.config = config;
-  const startedAt = Date.now();
+  const introEndsAt = Date.now() + ROUND_INTRO_MS;
+  const startedAt = introEndsAt;
   room.round = {
     id: crypto.randomUUID(),
     board: board,
     size: config.size,
     found: new Set(),
+    lastWord: "",
     startedAt,
+    introEndsAt,
     endsAt: startedAt + config.seconds * 1000,
     timer: null,
     config,
@@ -342,7 +363,7 @@ function startRound(room, selected = room.mode, rawConfig = null) {
   }
   room.round.timer = setTimeout(
     () => finishRound(room, "timeout"),
-    config.seconds * 1000,
+    ROUND_INTRO_MS + config.seconds * 1000,
   );
   room.round.timer.unref?.();
   broadcast(room, { ...state(room), type: "round_started", config });
@@ -770,6 +791,31 @@ function handle(ws, message) {
       message.config,
     );
   }
+  if (type === "start_round_now") {
+    if (room.status !== "playing" || !room.round)
+      return send(ws, { type: "error", code: "ROUND_NOT_PLAYING" });
+    if (Date.now() >= room.round.introEndsAt)
+      return send(ws, {
+        type: "round_start_now",
+        startsAt: room.round.startedAt,
+        endsAt: room.round.endsAt,
+      });
+    const startedAt = Date.now();
+    room.round.introEndsAt = startedAt;
+    room.round.startedAt = startedAt;
+    room.round.endsAt = startedAt + roomConfig(room).seconds * 1000;
+    clearTimeout(room.round.timer);
+    room.round.timer = setTimeout(
+      () => finishRound(room, "timeout"),
+      roomConfig(room).seconds * 1000,
+    );
+    room.round.timer.unref?.();
+    return broadcast(room, {
+      type: "round_start_now",
+      startsAt: room.round.startedAt,
+      endsAt: room.round.endsAt,
+    });
+  }
   if (type === "set_results_settings") {
     if (room.status !== "finished")
       return send(ws, { type: "error", code: "RESULTS_NOT_READY" });
@@ -786,7 +832,7 @@ function handle(ws, message) {
       return send(ws, { type: "error", code: "ROUND_NOT_PLAYING" });
     if (Date.now() >= room.round.endsAt) return finishRound(room, "timeout");
     const player = room.players.get(client.id);
-    const result = validateSubmission({
+    let result = validateSubmission({
       ...message,
       board: room.round.board,
       size: room.round.size,
@@ -795,6 +841,12 @@ function handle(ws, message) {
       found: room.mode === "coop" ? room.round.found : player.found,
       customWords: [...room.customWords],
     });
+    const chainBreak =
+      roomConfig(room).chain &&
+      room.round.lastWord &&
+      result.word[0] !== room.round.lastWord.at(-1);
+    if (chainBreak && result.valid)
+      result = { ...result, valid: false, reason: "chain", points: 0 };
     if (!result.valid) {
       console.warn("Wordrush rejected submission", JSON.stringify({
         word: result.word,
@@ -822,6 +874,7 @@ function handle(ws, message) {
       return;
     }
     room.round.found.add(result.word);
+    room.round.lastWord = result.word;
     player.found.add(result.word);
     if (room.mode === "coop") {
       room.teamScore += result.points;

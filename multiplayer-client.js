@@ -301,10 +301,7 @@
         }
         if (message.status === "finished" && message.results)
           window.wordrushResultsSettings?.(message.results);
-        if (
-          message.status === "finished" &&
-          message.lastResult?.ranking?.some((player) => player.id === guestId)
-        ) {
+        if (message.status === "finished" && message.lastResult?.ranking) {
           sessionDialog(false);
           window.wordrushOnlineFinish?.(
             message.lastResult.ranking,
@@ -325,6 +322,8 @@
         sessionDialog(false);
         toast("Round started · " + message.players.length + " players");
       }
+      if (message.type === "round_start_now")
+        window.wordrushRoundStartNow?.(message);
       if (message.type === "word_accepted") {
         if (message.playerId === guestId)
           window.wordrushRecordOnlineWord?.(message.word, message.points);
@@ -339,6 +338,7 @@
           minimum: `Need at least ${message.minimum || 3} letters`,
           path: "Tiles must connect in order",
           duplicate: "Already found that word",
+          chain: "Wrong word · follow the chain",
           dictionary: `${message.word || "That word"} is not in the Wordrush dictionary`,
         };
         toast(
@@ -356,6 +356,7 @@
       }
       if (message.type === "round_finished") {
         roomStatus = "finished";
+        sessionDialog(false);
         window.wordrushOnlineFinish?.(message.ranking, {
           roundId: message.roundId,
           gameSeconds: message.gameSeconds,
@@ -451,6 +452,12 @@
       mode: randomRush ? "random" : mode,
       config,
     });
+    return true;
+  };
+  window.wordrushStartRoundNow = () => {
+    if (!sessionCode || !socket || socket.readyState !== WebSocket.OPEN)
+      return false;
+    socket.send(JSON.stringify({ type: "start_round_now" }));
     return true;
   };
   $("#sessionManage")?.addEventListener("click", () => sessionDialog());

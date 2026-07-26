@@ -15,6 +15,14 @@ const executablePath =
   process.env.PLAYWRIGHT_CHROMIUM ||
   "/home/victoria/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome";
 let baseUrl;
+async function startIntro(page) {
+  await page.waitForFunction(() =>
+    document.querySelector("#roundIntroScreen.active") ||
+    document.querySelector("#gameScreen.active"),
+  );
+  await page.evaluate(() => document.querySelector("#introStart")?.click());
+  await page.waitForSelector("#gameScreen.active");
+}
 test.before(
   () =>
     new Promise((resolve) =>
@@ -153,7 +161,7 @@ test(
       }
       firstRound = false;
       await Promise.all(
-        pages.map((page) => page.waitForSelector("#gameScreen.active")),
+        pages.map((page) => startIntro(page)),
       );
       if (mode === "classic") {
         assert.equal(await host.locator("#endGame").isHidden(), false);

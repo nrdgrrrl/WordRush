@@ -20,6 +20,31 @@
       title: "Race to 500 · 4×4 grid",
       sub: "4 minutes · first to 500 wins",
     },
+    {
+      mode: "blitz",
+      title: "Blitz · 4×4 grid",
+      sub: "60 seconds · lightning words",
+    },
+    {
+      mode: "longhaul",
+      title: "Long Haul · 6×6 grid",
+      sub: "3 minutes · minimum 6 letters",
+    },
+    {
+      mode: "storm",
+      title: "Letter Storm · 8×8 grid",
+      sub: "2 minutes · hunt everywhere",
+    },
+    {
+      mode: "scoreattack",
+      title: "Score Attack · 5×5 grid",
+      sub: "150 seconds · first to 250",
+    },
+    {
+      mode: "chain",
+      title: "Word Chain · 5×5 grid",
+      sub: "3 minutes · follow the last letter",
+    },
   ];
   let selected = choices[0];
   const panel = document.querySelector("#randomPanel");

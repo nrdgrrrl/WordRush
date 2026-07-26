@@ -19,6 +19,15 @@ async function startClassic(page) {
   await page.locator('button[data-mode="classic"]').click();
   await page.waitForSelector("#customDialog[open]");
   await page.locator("#customStart").click();
+  await page.locator("#introStart").click();
+}
+async function startIntro(page) {
+  await page.waitForFunction(() =>
+    document.querySelector("#roundIntroScreen.active") ||
+    document.querySelector("#gameScreen.active"),
+  );
+  await page.evaluate(() => document.querySelector("#introStart")?.click());
+  await page.waitForSelector("#gameScreen.active");
 }
 test.before(
   () =>
@@ -415,6 +424,7 @@ test("random rush starts by touch and the board stays inside the phone viewport"
     const page = await browser.newPage({ viewport });
     await page.goto(baseUrl);
     await page.locator("#randomPanel").click();
+    await startIntro(page);
     assert.equal(
       await page
         .locator("#gameScreen")
@@ -437,6 +447,30 @@ test("random rush starts by touch and the board stays inside the phone viewport"
     assert.equal(layout.nav, "none");
     await page.close();
   }
+  await browser.close();
+});
+
+test("new modes show animated rules and Random Rush can continue immediately", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  for (const mode of ["blitz", "longhaul", "storm", "scoreattack", "chain"])
+    assert.equal(await page.locator(`[data-mode="${mode}"]`).count(), 1);
+
+  await page.locator('[data-mode="chain"]').click();
+  assert.equal(await page.locator("#roundIntroScreen").isVisible(), true);
+  assert.match(await page.locator("#introRule").textContent(), /last word/i);
+  await page.locator("#introStart").click();
+  await page.waitForSelector("#gameScreen.active");
+  await page.locator("#gameBack").click();
+
+  await page.locator("#randomPanel").click();
+  await page.locator("#introStart").click();
+  await page.locator("#endGame").click();
+  await page.waitForSelector("#resultsScreen.active");
+  assert.match(await page.locator("#again").textContent(), /Continue Random Rush/);
+  await page.locator("#again").click();
+  assert.equal(await page.locator("#roundIntroScreen").isVisible(), true);
   await browser.close();
 });
 
@@ -538,6 +572,7 @@ test("sudden death can return home from its results screen", async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   await page.locator('[data-mode="sudden"]').click();
+  await startIntro(page);
   const tile = await page.locator(".tile").first().boundingBox();
   await page.mouse.move(tile.x + tile.width / 2, tile.y + tile.height / 2);
   await page.mouse.down();
@@ -574,6 +609,7 @@ test("graphical game builder includes a three-letter option and starts its confi
   await page.locator('[data-custom-size="8"]').click();
   await page.locator('[data-custom-time="30"]').click();
   await page.locator("#customStart").click();
+  await startIntro(page);
   assert.equal(
     await page
       .locator("#gameScreen")
@@ -602,13 +638,15 @@ test("random rush rolls into a different game and can be stopped", async () => {
     window.wordrushRushDelay = 250;
   });
   await page.locator("#randomPanel").click();
+  await startIntro(page);
   const modes = [];
   for (let round = 0; round < 4; round++) {
     modes.push(await page.locator("#gameMode").textContent());
     if (round === 3) break;
     await page.locator("#endGame").click();
     await page.waitForSelector("#resultsScreen.active");
-    await page.waitForSelector("#gameScreen.active");
+    await page.locator("#again").click();
+    await startIntro(page);
   }
   assert.equal(new Set(modes).size, 4);
   await page.locator("#stopRush").click();
@@ -630,6 +668,7 @@ test("dirty custom boards always expose at least five adult words", async () => 
   await page.locator('[data-custom-type="dirty"]').click();
   await page.locator('[data-custom-size="4"]').click();
   await page.locator("#customStart").click();
+  await startIntro(page);
   const playable = await page.evaluate((words) => {
     const board = [...document.querySelectorAll(".tile")].map((tile) => tile.textContent);
     const size = 4;
@@ -679,6 +718,7 @@ test("Party Mode keeps selected rules for the next solo round", async () => {
   assert.equal(await page.locator('[data-party-time="90"]').getAttribute("aria-pressed"), "true");
   assert.equal(await page.locator("#partySummary").textContent(), "4+ letters · 5×5 · 01:30");
   await page.locator("#partyStart").click();
+  await startIntro(page);
   assert.equal(await page.locator(".tile").count(), 25);
   assert.equal(await page.locator("#gameHint").textContent(), "Minimum 4 letters");
   await page.locator("#endGame").click();
@@ -704,7 +744,7 @@ test("a pointer-traced Party Mode multiplayer word is accepted", async () => {
   await page.locator('[data-party-min="3"]').click();
   await page.locator('[data-party-time="60"]').click();
   await page.locator("#partyForm button[value=start]").click();
-  await page.waitForSelector("#gameScreen.active");
+  await startIntro(page);
   const trail = await page.evaluate(async () => {
     const words = new Set(await (await fetch("/dictionary.json")).json());
     const letters = [...document.querySelectorAll(".tile")].map((tile) => tile.textContent);
@@ -751,6 +791,7 @@ test("the Random Rush preview panel starts the rush while reload only rerolls it
   assert.ok(after.length > 0);
   const preview = await page.locator("#randomPreview").textContent();
   await page.locator("#randomPanel").click();
+  await startIntro(page);
   assert.equal(
     await page
       .locator("#gameScreen")
@@ -785,7 +826,7 @@ test("multiplayer creates a five-letter session and launches co-op", async () =>
   assert.match(await page.locator("#lobbyStatus").textContent(), /host/i);
   await page.locator("#sessionType").selectOption("coop");
   await page.locator("#sessionStart").click();
-  await page.waitForSelector("#gameScreen.active");
+  await startIntro(page);
   assert.equal(await page.locator("#gameMode").textContent(), "CO-OP");
   assert.equal(await page.locator("#livePlayers .live-player").count(), 0);
   await page.locator("#gameBack").click();
@@ -852,7 +893,7 @@ test("main screen join QR remains available after a multiplayer round starts", a
   const code = await host.locator("#sessionCode").textContent();
   await host.locator("#sessionType").selectOption("classic");
   await host.locator("#sessionStart").click();
-  await host.waitForSelector("#gameScreen.active");
+  await startIntro(host);
   await host.locator("#gameBack").click();
 
   assert.equal(await host.locator("#multiplayerBanner").isVisible(), true);
@@ -926,8 +967,8 @@ test("live multiplayer scores are equally prominent and color opponents differen
   await host.locator("#sessionType").selectOption("classic");
   await host.locator("#sessionStart").click();
   await Promise.all([
-    host.waitForSelector("#gameScreen.active"),
-    guest.waitForSelector("#gameScreen.active"),
+    startIntro(host),
+    startIntro(guest),
   ]);
   const scores = await host.evaluate(() => {
     const own = getComputedStyle(document.querySelector("#gameScore"));
@@ -1152,6 +1193,57 @@ test("two-player lobby synchronizes roles and guest exit leaves the host room op
   await host.waitForFunction(
     () => document.querySelector("#multiplayerBanner").hidden,
   );
+  await browser.close();
+});
+
+test("host ending a round and closing an active session synchronizes every player", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const guest = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await host.goto(baseUrl);
+  await guest.goto(baseUrl);
+  await host.locator("#sessionManage").click();
+  await host.locator("#sessionCreate").click();
+  await host.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  const code = await host.locator("#sessionCode").textContent();
+  await guest.goto(baseUrl + "/?join=" + code);
+  await Promise.all([
+    host.waitForFunction(
+      () => document.querySelectorAll("#lobbyPlayers .live-player").length === 2,
+    ),
+    guest.waitForFunction(
+      () => document.querySelectorAll("#lobbyPlayers .live-player").length === 2,
+    ),
+  ]);
+
+  await host.locator("#sessionType").selectOption("classic");
+  await host.locator("#sessionStart").click();
+  await Promise.all([
+    startIntro(host),
+    startIntro(guest),
+  ]);
+  await host.locator("#endGame").click();
+  await Promise.all([
+    host.waitForSelector("#resultsScreen.active"),
+    guest.waitForSelector("#resultsScreen.active"),
+  ]);
+
+  await host.locator("#again").click();
+  await Promise.all([
+    startIntro(host),
+    startIntro(guest),
+  ]);
+  await host.locator("#gameBack").click();
+  host.once("dialog", (dialog) => dialog.accept());
+  await host.locator("#exitMultiplayer").click();
+  await Promise.all([
+    host.waitForFunction(() => document.querySelector("#homeScreen").classList.contains("active")),
+    guest.waitForFunction(() => document.querySelector("#homeScreen").classList.contains("active")),
+    host.waitForFunction(() => document.querySelector("#multiplayerBanner").hidden),
+    guest.waitForFunction(() => document.querySelector("#multiplayerBanner").hidden),
+  ]);
   await browser.close();
 });
 

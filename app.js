@@ -6,14 +6,32 @@ const $ = (s) => document.querySelector(s),
       .filter(([mode]) => mode !== "coop")
       .map(([mode, config]) => [
         mode,
-        [config.label, config.min, config.size, config.seconds, config.rule],
+        [
+          config.label,
+          config.min,
+          config.size,
+          config.seconds,
+          config.rule,
+          config.target || null,
+          Boolean(config.chain),
+        ],
       ]),
   );
 let customAdult = false;
 function emit(name, detail = {}) {
   document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
 }
-const RANDOM_MODES = ["classic", "minimum", "sudden", "race"];
+const RANDOM_MODES = [
+  "classic",
+  "minimum",
+  "sudden",
+  "race",
+  "blitz",
+  "longhaul",
+  "storm",
+  "scoreattack",
+  "chain",
+];
 let randomModeQueue = [];
 function shuffledModes(modes, previous) {
   const shuffled = modes.filter((mode) => mode !== previous);
@@ -85,6 +103,8 @@ const s = {
   pendingOnlineTrace: null,
   party: false,
   suddenDeath: null,
+  chain: false,
+  lastWord: "",
 };
 const avatarOptions = [
     "🐈",
@@ -437,7 +457,11 @@ function end() {
   if (s.score > 0) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
   recordPlayDay();
   updateProfile();
-  $("#again").textContent = s.party ? "Continue party mode →" : "Play again →";
+  $("#again").textContent = s.rush
+    ? "Continue Random Rush →"
+    : s.party
+      ? "Continue party mode →"
+      : "Play again →";
   $("#exitParty").hidden = !s.party;
   show("resultsScreen");
   emit("round-complete", {
@@ -462,7 +486,7 @@ function end() {
     let left = Math.ceil(rushDelay / 1000);
     $("#resultAchievementTitle").textContent = "Next rush in " + left + "s";
     $("#resultAchievementDetail").textContent =
-      "Your score is saved. The next random game will start automatically.";
+      "Your score is saved. Continue now or let the next rush arrive automatically.";
     s.rushCountdown = setInterval(() => {
       left--;
       if (left > 0)
@@ -496,10 +520,48 @@ function show(id) {
     );
   emit("screen-change", { id });
 }
+let roundIntroTimer = 0;
+let roundIntroCountdown = 0;
+let roundIntroFinish = null;
+function cancelRoundIntro() {
+  clearTimeout(roundIntroTimer);
+  clearInterval(roundIntroCountdown);
+  roundIntroTimer = 0;
+  roundIntroCountdown = 0;
+  roundIntroFinish = null;
+}
+function finishRoundIntro() {
+  const finish = roundIntroFinish;
+  cancelRoundIntro();
+  if (finish) finish();
+}
+function showRoundIntro({ label, rule, detail, duration = 4000, onStart }) {
+  cancelRoundIntro();
+  roundIntroFinish = onStart;
+  $("#introMode").textContent = label || "NEXT ROUND";
+  $("#introRule").textContent = rule || "Make words. Make noise.";
+  $("#introDetail").textContent = detail || "Get ready to trace";
+  const deadline = Date.now() + Math.max(0, duration);
+  const updateCountdown = () => {
+    const remaining = Math.max(0, deadline - Date.now());
+    $("#introCountdown").textContent = remaining
+      ? String(Math.ceil(remaining / 1000))
+      : "GO";
+  };
+  updateCountdown();
+  roundIntroCountdown = setInterval(updateCountdown, 100);
+  roundIntroTimer = setTimeout(finishRoundIntro, Math.max(0, duration));
+  show("roundIntroScreen");
+}
+$("#introStart")?.addEventListener("click", () => {
+  if (window.wordrushStartRoundNow?.()) return;
+  finishRoundIntro();
+});
 function abandonActiveRound() {
   clearInterval(s.timer);
   clearTimeout(s.rushTimer);
   clearInterval(s.rushCountdown);
+  cancelRoundIntro();
   s.done = 1;
   s.onlineRoundKey = null;
   s.pendingOnlineTrace = null;
@@ -508,6 +570,10 @@ function abandonActiveRound() {
 }
 window.wordrushAbandonOnlineRound = () => {
   if (s.onlineRoundKey) abandonActiveRound();
+  // A host can close the room while another player is still looking at the
+  // board. The room shutdown is authoritative, so do not leave that player
+  // stranded on a dead game screen.
+  show("homeScreen");
 };
 window.wordrushReturnToOnlineRound = () => {
   if (s.onlineRoundKey && !s.done) show("gameScreen");
@@ -559,7 +625,11 @@ async function start(mode, override = null, adultMode = false, rush = false) {
   s.rush = rush;
   clearTimeout(s.rushTimer);
   clearInterval(s.rushCountdown);
-  s.target = override?.[5]?.target || null;
+  s.target =
+    override?.[5]?.target || (typeof m[5] === "number" ? m[5] : null);
+  s.chain = Boolean(
+    override?.[5]?.chain ?? (typeof m[6] === "boolean" ? m[6] : false),
+  );
   s.mode = mode;
   s.party = Boolean(override?.[0] === "PARTY MODE");
   s.onlineRoundKey = null;
@@ -570,6 +640,7 @@ async function start(mode, override = null, adultMode = false, rush = false) {
   s.time = m[3];
   s.score = 0;
   s.found.clear();
+  s.lastWord = "";
   s.roundWordTimes = [];
   s.pick = [];
   s.done = 0;
@@ -586,14 +657,21 @@ async function start(mode, override = null, adultMode = false, rush = false) {
   $("#endGame").hidden = false;
   $("#stopRushResults").hidden = true;
   render();
-  show("gameScreen");
-  emit("round-started");
-  clearInterval(s.timer);
-  s.timer = setInterval(() => {
-    s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
-    $("#timer").textContent = formatTimer(s.time);
-    if (s.time <= 0) end();
-  }, 250);
+  showRoundIntro({
+    label: m[0],
+    rule: m[4],
+    detail: s.rush ? "Random Rush · next challenge loading" : "Your board is ready",
+    onStart: () => {
+      show("gameScreen");
+      emit("round-started");
+      clearInterval(s.timer);
+      s.timer = setInterval(() => {
+        s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
+        $("#timer").textContent = formatTimer(s.time);
+        if (s.time <= 0) end();
+      }, 250);
+    },
+  });
 }
 function pickedPathIsValid(trace, word) {
   return (
@@ -633,10 +711,13 @@ async function submit() {
       ? custom.has(w) || await isServerDictionaryWord(w, customAdult)
       : false;
   if (s.done || s.startedAt !== roundStartedAt) return;
-  const ok = w.length >= m[1] && validPath && inDictionary;
+  const chainBreak =
+    s.chain && s.lastWord && w[0] !== s.lastWord.at(-1);
+  const ok = w.length >= m[1] && validPath && inDictionary && !chainBreak;
   if (ok && !s.found.has(w)) {
     const points = w.length * w.length;
     s.found.add(w);
+    s.lastWord = w;
     s.score += points;
     recordAcceptedWord(w);
     updateProfile();
@@ -645,7 +726,8 @@ async function submit() {
     $("#preview").classList.add("found");
     pulseAcceptedWord(trace);
     emit("word-accepted", { word: w, points });
-    if ((s.mode === "race" || s.target) && s.score >= 500) end();
+    if ((s.mode === "race" || s.target) && s.score >= (s.target || 500))
+      end();
   } else if (duplicate || s.found.has(w)) {
     pulseDuplicateWord(trace);
     profile.incorrect++;
@@ -658,6 +740,8 @@ async function submit() {
     toast(
       w.length < m[1]
         ? "Wrong word · need " + m[1] + " letters"
+        : chainBreak
+          ? "Wrong word · chain starts with " + s.lastWord.at(-1)
         : !validPath
           ? "Wrong word · tiles must connect"
           : "Wrong word · not in dictionary",
@@ -763,7 +847,17 @@ $("#partyForm").addEventListener("submit", (event) => {
   const config = ["PARTY MODE", partyConfig.min, partyConfig.size, partyConfig.seconds, `Party round · minimum ${partyConfig.min} letters`, { party: true }];
   start("custom", config);
 });
-$("#again").onclick = () => s.party ? openParty() : start(s.mode, s.customConfig, customAdult);
+$("#again").onclick = () => {
+  if (s.rush) {
+    clearTimeout(s.rushTimer);
+    clearInterval(s.rushCountdown);
+    s.rushTimer = 0;
+    s.rushCountdown = 0;
+    return start(nextRandomMode(), null, false, true);
+  }
+  if (s.party) return openParty();
+  start(s.mode, s.customConfig, customAdult);
+};
 $("#exitParty").onclick = () => { s.party = false; $("#exitParty").hidden = true; $("#again").textContent = "Play again →"; show("homeScreen"); };
 $("#endGame").onclick = end;
 document
@@ -878,6 +972,7 @@ window.wordrushRecordOnlineWord = (word, points) => {
     pulseAcceptedWord(s.pendingOnlineTrace.trace);
   }
   s.pendingOnlineTrace = null;
+  s.lastWord = word;
   recordAcceptedWord(word);
   updateProfile();
   emit("word-accepted", {
@@ -903,8 +998,11 @@ window.wordrushOnlineRound = (round, config, mode) => {
   );
   s.mode = mode || match?.[0] || "classic";
   s.party = config?.label === "PARTY MODE";
+  s.target = config?.target || (s.mode === "race" ? 500 : null);
+  s.chain = Boolean(config?.chain);
   s.pendingOnlineTrace = null;
   s.suddenDeath = null;
+  s.lastWord = "";
   customAdult = Boolean(config?.adult);
   s.customConfig = [
     config?.label || "MULTIPLAYER",
@@ -916,6 +1014,7 @@ window.wordrushOnlineRound = (round, config, mode) => {
     {
       target: config?.target || null,
       sudden: Boolean(config?.sudden),
+      chain: Boolean(config?.chain),
     },
   ];
   document.body.dataset.mode = s.mode;
@@ -925,24 +1024,45 @@ window.wordrushOnlineRound = (round, config, mode) => {
   s.found.clear();
   s.roundWordTimes = [];
   s.done = 0;
-  s.startedAt = Date.now();
+  s.startedAt = round.startsAt || Date.now();
+  s.endsAt = round.endsAt || Date.now();
   $("#gameMode").textContent = config?.label || "MULTIPLAYER";
   $("#gameTitle").textContent = "Round 01 · " + round.size + "×" + round.size;
   $("#ruleBanner").textContent = config?.rule || "";
   $("#gameHint").textContent = "Minimum " + (config?.min || 3) + " letters";
   const updateOnlineTimer = () => {
-    s.time = Math.max(0, Math.ceil((round.endsAt - Date.now()) / 1000));
+    s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
     $("#timer").textContent = formatTimer(s.time);
   };
   clearInterval(s.timer);
-  updateOnlineTimer();
-  s.timer = setInterval(updateOnlineTimer, 250);
   render();
-  show("gameScreen");
-  emit("round-started");
+  showRoundIntro({
+    label: config?.label || "MULTIPLAYER",
+    rule: config?.rule || "Multiplayer round",
+    detail: "Everyone is in · start when you’re ready",
+    duration: Math.max(0, (round.introEndsAt || Date.now() + 4000) - Date.now()),
+    onStart: () => {
+      show("gameScreen");
+      updateOnlineTimer();
+      s.timer = setInterval(updateOnlineTimer, 250);
+      emit("round-started");
+    },
+  });
+};
+window.wordrushRoundStartNow = (timing = {}) => {
+  if (!s.onlineRoundKey || s.done) return;
+  if (timing.startsAt) s.startedAt = timing.startsAt;
+  if (timing.endsAt) {
+    s.endsAt = timing.endsAt;
+    $("#timer").textContent = formatTimer(
+      Math.max(0, Math.ceil((timing.endsAt - Date.now()) / 1000)),
+    );
+  }
+  finishRoundIntro();
 };
 window.wordrushOnlineFinish = (ranking, result = {}) => {
   if (s.done) return;
+  cancelRoundIntro();
   s.done = 1;
   clearInterval(s.timer);
   const guestId = window.wordrushGuestId;

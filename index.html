@@ -27,8 +27,8 @@
         </button>
       </header>
       <section class="screen active" id="homeScreen">
-        <div class="hero-art">
-          <img src="assets/cat-rush.png" alt="Cats playing with letter tiles" />
+        <div class="hero-art" aria-hidden="true">
+          <span>W</span><span>O</span><span>R</span><span>D</span><b>✦</b><span>R</span><span>U</span><span>S</span><span>H</span>
         </div>
         <div class="stats home-stats">
           <div><b id="homeScore">0</b><small>all-time score</small></div>
@@ -100,6 +100,21 @@
           <button class="game-mode-card mode-minimum" data-mode="minimum">
             <span>🦒</span><div><small>WORD STRETCH</small><strong>Make every word count</strong><em>Long words only</em></div><b>→</b>
           </button>
+          <button class="game-mode-card mode-blitz" data-mode="blitz">
+            <span>⚡</span><div><small>BLITZ</small><strong>Move fast, score faster</strong><em>60 seconds · lightning words</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-longhaul" data-mode="longhaul">
+            <span>🗻</span><div><small>LONG HAUL</small><strong>Go big or go home</strong><em>6+ letters · 6×6 grid</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-storm" data-mode="storm">
+            <span>🌪️</span><div><small>LETTER STORM</small><strong>Search every corner</strong><em>8×8 grid · 120 seconds</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-scoreattack" data-mode="scoreattack">
+            <span>🎯</span><div><small>SCORE ATTACK</small><strong>Hit 250 before time</strong><em>First to 250 points wins</em></div><b>→</b>
+          </button>
+          <button class="game-mode-card mode-chain" data-mode="chain">
+            <span>🔗</span><div><small>WORD CHAIN</small><strong>Keep the chain alive</strong><em>Each word follows the last</em></div><b>→</b>
+          </button>
           <button class="game-mode-card mode-custom" id="customGame">
             <span>⚙️</span><div><small>CUSTOM GAME</small><strong>Make the rules yours</strong><em>Choose the grid, goal, and timer</em></div><b>→</b>
           </button>
@@ -122,6 +137,21 @@
             <strong>♢</strong><b>Grid master</b><small>Win on 8×8</small>
           </article>
         </div>
+      </section>
+      <section class="screen round-intro-screen" id="roundIntroScreen">
+        <div class="intro-orbit" aria-hidden="true">
+          <i>W</i><i>O</i><i>R</i><i>D</i><b>✦</b><i>R</i><i>U</i><i>S</i><i>H</i>
+        </div>
+        <p class="eyebrow">NEXT UP</p>
+        <h1 id="introMode">CLASSIC</h1>
+        <div class="intro-rule-card">
+          <small>THE RULE</small>
+          <h2 id="introRule">Make words. Make noise.</h2>
+          <p id="introDetail">Your board is ready</p>
+        </div>
+        <div class="intro-countdown" id="introCountdown" aria-live="polite">4</div>
+        <button class="primary intro-start" id="introStart" type="button">Start now →</button>
+        <small class="intro-auto">Auto-starts when the countdown hits GO</small>
       </section>
       <section class="screen" id="gameScreen">
         <div class="game-head">
