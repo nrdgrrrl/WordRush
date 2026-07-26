@@ -229,6 +229,7 @@ function state(room) {
       id: p.id,
       name: p.name,
       avatar: p.avatar || "🐈",
+      connected: p.ws?.readyState === 1,
       score: playerScore(room, p),
       session: {
         wins: p.sessionWins,
@@ -557,12 +558,9 @@ function leave(ws) {
   if (!player || player.ws !== ws) return;
   clearTimeout(player.disconnectTimer);
   player.disconnectTimer = null;
-  // The active host owns the room lifetime. Keep a disconnected guest's seat
-  // and score until that room closes because mobile browsers can suspend guest
-  // reconnect timers for far longer than the host recovery grace period.
-  if (info.id === room.creatorId) {
-    schedulePlayerExpiry(room, player, ws);
-  }
+  // Preserve the seat during the bounded reconnect grace period for both host
+  // and guest, then remove stale guests or close an abandoned room.
+  schedulePlayerExpiry(room, player, ws);
   broadcast(room, state(room));
 }
 function handle(ws, message) {
