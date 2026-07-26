@@ -1879,6 +1879,9 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
   });
   await page.waitForSelector("#resultsScreen.active");
   assert.equal(await page.locator(".result-player-card").count(), 2);
+  assert.equal(await page.locator("#staticResultsView").isHidden(), false);
+  assert.equal(await page.locator("#animatedResultsView").isHidden(), true);
+  assert.equal(await page.locator("#staticResultsButton").getAttribute("aria-pressed"), "true");
   assert.match(await page.locator("#resultLongestWord").textContent(), /PLANETS · 49 pts/);
   assert.match(await page.locator("#resultTopPlayer").textContent(), /Comet/);
   assert.match(await page.locator(".result-session-record").first().textContent(), /2W · 1L · 149 session pts/);
@@ -1891,6 +1894,9 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
   assert.ok(presentation.heroRadius >= 20);
   assert.notEqual(presentation.first, presentation.second);
   await page.locator("#animatedResultsButton").click();
+  assert.equal(await page.locator("#animatedResultsView").isHidden(), false);
+  assert.equal(await page.locator("#staticResultsView").isHidden(), true);
+  assert.equal(await page.locator("#animatedResultsButton").getAttribute("aria-pressed"), "true");
   await page.waitForSelector(".reveal-word.word-length-long");
   assert.equal(await page.locator(".reveal-word.word-length-medium").count(), 1);
   assert.equal(await page.locator(".reveal-session-record").count(), 2);
@@ -1936,6 +1942,10 @@ test("animated results safely render ten players without phone overflow", async 
   await page.waitForSelector("#resultsScreen.active");
   await page.waitForTimeout(450);
   assert.equal(await page.locator(".reveal-player").count(), 10);
+  await page.locator("#staticResultsButton").click();
+  assert.equal(await page.locator("#staticResultsView").isHidden(), false);
+  assert.equal(await page.locator("#animatedResultsView").isHidden(), true);
+  assert.equal(await page.locator("#staticResultsButton").getAttribute("aria-pressed"), "true");
   assert.equal(await page.locator("#result-xss").count(), 0);
   assert.equal(await page.locator("#revealTotal").textContent(), "250");
   assert.equal(
@@ -1975,8 +1985,13 @@ test("Word Party is forced for every player and celebrates sudden death", async 
     );
   });
   await page.waitForSelector("#resultsScreen.active");
+  assert.equal(await page.locator("#animatedResultsView").isHidden(), true);
+  assert.equal(await page.locator("#staticResultsView").isHidden(), false);
+  assert.equal(await page.locator("#staticResultsButton").getAttribute("aria-pressed"), "true");
+  await page.locator("#animatedResultsButton").click();
   assert.equal(await page.locator("#animatedResultsView").isHidden(), false);
   assert.equal(await page.locator("#staticResultsView").isHidden(), true);
+  assert.equal(await page.locator("#animatedResultsButton").getAttribute("aria-pressed"), "true");
   assert.equal(await page.locator(".reveal-player").count(), 3);
   assert.equal(await page.locator(".result-hero-score-card").count(), 2);
   assert.equal(

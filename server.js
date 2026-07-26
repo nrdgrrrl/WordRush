@@ -841,7 +841,11 @@ function handle(ws, message) {
   if (type === "set_results_settings") {
     if (room.status !== "finished")
       return send(ws, { type: "error", code: "RESULTS_NOT_READY" });
-    const view = "reveal";
+    // Multiplayer result presentation is host-controlled; solo preferences
+    // remain local and never reach this handler.
+    if (client.id !== room.creatorId)
+      return send(ws, { type: "error", code: "CREATOR_ONLY" });
+    const view = message.view === "static" ? "static" : "reveal";
     const speed = ["slow", "medium", "fast"].includes(message.speed)
       ? message.speed
       : room.results.speed;

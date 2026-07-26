@@ -10,6 +10,7 @@
   let resultRows = [];
   let revealTimer = null;
   let revealToken = 0;
+  let renderedView = null;
 
   function localRow() {
     const profile = window.wordrushProfile?.() || {
@@ -141,7 +142,7 @@
     revealNextGroup();
   }
 
-  function applyResults() {
+  function applyResults(restartReveal = false) {
     const reveal = settings.view === "reveal";
     $("#staticResultsView").hidden = reveal;
     $("#animatedResultsView").hidden = !reveal;
@@ -154,16 +155,24 @@
       button.classList.toggle("active", active);
       button.setAttribute("aria-pressed", String(active));
     });
-    if (reveal) renderReveal();
-    else {
+    if (reveal && (restartReveal || renderedView !== "reveal")) renderReveal();
+    else if (!reveal) {
       revealToken++;
       clearTimeout(revealTimer);
     }
+    renderedView = reveal ? "reveal" : "static";
   }
 
   function setSettings(next, broadcast = false) {
+    if (
+      broadcast &&
+      window.wordrushSessionCode &&
+      window.wordrushCanSetResultsSettings === false
+    )
+      return;
+    const previousView = settings.view;
     settings = {
-      view: "reveal",
+      view: next.view === "static" ? "static" : "reveal",
       speed: Object.hasOwn(SPEEDS, next.speed) ? next.speed : settings.speed,
     };
     localStorage.setItem("wordrush-results-view", settings.view);
@@ -177,12 +186,13 @@
         JSON.stringify({ type: "set_results_settings", ...settings }),
       );
     }
-    applyResults();
+    applyResults(previousView !== settings.view);
   }
 
   document.addEventListener("wordrush:round-started", () => {
     localWords = [];
     resultRows = [];
+    renderedView = null;
     revealToken++;
     clearTimeout(revealTimer);
   });
@@ -205,9 +215,13 @@
       words: player.words || [],
     }));
     if (detail.result?.results)
-      settings = { ...settings, ...detail.result.results, view: "reveal" };
+      settings = {
+        ...settings,
+        ...detail.result.results,
+        view: detail.result.results.view === "static" ? "static" : "reveal",
+      };
     renderHighlights(rows());
-    applyResults();
+    applyResults(true);
   });
 
   window.wordrushResultsSettings = (next) => setSettings(next, false);

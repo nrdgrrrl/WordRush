@@ -152,6 +152,7 @@
     if (code) endedSessionCode = code;
     sessionCode = "";
     window.wordrushSessionCode = "";
+    delete window.wordrushCanSetResultsSettings;
     creator = false;
     creatorId = "";
     roomStatus = "";
@@ -394,6 +395,7 @@
       if (message.type === "room_state" && message.code !== endedSessionCode) {
         roomStatus = message.status;
         creatorId = message.creatorId;
+        window.wordrushCanSetResultsSettings = creatorId === guestId;
         updateLobbyControls();
         renderPlayers(message.players);
         if (message.code && !sessionCode)

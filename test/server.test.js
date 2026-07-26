@@ -892,7 +892,7 @@ test("creator can start a sanitized custom round for every player", async () => 
   guest.close();
 });
 
-test("only the creator can end a round but every player can sync result controls", async () => {
+test("only the creator can end a round and sync shared result controls", async () => {
   const host = await client("control-host");
   const guest = await client("control-guest");
   const createdPromise = next(host, "room_created");
@@ -920,9 +920,12 @@ test("only the creator can end a round but every player can sync result controls
   );
   assert.equal(profileResponse.status, 200);
   assert.equal((await profileResponse.json()).multiplayerWins, 1);
+  const deniedSettings = next(guest, "error");
+  message(guest, "set_results_settings", { view: "reveal", speed: "fast" });
+  assert.equal((await deniedSettings).code, "CREATOR_ONLY");
   const hostSettings = next(host, "results_settings");
   const guestSettings = next(guest, "results_settings");
-  message(guest, "set_results_settings", { view: "reveal", speed: "fast" });
+  message(host, "set_results_settings", { view: "reveal", speed: "fast" });
   assert.deepEqual((await hostSettings).results, {
     view: "reveal",
     speed: "fast",
