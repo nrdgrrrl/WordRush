@@ -1252,13 +1252,22 @@ async function leaderboardRequest(req, res) {
     return res.end(JSON.stringify(player));
   }
   if (url.pathname === "/api/leaderboard/score" && req.method === "POST") {
-    const body = await readJson(req);
-    if (!body || !body.id) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ error: "INVALID_SCORE" }));
+    if (!rateLimit("leaderboard-score:" + clientIp(req), 30)) {
+      res.writeHead(429, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      return res.end(JSON.stringify({ error: "RATE_LIMITED" }));
     }
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify(leaderboard.recordScore(body)));
+    // Solo rounds run entirely in the browser, so their reported score and
+    // identity cannot be verified here. Multiplayer results are recorded only
+    // from authoritative room state in finishRound(). Never accept a public
+    // payload that could spoof a player or inflate the global leaderboard.
+    res.writeHead(410, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    return res.end(JSON.stringify({ error: "UNVERIFIED_SCORE" }));
   }
   return false;
 }

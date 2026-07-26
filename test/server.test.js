@@ -958,6 +958,47 @@ test("room cleanup releases guests so they can create a new session", async () =
   host.close();
 });
 
+test("public leaderboard submissions are rejected without touching persistence", async () => {
+  const endpoint =
+    "http://127.0.0.1:" + server.address().port + "/api/leaderboard/score";
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: "spoofed-player",
+      name: "Imposter",
+      score: 1000000,
+      multiplayer: true,
+      multiplayerWin: true,
+    }),
+  });
+  assert.equal(response.status, 410);
+  assert.deepEqual(await response.json(), { error: "UNVERIFIED_SCORE" });
+  assert.equal(
+    await fetch(
+      "http://127.0.0.1:" +
+        server.address().port +
+        "/api/leaderboard/spoofed-player",
+    ).then((result) => result.status),
+    404,
+  );
+});
+
+test("public leaderboard score rejection is rate limited", async () => {
+  const endpoint =
+    "http://127.0.0.1:" + server.address().port + "/api/leaderboard/score";
+  let last;
+  for (let index = 0; index < 31; index++) {
+    last = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "rate-limit-test", score: index }),
+    });
+  }
+  assert.equal(last.status, 429);
+  assert.deepEqual(await last.json(), { error: "RATE_LIMITED" });
+});
+
 test("security bookkeeping expires and direct LAN clients cannot spoof proxy IPs", () => {
   rateLimits.set("expired-test", { count: 1, expiresAt: 10 });
   pruneExpiredRateLimits(11);
