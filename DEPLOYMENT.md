@@ -13,6 +13,9 @@ connected to the room.
 - The `wordrush` systemd service runs `/opt/node/bin/node` as the `wordrush`
   user and listens only on `127.0.0.1:8013`.
 - The application lives at `/home/victoria/sites/rush/wordrush`.
+- The release tree contains code and static assets only. Runtime state is stored
+  outside it at `/var/lib/wordrush/leaderboard.json` (and the analytics consent
+  file), so a standard Git release does not require live-file patching.
 - Runtime configuration lives in `/etc/wordrush/rush.env` and must remain
   `root:wordrush`, mode `0640`. Do not add it to Git or copy its contents into
   shell history, tickets, or logs.
@@ -25,6 +28,24 @@ connected to the room.
   authoritative normal-word dictionary; production intentionally refuses to
   start without it so the browser and multiplayer server cannot silently use
   different vocabularies.
+
+The public leaderboard trust model is authoritative multiplayer only. Browser
+solo scores are never persisted; the legacy score endpoint returns
+`410 UNVERIFIED_SCORE`. Before the first release that uses the trusted schema,
+discard pre-release test data explicitly, while the service is stopped:
+
+```sh
+sudo install -o wordrush -g wordrush -m 0750 -d /var/lib/wordrush
+sudo -u wordrush env \
+  WORDRUSH_LEADERBOARD_FILE=/var/lib/wordrush/leaderboard.json \
+  /opt/node/bin/node /home/victoria/sites/rush/wordrush/scripts/reset-leaderboard.js \
+  --confirm-reset
+```
+
+The command refuses unsafe targets, leaves a dated sibling backup for any
+existing data, and atomically installs the empty schema. It is idempotent once
+the file is already an empty trusted schema. Verify its reported backup,
+checksum, and size before restarting. Do not delete or edit the file manually.
 
 ## Health and logs
 
