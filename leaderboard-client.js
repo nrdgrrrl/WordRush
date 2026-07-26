@@ -1,7 +1,4 @@
 (() => {
-  const guestId =
-    localStorage.getItem("wordrush-guest-id") || crypto.randomUUID();
-  localStorage.setItem("wordrush-guest-id", guestId);
   const request = (url, options) =>
     fetch(url, options).then((response) => {
       if (!response.ok) throw new Error("leaderboard request failed");
@@ -9,11 +6,6 @@
     });
   let loadToken = 0;
   let profileLoadToken = 0;
-  const scoreRound = (detail) => {
-    // Solo rounds are browser-reported and cannot be verified by the server.
-    // Public leaderboard records come from authoritative multiplayer results.
-    if (!detail.multiplayer) return;
-  };
   function addUI() {
     const card = document.querySelector("#sessionCard");
     if (!card || document.querySelector("#scoreboardButton")) return;
@@ -134,8 +126,5 @@
       })
       .catch(() => {});
   }
-  document.addEventListener("wordrush:round-complete", ({ detail }) => {
-    scoreRound(detail);
-  });
   addUI();
 })();

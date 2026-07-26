@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { Leaderboard, weekKey } = require("../leaderboard");
+const { Leaderboard, SCHEMA_VERSION, TRUST_MODEL, weekKey } = require("../leaderboard");
 
 test("leaderboard persists scores and separates weekly and total rankings", () => {
   const file = path.join(
@@ -93,4 +93,42 @@ test("leaderboard sanitizes identity text and caps untrusted score payloads", ()
   assert.equal(player.totalScore, 1000000);
   assert.equal(player.totalWords, 10000);
   assert.equal(player.totalGameSeconds, 600);
+});
+
+test("leaderboard requires the current trusted schema and quarantines invalid files", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-leaderboard-schema-"));
+  const cases = [
+    ["missing", null],
+    ["malformed", "not json"],
+    ["legacy", JSON.stringify({ players: { old: { id: "old" } } })],
+    ["incompatible", JSON.stringify({ schemaVersion: 1, trustModel: TRUST_MODEL, players: {} })],
+    ["structural", JSON.stringify({ schemaVersion: SCHEMA_VERSION, trustModel: TRUST_MODEL, players: { bad: null } })],
+  ];
+  for (const [label, contents] of cases) {
+    const file = path.join(directory, label + ".json");
+    if (contents !== null) fs.writeFileSync(file, contents);
+    const board = new Leaderboard(file);
+    assert.deepEqual(board.rankings("weekly"), []);
+    assert.equal(board.profile("old"), null);
+    if (contents !== null) {
+      assert.throws(() => board.recordScore({ id: "should-not-overwrite", score: 1 }), /EXPLICIT_RESET/);
+      assert.equal(fs.readFileSync(file, "utf8"), contents);
+    }
+  }
+});
+
+test("current trusted schema persists across all ranking periods", () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-leaderboard-current-")), "scores.json");
+  const board = new Leaderboard(file);
+  board.recordScores([
+    { id: "winner", name: "Winner", score: 50, words: 2, correct: 2, totalWordLength: 8, multiplayer: true, multiplayerWin: true },
+    { id: "loser", name: "Loser", score: 20, words: 1, correct: 1, totalWordLength: 4, multiplayer: true, multiplayerWin: false },
+  ]);
+  const persisted = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.deepEqual({ schemaVersion: persisted.schemaVersion, trustModel: persisted.trustModel }, { schemaVersion: 2, trustModel: TRUST_MODEL });
+  for (const period of ["weekly", "total", "multiplayer-wins", "multiplayer-ratio"])
+    assert.ok(board.rankings(period).length > 0, period);
+  const reloaded = new Leaderboard(file);
+  assert.equal(reloaded.profile("winner").totalWords, 2);
+  assert.equal(reloaded.profile("nobody"), null);
 });
