@@ -3,7 +3,36 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const { Leaderboard, SCHEMA_VERSION, TRUST_MODEL, weekKey } = require("../leaderboard");
+
+test("leaderboard defaults stay writable for LAN and use state storage in production", () => {
+  const script = "process.stdout.write(require('./leaderboard').DEFAULT_FILE)";
+  const baseEnv = { ...process.env };
+  delete baseEnv.NODE_ENV;
+  delete baseEnv.STATE_DIRECTORY;
+  delete baseEnv.WORDRUSH_LEADERBOARD_FILE;
+
+  const local = spawnSync(process.execPath, ["-e", script], {
+    cwd: path.join(__dirname, ".."),
+    env: baseEnv,
+    encoding: "utf8",
+  });
+  assert.equal(local.status, 0, local.stderr);
+  assert.equal(local.stdout, path.join(__dirname, "..", "data", "leaderboard.json"));
+
+  const production = spawnSync(process.execPath, ["-e", script], {
+    cwd: path.join(__dirname, ".."),
+    env: {
+      ...baseEnv,
+      NODE_ENV: "production",
+      STATE_DIRECTORY: "/var/lib/wordrush",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(production.status, 0, production.stderr);
+  assert.equal(production.stdout, "/var/lib/wordrush/leaderboard.json");
+});
 
 test("leaderboard persists scores and separates weekly and total rankings", () => {
   const file = path.join(
