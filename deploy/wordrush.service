@@ -8,6 +8,7 @@ User=wordrush
 Group=wordrush
 WorkingDirectory=/home/victoria/sites/rush/wordrush
 Environment=PATH=/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=WORDRUSH_LEADERBOARD_FILE=/var/lib/wordrush/leaderboard.json
 EnvironmentFile=/etc/wordrush/rush.env
 ExecStart=/opt/node/bin/node /home/victoria/sites/rush/wordrush/server.js
 Restart=on-failure
