@@ -400,6 +400,8 @@
         renderPlayers(message.players);
         if (message.code && !sessionCode)
           showLobby(message.code, message.creatorId === guestId);
+        else
+          window.dispatchEvent(new CustomEvent("wordrush:room-change"));
         if (message.round && message.status === "playing") {
           window.wordrushOnlineRound?.(
             message.round,

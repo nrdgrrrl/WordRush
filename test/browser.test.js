@@ -2054,3 +2054,224 @@ test("Word Party is forced for every player and celebrates sudden death", async 
   assert.ok(revealLayout.thirdBottom > 0);
   await browser.close();
 });
+
+test("solo results view preference survives reload", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    localStorage.setItem("wordrush-results-view", "static");
+    localStorage.setItem("wordrush-results-speed", "fast");
+  });
+  await page.reload();
+  await page.evaluate(() => {
+    const guestId = window.wordrushGuestId;
+    window.wordrushOnlineRound(
+      { board: Array(16).fill("A"), size: 4, endsAt: Date.now() + 60000 },
+      { label: "CLASSIC", min: 3, rule: "Multiplayer round" },
+      "classic",
+    );
+    window.wordrushOnlineFinish([
+      {
+        id: guestId,
+        name: "Player",
+        avatar: "🐈",
+        score: 49,
+        words: [{ word: "PLANETS", points: 49 }],
+      },
+    ], {});
+  });
+  await page.waitForSelector("#resultsScreen.active");
+  assert.equal(await page.locator("#staticResultsView").isHidden(), false);
+  assert.equal(await page.locator("#animatedResultsView").isHidden(), true);
+  assert.equal(await page.locator("#staticResultsButton").getAttribute("aria-pressed"), "true");
+  await page.locator("#animatedResultsButton").click();
+  assert.equal(await page.locator("#animatedResultsView").isHidden(), false);
+  assert.equal(await page.locator("#staticResultsView").isHidden(), true);
+  assert.equal(await page.locator("#animatedResultsButton").getAttribute("aria-pressed"), "true");
+  await page.reload();
+  await page.evaluate(() => {
+    const guestId = window.wordrushGuestId;
+    window.wordrushOnlineRound(
+      { board: Array(16).fill("A"), size: 4, endsAt: Date.now() + 60000 },
+      { label: "CLASSIC", min: 3, rule: "Multiplayer round" },
+      "classic",
+    );
+    window.wordrushOnlineFinish([
+      {
+        id: guestId,
+        name: "Player",
+        avatar: "🐈",
+        score: 25,
+        words: [{ word: "STARS", points: 25 }],
+      },
+    ], {});
+  });
+  await page.waitForSelector("#resultsScreen.active");
+  assert.equal(await page.locator("#animatedResultsView").isHidden(), false);
+  assert.equal(await page.locator("#staticResultsView").isHidden(), true);
+  assert.equal(await page.locator("#animatedResultsButton").getAttribute("aria-pressed"), "true");
+  await browser.close();
+});
+
+test("solo preference restored after multiplayer session ends", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    localStorage.setItem("wordrush-results-view", "static");
+    localStorage.setItem("wordrush-results-speed", "fast");
+  });
+  await page.reload();
+  await page.evaluate(() => {
+    const guestId = window.wordrushGuestId;
+    window.wordrushOnlineRound(
+      { board: Array(16).fill("A"), size: 4, endsAt: Date.now() + 60000 },
+      { label: "CLASSIC", min: 3, rule: "Multiplayer round" },
+      "classic",
+    );
+    window.wordrushOnlineFinish([
+      {
+        id: guestId,
+        name: "Player",
+        avatar: "🐈",
+        score: 49,
+        words: [{ word: "PLANETS", points: 49 }],
+      },
+    ], {});
+  });
+  await page.waitForSelector("#resultsScreen.active");
+  assert.equal(await page.locator("#staticResultsView").isHidden(), false);
+  assert.equal(await page.locator("#staticResultsButton").getAttribute("aria-pressed"), "true");
+  const staticInStorage = await page.evaluate(() =>
+    localStorage.getItem("wordrush-results-view")
+  );
+  assert.equal(staticInStorage, "static");
+  await page.evaluate(() => {
+    window.wordrushSessionCode = "ABCDE";
+    window.wordrushCanSetResultsSettings = true;
+    window.dispatchEvent(new CustomEvent("wordrush:room-change"));
+    window.wordrushResultsSettings({ view: "reveal", speed: "fast" });
+  });
+  assert.equal(await page.locator("#animatedResultsView").isHidden(), false);
+  assert.equal(await page.locator("#animatedResultsButton").getAttribute("aria-pressed"), "true");
+  const mpInStorage = await page.evaluate(() =>
+    localStorage.getItem("wordrush-results-view")
+  );
+  assert.equal(mpInStorage, "static");
+  await page.evaluate(() => {
+    delete window.wordrushCanSetResultsSettings;
+    window.wordrushSessionCode = "";
+    window.dispatchEvent(new CustomEvent("wordrush:room-change"));
+  });
+  assert.equal(await page.locator("#staticResultsView").isHidden(), false);
+  assert.equal(await page.locator("#staticResultsButton").getAttribute("aria-pressed"), "true");
+  const finalInStorage = await page.evaluate(() =>
+    localStorage.getItem("wordrush-results-view")
+  );
+  assert.equal(finalInStorage, "static");
+  await browser.close();
+});
+
+test("duplicate results settings do not restart the reveal animation", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const guestId = window.wordrushGuestId;
+    window.wordrushOnlineRound(
+      { board: Array(16).fill("A"), size: 4, endsAt: Date.now() + 60000 },
+      { label: "CLASSIC", min: 3, rule: "Multiplayer round" },
+      "classic",
+    );
+    window.wordrushOnlineFinish([
+      {
+        id: guestId,
+        name: "Player",
+        avatar: "🐈",
+        score: 170,
+        words: [
+          { word: "CAT", points: 9 },
+          { word: "STAR", points: 16 },
+          { word: "PLANET", points: 36 },
+          { word: "GALAXY", points: 36 },
+          { word: "UNIVERSE", points: 64 },
+          { word: "COSMOS", points: 36 },
+          { word: "ASTEROID", points: 64 },
+          { word: "COMET", points: 25 },
+          { word: "NEBULA", points: 36 },
+          { word: "STELLAR", points: 36 },
+        ],
+      },
+    ], {
+      results: { view: "reveal", speed: "slow" },
+    });
+  });
+  await page.waitForSelector("#resultsScreen.active");
+  await page.waitForTimeout(350);
+  const revealedBefore = await page.locator(".reveal-word").count();
+  assert.ok(revealedBefore > 0, "reveal should have started");
+  await page.evaluate(() => {
+    window.wordrushResultsSettings({ view: "reveal", speed: "slow" });
+  });
+  await page.waitForTimeout(100);
+  const revealedAfter = await page.locator(".reveal-word").count();
+  assert.ok(revealedAfter >= revealedBefore, "reveal should not have restarted");
+  await browser.close();
+});
+
+test("multiplayer results authority: host controls view and guest controls are disabled", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const guest = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await host.goto(baseUrl);
+  await guest.goto(baseUrl);
+  await host.locator("#sessionManage").click();
+  await host.locator("#sessionCreate").click();
+  await host.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  const code = await host.locator("#sessionCode").textContent();
+  await guest.goto(baseUrl + "/?join=" + code);
+  await Promise.all([
+    host.waitForFunction(
+      () => document.querySelectorAll("#lobbyPlayers .live-player").length === 2,
+    ),
+    guest.waitForFunction(
+      () => document.querySelectorAll("#lobbyPlayers .live-player").length === 2,
+    ),
+  ]);
+  await host.locator("#sessionType").selectOption("classic");
+  await host.locator("#sessionStart").click();
+  await Promise.all([
+    startIntro(host),
+    startIntro(guest),
+  ]);
+  await host.locator("#endGame").click();
+  await Promise.all([
+    host.waitForSelector("#resultsScreen.active"),
+    guest.waitForSelector("#resultsScreen.active"),
+  ]);
+  await guest.waitForFunction(() =>
+    document.querySelector("#staticResultsButton")?.getAttribute("aria-disabled") === "true"
+  );
+  assert.equal(await host.locator("#staticResultsButton").getAttribute("aria-disabled"), null);
+  assert.equal(await host.locator("#staticResultsButton").evaluate((el) => el.disabled), false);
+  assert.equal(await guest.locator("#staticResultsButton").getAttribute("aria-disabled"), "true");
+  assert.equal(await guest.locator("#staticResultsButton").evaluate((el) => el.disabled), true);
+  assert.ok(
+    (await guest.locator("#staticResultsButton").getAttribute("title")).includes("Only the host"),
+  );
+  await host.locator("#animatedResultsButton").click();
+  await Promise.all([
+    host.waitForFunction(() =>
+      document.querySelector("#animatedResultsView").hidden === false &&
+      document.querySelector("#animatedResultsButton").getAttribute("aria-pressed") === "true"
+    ),
+    guest.waitForFunction(() =>
+      document.querySelector("#animatedResultsView").hidden === false &&
+      document.querySelector("#animatedResultsButton").getAttribute("aria-pressed") === "true"
+    ),
+  ]);
+  await browser.close();
+});
