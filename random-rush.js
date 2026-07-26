@@ -58,11 +58,19 @@
     event.stopPropagation();
     const available = choices.filter((choice) => choice.mode !== selected.mode);
     selected = available[Math.floor(Math.random() * available.length)];
+    window.wordrushAnalytics?.track("random_rush_action", {
+      action: "reroll",
+      selected_mode: selected.mode,
+    });
     render();
   };
   const launch = (event) => {
     if (event.target.closest("#reroll")) return;
     event.preventDefault();
+    window.wordrushAnalytics?.track("random_rush_action", {
+      action: "start",
+      selected_mode: selected.mode,
+    });
     window.start(selected.mode, null, false, true);
   };
   render();

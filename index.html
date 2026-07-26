@@ -82,12 +82,12 @@
           <span>🎉</span><div><small>PARTY MODE</small><strong>Build the next round together</strong><em>Pick grid · words · time</em></div><b>→</b>
         </button>
         <div class="game-mode-stack" aria-label="Game modes">
+          <div class="game-mode-card mode-random is-featured" id="randomPanel" role="button" tabindex="0" aria-label="Start Random Rush">
+            <span>🎲</span><div><small>RANDOM RUSH</small><strong id="randomPreview">Minimum 4 · Sudden death</strong><em id="randomPreviewSub">3 minutes · 5×5 grid</em></div><button id="reroll" type="button" aria-label="Reroll Random Rush">↻</button>
+          </div>
           <button class="game-mode-card mode-classic" data-mode="classic">
             <span>🌈</span><div><small>CLASSIC</small><strong>Two minutes of word joy</strong><em>Free play · 4×4 grid</em></div><b>→</b>
           </button>
-          <div class="game-mode-card mode-random" id="randomPanel" role="button" tabindex="0" aria-label="Start Random Rush">
-            <span>🎲</span><div><small>RANDOM RUSH</small><strong id="randomPreview">Minimum 4 · Sudden death</strong><em id="randomPreviewSub">3 minutes · 5×5 grid</em></div><button id="reroll" type="button" aria-label="Reroll Random Rush">↻</button>
-          </div>
           <button class="game-mode-card mode-sudden" data-mode="sudden">
             <span>⚡</span><div><small>SUDDEN DEATH</small><strong>One miss ends the round</strong><em>All thrill · no safety net</em></div><b>→</b>
           </button>
@@ -327,20 +327,31 @@
             </div>
             <button value="cancel" aria-label="Close">×</button>
           </div>
-          <div id="sessionChoices">
-            <button
-              type="button"
-              class="primary dialog-action"
-              id="sessionCreate"
-            >
-              Create session →</button
-            ><button
-              type="button"
-              class="secondary dialog-action"
-              id="sessionJoin"
-            >
-              Join with code
+          <div id="sessionChoices" class="multiplayer-choices">
+            <div class="multiplayer-welcome">
+              <div class="multiplayer-burst" aria-hidden="true"><span>W</span><b>+</b><span>W</span></div>
+              <p class="eyebrow">MAKE IT A CROWD</p>
+              <h3>Pick a side.<br /><em>Start the chaos.</em></h3>
+              <p>Host a room for your crew, or scan a friend’s QR code to jump straight in.</p>
+            </div>
+            <div class="multiplayer-choice-grid">
+              <button type="button" class="multiplayer-choice multiplayer-choice-create" id="sessionCreate">
+                <span aria-hidden="true">✦</span><strong>Create a room</strong><small>Host the next word battle</small><b>→</b>
+              </button>
+              <button type="button" class="multiplayer-choice multiplayer-choice-scan" id="sessionJoinScan">
+                <span aria-hidden="true">▦</span><strong>Scan to join</strong><small>Use a friend’s QR code</small><b>→</b>
+              </button>
+            </div>
+            <button type="button" class="secondary dialog-action multiplayer-code-button" id="sessionJoin">
+              Enter a room code instead
             </button>
+            <small class="multiplayer-privacy-note">QR scanning stays on this device and only reads a Wordrush room link.</small>
+          </div>
+          <div id="sessionScanner" class="session-scanner" hidden>
+            <div class="scanner-heading"><span>▦</span><div><strong>Scan a Wordrush QR</strong><small>Point your camera at your friend’s room code.</small></div></div>
+            <video id="sessionScannerVideo" playsinline muted aria-label="QR code camera preview"></video>
+            <p id="sessionScannerStatus" role="status" aria-live="polite">Starting camera…</p>
+            <button type="button" class="secondary dialog-action" id="sessionScannerCancel">Cancel scan</button>
           </div>
           <div id="sessionLobby" class="waiting-lobby" hidden>
             <div class="lobby-sparkles" aria-hidden="true">✦ 🎉 ✦</div>
@@ -573,6 +584,7 @@
     <div id="toast"></div>
     <script src="game-config.js"></script>
     <script src="board-core.js"></script>
+    <script src="analytics.js"></script>
     <script src="app.js"></script>
     <script src="stats.js"></script>
     <script src="achievements.js"></script>

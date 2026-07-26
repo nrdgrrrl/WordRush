@@ -9,7 +9,7 @@
     "test": "node --test test/auth.test.js test/core.test.js test/server.test.js test/leaderboard.test.js",
     "test:browser": "node --test test/browser.test.js && node --test test/multiplayer-soak.test.js",
     "test:all": "npm test && npm run test:browser",
-    "check": "node --check game-config.js && node --check board-core.js && node --check app.js && node --check server.js && node --check multiplayer-client.js && node --check cast-sender.js && node --check results.js && node --check receiver/receiver.js",
+    "check": "node --check game-config.js && node --check board-core.js && node --check analytics.js && node --check app.js && node --check achievements.js && node --check leaderboard-client.js && node --check multiplayer-client.js && node --check random-rush.js && node --check cast-sender.js && node --check results.js && node --check stats.js && node --check headless-client.js && node --check server.js && node --check receiver/receiver.js",
     "headless": "node headless-client.js"
   },
   "dependencies": {

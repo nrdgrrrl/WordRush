@@ -4,7 +4,9 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { chromium } = require("playwright");
-process.env.RANDOM_RUSH_DELAY = "50";
+// Leave enough time for all three browsers to observe the results screen before
+// the intentionally automatic Random Rush transition begins.
+process.env.RANDOM_RUSH_DELAY = "1500";
 process.env.WORDRUSH_LEADERBOARD_FILE = path.join(
   fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-soak-")),
   "leaderboard.json",

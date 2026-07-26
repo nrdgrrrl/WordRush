@@ -9,6 +9,8 @@ const { COMMON_WORDS, ADULT_WORDS } = require("../game-config");
 const { neighbors } = require("../game-core");
 process.env.RANDOM_RUSH_DELAY = "50";
 process.env.WORDRUSH_ROOM_RECONNECT_GRACE_MS = "100";
+process.env.WORDRUSH_MAX_WS_PER_IP = "100";
+process.env.WORDRUSH_MAX_WS_MESSAGES_PER_WINDOW = "200";
 process.env.WORDRUSH_LEADERBOARD_FILE = path.join(
   fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-server-")),
   "leaderboard.json",
@@ -674,6 +676,8 @@ test("random multiplayer sessions automatically advance to another round", async
     labels.push((await nextRoundPromise).config.label);
   }
   assert.equal(new Set(labels).size, 6);
+  assert.equal(labels.includes("DIRTY MODE · 18+"), false);
+  assert.equal(labels.includes("CO-OP"), false);
   ws.close();
   rooms.delete(created.code);
 });
@@ -734,6 +738,49 @@ test("competitive players can score the same word independently", async () => {
   );
   host.close();
   guest.close();
+});
+
+test("long haul leaves players with no words at zero", async () => {
+  const host = await client("longhaul-host");
+  const guest = await client("longhaul-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room", { customWords: ["PLANET"] });
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "longhaul" });
+  const started = await startedPromise;
+  const room = rooms.get(created.code);
+  room.round.board = [
+    "P", "L", "A", "N", "E", "T",
+    ...Array(30).fill("X"),
+  ];
+  const accepted = next(host, "word_accepted");
+  message(host, "submit_word", { word: "PLANET", path: [0, 1, 2, 3, 4, 5] });
+  const scoreUpdate = await accepted;
+  const guestScore = scoreUpdate.scores.find((player) => player.id === "longhaul-guest");
+  assert.equal(guestScore.score, 0);
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  const finished = await finishedPromise;
+  const guestResult = finished.ranking.find((player) => player.id === "longhaul-guest");
+  assert.equal(guestResult.score, 0);
+  assert.deepEqual(guestResult.words, []);
+  assert.equal(started.config.min, 6);
+  await Promise.all([
+    new Promise((resolve) => {
+      host.once("close", resolve);
+      host.close();
+    }),
+    new Promise((resolve) => {
+      guest.once("close", resolve);
+      guest.close();
+    }),
+  ]);
 });
 
 test("creator can start a sanitized custom round for every player", async () => {
@@ -864,7 +911,39 @@ test("static serving exposes only browser assets and keeps runtime data private"
     }).on("error", reject);
   });
   assert.equal(await request("/board-core.js"), 200);
+  assert.equal(await request("/analytics.js"), 200);
   assert.equal(await request("/data/leaderboard.json"), 404);
   assert.equal(await request("/server.js"), 404);
   assert.equal(await request("/.env"), 404);
+});
+
+test("analytics configuration is disabled by default and validates GA4 IDs", async () => {
+  const endpoint =
+    "http://127.0.0.1:" + server.address().port + "/api/analytics-config";
+  const previousId = process.env.WORDRUSH_GOOGLE_ANALYTICS_ID;
+  const previousConsent = process.env.WORDRUSH_ANALYTICS_REQUIRE_CONSENT;
+  try {
+    delete process.env.WORDRUSH_GOOGLE_ANALYTICS_ID;
+    delete process.env.WORDRUSH_ANALYTICS_REQUIRE_CONSENT;
+    assert.deepEqual(await (await fetch(endpoint)).json(), {
+      measurementId: null,
+      requireConsent: true,
+    });
+
+    process.env.WORDRUSH_GOOGLE_ANALYTICS_ID = "not-a-measurement-id";
+    assert.equal((await (await fetch(endpoint)).json()).measurementId, null);
+
+    process.env.WORDRUSH_GOOGLE_ANALYTICS_ID = "g-abc12345";
+    process.env.WORDRUSH_ANALYTICS_REQUIRE_CONSENT = "0";
+    assert.deepEqual(await (await fetch(endpoint)).json(), {
+      measurementId: "G-ABC12345",
+      requireConsent: false,
+    });
+  } finally {
+    if (previousId === undefined) delete process.env.WORDRUSH_GOOGLE_ANALYTICS_ID;
+    else process.env.WORDRUSH_GOOGLE_ANALYTICS_ID = previousId;
+    if (previousConsent === undefined)
+      delete process.env.WORDRUSH_ANALYTICS_REQUIRE_CONSENT;
+    else process.env.WORDRUSH_ANALYTICS_REQUIRE_CONSENT = previousConsent;
+  }
 });

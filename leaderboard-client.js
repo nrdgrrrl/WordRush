@@ -12,6 +12,7 @@
       return response.json();
     });
   let loadToken = 0;
+  let profileLoadToken = 0;
   const readStoredProfile = () => {
     try {
       return JSON.parse(localStorage.getItem("wordrush-profile") || "{}");
@@ -29,13 +30,6 @@
     const score = own?.score ?? detail.ranking?.[0]?.score;
     const value = Number(score) || 0;
     const current = readStoredProfile();
-    if (!value) {
-      sessionStorage.setItem(
-        "wordrush-leaderboard-baseline",
-        JSON.stringify(current),
-      );
-      return;
-    }
     const previous = (() => {
       try {
         return JSON.parse(
@@ -119,7 +113,10 @@
     document.body.append(dialog);
     dialog
       .querySelector("#leaderboardProfileClose")
-      .addEventListener("click", () => dialog.close());
+      .addEventListener("click", () => {
+        profileLoadToken++;
+        dialog.close();
+      });
   }
   function openBoard() {
     document
@@ -170,8 +167,10 @@
       });
   }
   function showProfile(id) {
+    const token = ++profileLoadToken;
     request("/api/leaderboard/" + encodeURIComponent(id))
       .then((player) => {
+        if (token !== profileLoadToken) return;
         const dialog = document.querySelector("#leaderboardProfileDialog");
         document.querySelector("#leaderboardProfileName").textContent =
           player.avatar + " " + player.name;

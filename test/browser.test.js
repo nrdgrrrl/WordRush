@@ -469,8 +469,13 @@ test("new modes show animated rules and Random Rush can continue immediately", a
   await page.locator("#endGame").click();
   await page.waitForSelector("#resultsScreen.active");
   assert.match(await page.locator("#again").textContent(), /Continue Random Rush/);
+  const upcoming = (await page.locator("#resultName").textContent())
+    .replace(/^Up next:\s*/i, "")
+    .trim();
+  assert.ok(upcoming, "results should name the upcoming Random Rush mode");
   await page.locator("#again").click();
   assert.equal(await page.locator("#roundIntroScreen").isVisible(), true);
+  assert.equal((await page.locator("#introMode").textContent()).trim(), upcoming);
   await browser.close();
 });
 
@@ -645,7 +650,12 @@ test("random rush rolls into a different game and can be stopped", async () => {
     if (round === 3) break;
     await page.locator("#endGame").click();
     await page.waitForSelector("#resultsScreen.active");
+    const resultHeading = await page.locator("#resultName").textContent();
+    assert.match(resultHeading, /^Up next: /);
+    const upcoming = resultHeading.replace(/^Up next:\s*/, "");
     await page.locator("#again").click();
+    await page.waitForSelector("#roundIntroScreen.active");
+    assert.equal(await page.locator("#introMode").textContent(), upcoming);
     await startIntro(page);
   }
   assert.equal(new Set(modes).size, 4);
@@ -844,6 +854,62 @@ test("multiplayer creates a five-letter session and launches co-op", async () =>
   await browser.close();
 });
 
+test("home leads with Random Rush and offers a camera join path", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  assert.deepEqual(await page.evaluate(() => window.wordrushAnalytics.status()), {
+    enabled: false,
+    ready: false,
+    consent: "unset",
+  });
+  assert.equal(await page.locator("#analyticsConsent").count(), 0);
+  assert.equal(
+    await page.locator(".game-mode-stack > :first-child").getAttribute("id"),
+    "randomPanel",
+  );
+  await page.locator("#sessionManage").click();
+  assert.equal(await page.locator("#sessionJoinScan").isVisible(), true);
+  assert.equal((await page.locator("#sessionJoin").textContent()).trim(), "Enter a room code instead");
+  assert.equal(await page.locator("#sessionScanner").isHidden(), true);
+  const dialogWidth = await page.locator("#multiplayerDialog").evaluate((node) => node.getBoundingClientRect().width);
+  assert.ok(dialogWidth >= 350, `expected an expanded entry dialog, got ${dialogWidth}px`);
+  await page.locator('#multiplayerDialog button[value="cancel"]').click();
+  await browser.close();
+});
+
+test("analytics honors a saved denial even when server consent is optional", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const context = await browser.newContext();
+  await context.route("**/api/analytics-config", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        measurementId: "G-ABC12345",
+        requireConsent: false,
+      }),
+    }),
+  );
+  let googleRequests = 0;
+  context.on("request", (request) => {
+    if (/google-analytics|googletagmanager/.test(request.url())) googleRequests++;
+  });
+  const page = await context.newPage();
+  await page.addInitScript(() =>
+    localStorage.setItem("wordrush-analytics-consent", "denied"),
+  );
+  await page.goto(baseUrl);
+  await page.waitForFunction(() => window.wordrushAnalytics.status().enabled);
+  assert.deepEqual(await page.evaluate(() => window.wordrushAnalytics.status()), {
+    enabled: true,
+    ready: false,
+    consent: "denied",
+  });
+  assert.equal(await page.locator("#analyticsConsent").count(), 0);
+  assert.equal(googleRequests, 0);
+  await browser.close();
+});
+
 test("a joining guest cannot fall through to solo play and the host can reopen the QR", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -966,6 +1032,10 @@ test("live multiplayer scores are equally prominent and color opponents differen
   );
   await host.locator("#sessionType").selectOption("classic");
   await host.locator("#sessionStart").click();
+  await Promise.all([
+    host.waitForSelector("#roundIntroScreen.active"),
+    guest.waitForSelector("#roundIntroScreen.active"),
+  ]);
   await Promise.all([
     startIntro(host),
     startIntro(guest),

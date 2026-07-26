@@ -110,8 +110,8 @@ function securityHeaders(res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "same-origin");
   res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' https://www.gstatic.com; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+  res.setHeader("Permissions-Policy", "camera=(self), microphone=(), geolocation=()");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self' ws: wss: https://www.google-analytics.com https://region1.google-analytics.com; img-src 'self' data: https://www.google-analytics.com; style-src 'self' 'unsafe-inline'; script-src 'self' https://www.gstatic.com https://www.googletagmanager.com; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
 }
 async function authorizeRequest(req, res) {
   securityHeaders(res);
@@ -197,6 +197,19 @@ function roomConfig(room) {
     MODE_CONFIG.classic
   );
 }
+function recordedScore(player) {
+  return (player.words || []).reduce(
+    (total, item) => total + Math.max(0, Number(item.points) || 0),
+    0,
+  );
+}
+function playerScore(room, player) {
+  return room.mode === "coop"
+    ? room.teamScore
+    : room.mode === "longhaul" && Array.isArray(player.words)
+      ? recordedScore(player)
+      : Number(player.score) || 0;
+}
 function state(room) {
   return {
     type: "room_state",
@@ -212,7 +225,7 @@ function state(room) {
       id: p.id,
       name: p.name,
       avatar: p.avatar || "🐈",
-      score: p.score,
+      score: playerScore(room, p),
       session: {
         wins: p.sessionWins,
         losses: p.sessionLosses,
@@ -242,7 +255,7 @@ function displayState(room) {
     players: [...room.players.values()].map((p) => ({
       name: p.name,
       avatar: p.avatar || "🐈",
-      score: p.score,
+      score: playerScore(room, p),
       session: {
         wins: p.sessionWins,
         losses: p.sessionLosses,
@@ -300,8 +313,6 @@ const RANDOM_MODES = [
   "minimum",
   "sudden",
   "race",
-  "coop",
-  "dirty",
   "blitz",
   "longhaul",
   "storm",
@@ -372,6 +383,8 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
   if (!room.round || room.status !== "playing") return;
   clearTimeout(room.round.timer);
   room.status = "finished";
+  for (const player of room.players.values())
+    player.score = playerScore(room, player);
   const rankedPlayers = [...room.players.values()]
     .sort((a, b) => b.score - a.score);
   const winningScore = rankedPlayers[0]?.score;
@@ -389,6 +402,7 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
     roundId: room.round.id,
     gameSeconds,
     cooperative: room.mode === "coop",
+    randomRush: room.randomRush,
     teamScore: room.teamScore,
     stats: { wordsFound: room.round.found.size },
     results: room.results,
@@ -398,7 +412,7 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
         id: p.id,
         name: p.name,
         avatar: p.avatar || "🐈",
-        score: p.score,
+        score: playerScore(room, p),
         words: p.words || [],
         session: {
           wins: p.sessionWins,
@@ -594,7 +608,7 @@ function handle(ws, message) {
   if (type === "hello") {
     if (clients.has(ws))
       return send(ws, { type: "error", code: "HELLO_ALREADY_RECEIVED" });
-    const id = String(message.guestId || crypto.randomUUID());
+    const id = cleanText(message.guestId, crypto.randomUUID(), 80);
     clients.set(ws, {
       id,
       name: cleanText(message.name, "Guest"),
@@ -849,7 +863,7 @@ function handle(ws, message) {
       result = { ...result, valid: false, reason: "chain", points: 0 };
     if (!result.valid) {
       console.warn("Wordrush rejected submission", JSON.stringify({
-        word: result.word,
+        wordLength: result.word.length,
         reason: result.reason,
         validationMode: room.round.validationMode,
         minimum: roomConfig(room).min,
@@ -883,6 +897,7 @@ function handle(ws, message) {
     } else player.score += result.points;
     player.words = player.words || [];
     player.words.push({ word: result.word, points: result.points });
+    player.score = playerScore(room, player);
     broadcast(room, {
       type: "word_accepted",
       playerId: client.id,
@@ -892,7 +907,7 @@ function handle(ws, message) {
         id: p.id,
         name: p.name,
         avatar: p.avatar || "🐈",
-        score: p.score,
+        score: playerScore(room, p),
       })),
     });
     if (
@@ -937,6 +952,7 @@ const server = http.createServer((req, res) => {
     "/multiplayer.css",
     "/game-config.js",
     "/board-core.js",
+    "/analytics.js",
     "/app.js",
     "/stats.js",
     "/achievements.js",
@@ -1118,6 +1134,21 @@ async function leaderboardRequest(req, res) {
     return res.end(
       JSON.stringify({ applicationId: process.env.WORDRUSH_CAST_APPLICATION_ID || null }),
     );
+  }
+  if (url.pathname === "/api/analytics-config" && req.method === "GET") {
+    const rawId = String(process.env.WORDRUSH_GOOGLE_ANALYTICS_ID || "")
+      .trim()
+      .toUpperCase();
+    const measurementId = /^G-[A-Z0-9]{5,20}$/.test(rawId) ? rawId : null;
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    return res.end(JSON.stringify({
+      measurementId,
+      requireConsent:
+        process.env.WORDRUSH_ANALYTICS_REQUIRE_CONSENT !== "0",
+    }));
   }
   if (url.pathname === "/api/leaderboard" && req.method === "GET") {
     const period = [

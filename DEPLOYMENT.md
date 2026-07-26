@@ -16,6 +16,8 @@ connected to the room.
 - Runtime configuration lives in `/etc/wordrush/rush.env` and must remain
   `root:wordrush`, mode `0640`. Do not add it to Git or copy its contents into
   shell history, tickets, or logs.
+- Google Analytics remains disabled unless `WORDRUSH_GOOGLE_ANALYTICS_ID` is
+  configured. See `ANALYTICS.md`; consent is required by default.
 - The source templates are `deploy/wordrush.service` and
   `deploy/rush.nrdgrrrl.com.conf`. The dedicated LAN command is
   `bash serve-lan.sh`; it is intentionally not a public deployment mode.

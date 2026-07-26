@@ -513,6 +513,7 @@ nav small {
   margin: 14px 0 28px;
 }
 .game-mode-card {
+  position: relative;
   width: 100%;
   min-height: 88px;
   display: flex;
@@ -566,6 +567,20 @@ nav small {
 }
 .mode-classic { --mode-start: #b7f5ff; --mode-end: #80b9ff; --mode-edge: #e7fbff; --mode-shadow: #5682bb; }
 .mode-random { --mode-start: #e2ff84; --mode-end: #7fe5a6; --mode-edge: #f6ffc4; --mode-shadow: #48956b; }
+.mode-random.is-featured {
+  min-height: 104px;
+  border-width: 3px;
+  box-shadow: 0 8px 0 var(--mode-shadow);
+}
+.mode-random.is-featured::before {
+  content: "★ FEATURED";
+  position: absolute;
+  top: 8px;
+  right: 64px;
+  color: #326448;
+  font: 900 9px monospace;
+  letter-spacing: 0.12em;
+}
 .mode-sudden { --mode-start: #ffe16b; --mode-end: #ff9f65; --mode-edge: #fff3af; --mode-shadow: #c9743d; }
 .mode-dirty { --mode-start: #e9b7ff; --mode-end: #d77bc7; --mode-edge: #f8dbff; --mode-shadow: #985184; }
 .mode-race { --mode-start: #ffb0bc; --mode-end: #ff6f81; --mode-edge: #ffe0e5; --mode-shadow: #bd4b60; }
@@ -1602,4 +1617,47 @@ html[data-theme="dark"] #toast {
     --toast-fg: #1b1d1a;
     --toast-border: #aaa99f;
   }
+}
+.analytics-consent {
+  position: fixed;
+  z-index: 1200;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  left: max(14px, env(safe-area-inset-left));
+  display: flex;
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 14px;
+  border: 2px solid #2c1c37;
+  border-radius: 16px;
+  background: #fff9f0;
+  color: #2c1c37;
+  box-shadow: 0 7px 0 #2c1c37, 0 18px 50px #0005;
+  gap: 14px;
+  align-items: center;
+}
+.analytics-consent p {
+  flex: 1;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.analytics-consent div { display: flex; gap: 8px; }
+.analytics-consent button { white-space: nowrap; }
+.analytics-preferences {
+  width: 100%;
+  justify-content: center;
+  margin: 10px 0 0;
+}
+html[data-theme="dark"] .analytics-consent {
+  border-color: #f6c85f;
+  background: #211b28;
+  color: #fff9f0;
+  box-shadow: 0 7px 0 #f6c85f, 0 18px 50px #0009;
+}
+@media (max-width: 540px) {
+  .analytics-consent { align-items: stretch; flex-direction: column; }
+  .analytics-consent div { display: grid; grid-template-columns: 1fr 1fr; }
+  .analytics-consent button { justify-content: center; }
 }

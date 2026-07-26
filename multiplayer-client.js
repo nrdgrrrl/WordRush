@@ -24,6 +24,9 @@
       localStorage.getItem("wordrush-room-token"),
     );
   let displayTokenRequest = null;
+  let scannerStream = null;
+  let scannerFrame = 0;
+  let scannerRun = 0;
   const $ = (selector) => document.querySelector(selector);
   const goHome = () =>
     document.querySelector('[data-screen="homeScreen"]')?.click();
@@ -43,7 +46,106 @@
       el.classList.remove("show", "toast-duplicate", "toast-wrong");
     }, 1800);
   };
+  const trackMultiplayer = (action, detail = {}) =>
+    document.dispatchEvent(new CustomEvent("wordrush:multiplayer", {
+      detail: { action, ...detail },
+    }));
+  function stopQrScanner(showChoices = true) {
+    scannerRun += 1;
+    if (scannerFrame) cancelAnimationFrame(scannerFrame);
+    scannerFrame = 0;
+    scannerStream?.getTracks().forEach((track) => track.stop());
+    scannerStream = null;
+    const video = $("#sessionScannerVideo");
+    if (video) {
+      video.pause();
+      video.srcObject = null;
+    }
+    const scanner = $("#sessionScanner");
+    const choices = $("#sessionChoices");
+    if (scanner) scanner.hidden = true;
+    if (showChoices && choices) choices.hidden = false;
+  }
+  function roomCodeFromQrValue(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    try {
+      const url = new URL(text, location.origin);
+      const linkedCode = url.searchParams.get("join")?.trim().toUpperCase();
+      if (linkedCode && /^[A-Z]{5}$/.test(linkedCode)) return linkedCode;
+    } catch {
+      // The QR may contain a plain room code instead of a join URL.
+    }
+    const code = text.match(/\b[A-Z]{5}\b/i)?.[0]?.toUpperCase() || "";
+    return /^[A-Z]{5}$/.test(code) ? code : "";
+  }
+  async function startQrScanner() {
+    const scanner = $("#sessionScanner");
+    const choices = $("#sessionChoices");
+    const video = $("#sessionScannerVideo");
+    const status = $("#sessionScannerStatus");
+    if (!scanner || !choices || !video || !status) return;
+    if (!navigator.mediaDevices?.getUserMedia || !window.BarcodeDetector) {
+      trackMultiplayer("qr_scan_unsupported");
+      toast("QR scanning is not supported here — enter the room code instead");
+      return;
+    }
+    stopQrScanner(false);
+    scanner.hidden = false;
+    choices.hidden = true;
+    status.textContent = "Starting camera…";
+    trackMultiplayer("qr_scan_start");
+    const run = ++scannerRun;
+    try {
+      let detector;
+      try {
+        detector = new BarcodeDetector({ formats: ["qr_code"] });
+      } catch {
+        detector = new BarcodeDetector();
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      if (run !== scannerRun) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      scannerStream = stream;
+      video.srcObject = scannerStream;
+      await video.play();
+      status.textContent = "Point your camera at the room QR code";
+      const scan = async () => {
+        if (run !== scannerRun || !scannerStream) return;
+        try {
+          const results = await detector.detect(video);
+          const code = roomCodeFromQrValue(results[0]?.rawValue);
+          if (code) {
+            trackMultiplayer("qr_scan_success");
+            stopQrScanner(false);
+            joinRoom(code);
+            return;
+          }
+        } catch {
+          status.textContent = "Keep the QR code inside the frame…";
+        }
+        scannerFrame = requestAnimationFrame(scan);
+      };
+      scannerFrame = requestAnimationFrame(scan);
+    } catch (error) {
+      trackMultiplayer("qr_scan_failed", {
+        reason: error?.name === "NotAllowedError" ? "permission" : "camera",
+      });
+      stopQrScanner(true);
+      toast(
+        error?.name === "NotAllowedError"
+          ? "Allow camera access to scan a room QR code"
+          : "Could not start the QR scanner — enter the room code instead",
+      );
+    }
+  }
   function clearSession(code = sessionCode) {
+    stopQrScanner(false);
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
     reconnectAttempts = 0;
@@ -156,7 +258,10 @@
   }
   function sessionDialog(open = true) {
     if (open) $("#multiplayerDialog").showModal();
-    else $("#multiplayerDialog").close();
+    else {
+      stopQrScanner(false);
+      $("#multiplayerDialog").close();
+    }
   }
   function showLobby(code, isCreator) {
     pendingSession = false;
@@ -252,6 +357,7 @@
         return toast("Received an invalid server message");
       }
       if (message.type === "session_closed") {
+        trackMultiplayer("session_closed");
         intentionalLeave = false;
         clearSession(message.code);
         goHome();
@@ -259,6 +365,7 @@
         toast("Multiplayer session ended");
       }
       if (message.type === "session_left") {
+        trackMultiplayer("session_left");
         intentionalLeave = false;
         clearSession(message.code);
         goHome();
@@ -266,16 +373,19 @@
         toast("Left multiplayer session");
       }
       if (message.type === "room_created") {
+        trackMultiplayer("room_created");
         rememberSession(message);
         showLobby(message.code, true);
         toast("Session " + message.code + " created");
       }
       if (message.type === "joined_room") {
+        trackMultiplayer("room_joined");
         rememberSession(message);
         showLobby(message.code, false);
         toast("Joined session " + message.code);
       }
       if (message.type === "room_resumed") {
+        trackMultiplayer("room_resumed");
         reconnectAttempts = 0;
         rememberSession(message);
         if (!sessionCode) showLobby(message.code, false);
@@ -296,6 +406,7 @@
               rule: "Multiplayer round",
             },
             message.mode,
+            message.randomRush,
           );
           sessionDialog(false);
         }
@@ -310,6 +421,11 @@
         }
       }
       if (message.type === "round_started") {
+        trackMultiplayer("round_started", {
+          mode: message.mode,
+          player_count: message.players.length,
+          random_rush: message.randomRush,
+        });
         roomStatus = "playing";
         creatorId = message.creatorId || creatorId;
         updateLobbyControls();
@@ -318,6 +434,7 @@
           message.round,
           message.config,
           message.mode,
+          message.randomRush,
         );
         sessionDialog(false);
         toast("Round started · " + message.players.length + " players");
@@ -333,7 +450,7 @@
       }
       if (message.type === "word_rejected") {
         if (message.playerId === guestId)
-          window.wordrushRecordOnlineIncorrect?.(message.reason);
+          window.wordrushRecordOnlineIncorrect?.(message.reason, message.word);
         const rejection = {
           minimum: `Need at least ${message.minimum || 3} letters`,
           path: "Tiles must connect in order",
@@ -361,6 +478,7 @@
           roundId: message.roundId,
           gameSeconds: message.gameSeconds,
           cooperative: message.cooperative,
+          randomRush: message.randomRush,
           teamScore: message.teamScore,
           stats: message.stats,
           reason: message.reason,
@@ -392,8 +510,10 @@
           clearTimeout(request.timer);
           request.reject(new Error(message.code || "DISPLAY_TOKEN_FAILED"));
         }
-      if (message.type === "error")
+      if (message.type === "error") {
+        trackMultiplayer("error", { error_code: message.code });
         toast(message.code.replaceAll("_", " ").toLowerCase());
+      }
     });
     activeSocket.addEventListener("close", () => {
       if (socket !== activeSocket) return;
@@ -462,6 +582,7 @@
   };
   $("#sessionManage")?.addEventListener("click", () => sessionDialog());
   $("#sessionCreate")?.addEventListener("click", () => {
+    trackMultiplayer("create_requested");
     localStorage.removeItem("wordrush-room");
     localStorage.removeItem("wordrush-room-token");
     intentionalLeave = false;
@@ -474,14 +595,20 @@
       ?.trim()
       .toUpperCase();
     if (!/^[A-Z]{5}$/.test(code || "")) return toast("Enter a 5-letter code");
+    trackMultiplayer("code_join_requested");
     joinRoom(code);
   });
+  $("#sessionJoinScan")?.addEventListener("click", startQrScanner);
+  $("#sessionScannerCancel")?.addEventListener("click", () =>
+    stopQrScanner(true),
+  );
   const joinFromLink = new URLSearchParams(location.search).get("join")
     ?.trim()
     .toUpperCase();
   if (joinFromLink) {
     history.replaceState({}, "", location.pathname + location.hash);
     if (/^[A-Z]{5}$/.test(joinFromLink)) {
+      trackMultiplayer("link_join_requested");
       joinRoom(joinFromLink);
     } else toast("That room code is invalid");
   } else {
@@ -515,6 +642,7 @@
   });
   $("#sessionStart")?.addEventListener("click", () => {
     const mode = $("#sessionType").value;
+    trackMultiplayer("start_requested", { mode });
     sendWhenReady({ type: "start_game", mode });
   });
   function requestLeave() {
@@ -531,6 +659,7 @@
       leaveSession();
   });
   function leaveSession() {
+    trackMultiplayer("leave_requested", { creator });
     intentionalLeave = true;
     if (socket?.readyState === 1 && sessionCode)
       sendWhenReady({ type: "leave_session" });

@@ -84,7 +84,7 @@ else
     [[ -z "$file" ]] && continue
     case "$file" in
       index.html|styles.css|custom.css|multiplayer.css|stats.css|\
-      app.js|cast-sender.js|leaderboard-client.js|multiplayer-client.js|\
+      analytics.js|app.js|cast-sender.js|leaderboard-client.js|multiplayer-client.js|\
       random-rush.js|results.js|stats.js|assets/*|receiver/*)
         ;;
       *) STATIC_ONLY=0 ;;

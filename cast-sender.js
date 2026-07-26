@@ -1,5 +1,7 @@
 (() => {
   const NAMESPACE = "urn:x-cast:com.nrdgrrrl.wordrush";
+  const trackCast = (action, detail = {}) =>
+    window.wordrushAnalytics?.track("cast_action", { action, ...detail });
   const button = document.querySelector("#castButton");
   const gameButton = document.querySelector("#gameCastButton");
   const buttons = [...document.querySelectorAll("[data-cast-action]")];
@@ -45,6 +47,7 @@
     if (!receiverHealthy) setStatus("Ready to cast this room", true);
   };
   const markReceiverHealth = (healthy) => {
+    trackCast(healthy ? "receiver_healthy" : "receiver_unhealthy");
     receiverHealthy = healthy;
     clearTimeout(receiverHealthTimer);
     receiverHealthTimer = null;
@@ -76,8 +79,10 @@
         token,
         roomCode: window.wordrushSessionCode,
       });
+      trackCast("room_handoff_sent");
       setStatus("Waiting for the TV to confirm…", true);
     } catch (error) {
+      trackCast("room_handoff_failed", { error_type: error?.name || "Error" });
       setStatus("Could not connect the TV. Your game is unchanged.", true);
       console.warn("Wordrush Cast room handoff failed", error);
     } finally {
@@ -150,8 +155,10 @@
         },
       );
       initialized = true;
+      trackCast("initialized");
       updateAvailability();
     } catch (error) {
+      trackCast("initialization_failed", { error_type: error?.name || "Error" });
       setStatus("Cast is unavailable in this browser");
       console.warn("Wordrush Cast initialization failed", error);
     }
@@ -171,9 +178,11 @@
       }
       setStatus("Choose a TV…");
       await context.requestSession();
+      trackCast("session_requested");
       listenForReceiverMessages(context.getCurrentSession());
       await shareRoom();
     } catch (error) {
+      trackCast("session_request_failed", { error_type: error?.name || "Error" });
       setStatus("Cast cancelled or unavailable. Your game is unchanged.", true);
       console.warn("Wordrush Cast session request failed", error);
     }

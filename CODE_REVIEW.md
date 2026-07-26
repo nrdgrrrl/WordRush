@@ -200,7 +200,131 @@ Reviewed: client gameplay, touch input, results, achievements, statistics, leade
 - Recommended solution: retain the creator seat through a bounded reconnect grace period and keep server-side dead-connection detection as a fallback.
 - Fix: creators resume with a private reconnect token, room shutdown invalidates its state, and WebSocket heartbeat checks terminate stale connections.
 
+## 2026-07-25 production review
+
+This pass reviewed the new home and multiplayer flows, every game-mode transition,
+Random Rush continuity, scoring/results, QR camera lifecycle, analytics privacy,
+server trust boundaries, test tooling, and the production deployment path.
+
+### 29. Random Rush advertised the wrong next game
+
+- Problem: the results heading reused the current mode/player copy and a fresh
+  random choice was made only after Continue or the timeout.
+- Risk: the screen could say Sudden Death regardless of what would actually run.
+- Fix: reserve the next safe Random Rush mode at round completion, show its label
+  above the scores, and consume that exact reservation for manual or automatic
+  continuation. A browser test verifies the advertised mode is the launched mode.
+
+### 30. Analytics had no controlled integration point
+
+- Problem: there was no production-safe way to add GA4 or consistently measure
+  navigation, gameplay, multiplayer, QR, Cast, reliability, and performance.
+- Risk: adding a raw snippet later would encourage inconsistent events and could
+  expose names, words, room codes, or full URLs.
+- Fix: added a validated server-side Measurement ID configuration, consent-first
+  tag loading, bounded event parameters, a documented event schema, and explicit
+  exclusion of player identity, submitted words, room identifiers, tokens, query
+  strings, and error messages. Analytics remains completely off without an ID.
+
+### 31. Multiplayer Random Rush mixed incompatible modes
+
+- Problem: its server queue included adult Dirty Mode and cooperative play.
+- Risk: players could enter adult content without choosing it, and cooperative
+  scoring broke the competitive sequence promised by Random Rush.
+- Fix: both modes are excluded from multiplayer Random Rush; the server test now
+  enforces the safe competitive set.
+
+### 32. Canceled QR scans could retain a camera stream
+
+- Problem: canceling while browser permission was pending invalidated the scan,
+  but a stream returned afterward was not stopped.
+- Risk: the camera indicator and hardware could remain active off-screen.
+- Fix: stale scan attempts immediately stop every track before returning.
+
+### 33. Rejected submissions were written to server logs
+
+- Problem: diagnostic output included the submitted word.
+- Risk: gameplay text could be retained unexpectedly in operational logs.
+- Fix: logs retain only rejection reason and word length, matching the analytics
+  minimization policy.
+
+### 34. Headless launch flags were parsed incorrectly
+
+- Problem: when a flag was absent, `indexOf()` arithmetic read the Node executable
+  path as the option value; its supported-mode list had also drifted.
+- Risk: the multiplayer harness failed with normal defaults and could not exercise
+  the five newer modes.
+- Fix: added explicit option lookup, numeric validation, and the complete mode set.
+
+### 35. Zero-score solo rounds disappeared from statistics
+
+- Problem: leaderboard submission returned early when the score was zero.
+- Risk: played-round counts, streaks, and aggregate statistics understated losses
+  and no-word Long Haul rounds.
+- Fix: zero remains a valid score and completed rounds are recorded.
+
+### 36. Profile details could show a stale leaderboard player
+
+- Problem: a slower profile request could overwrite a newer click or reopen a
+  dialog after it had been closed.
+- Risk: players could see details for the wrong selected row.
+- Fix: profile requests carry a monotonic token; stale and closed-dialog responses
+  are ignored.
+
+### 37. Connection IDs were not bounded at the WebSocket boundary
+
+- Problem: guest IDs were accepted without the shared text-length normalization.
+- Risk: oversized values wasted memory and made identity records inconsistent.
+- Fix: IDs are control-character-cleaned and capped before use.
+
+### 38. Release gates did not cover every shipped script
+
+- Problem: syntax checks omitted analytics, achievements, leaderboard, Random
+  Rush, statistics, and the headless harness; deploy classification omitted the
+  analytics bundle.
+- Risk: a syntax error could ship, or a browser-only analytics edit could trigger
+  unnecessary service disruption.
+- Fix: the syntax gate now checks every executable JavaScript surface and the
+  deployment allowlist recognizes `analytics.js` as static.
+
+### 39. Analytics denial and performance timing had edge-case errors
+
+- Problem: events could continue queueing when analytics was unavailable; turning
+  off the server prompt requirement could override a player's saved denial; and
+  load timing could be sampled before `loadEventEnd` was populated.
+- Risk: consent could be violated, memory was retained unnecessarily, and telemetry
+  could be inaccurate.
+- Fix: explicit denial always wins, unavailable clients are blocked and cleared,
+  and navigation timing is sampled on the next task after the load event. A browser
+  regression confirms that a denied client makes no Google request.
+
+### 40. Dependency security status
+
+- Review: production dependencies were checked with `npm audit --omit=dev`.
+- Result: no known vulnerabilities were reported at review time.
+
+### 41. Random Rush soak assertion raced automatic advancement
+
+- Problem: the three-browser soak configured a 50 ms Random Rush delay, then
+  required every browser to observe the transient results screen.
+- Risk: healthy runs intermittently timed out after the results had already moved
+  to the next round, obscuring genuine release failures.
+- Fix: retain a fast test transition while allowing 1.5 seconds for all three
+  browsers to assert synchronized results.
+
 ## Verification
+
+### 2026-07-25 release gate
+
+- `npm test`: 34 unit/integration tests passing.
+- `npm run test:browser`: 40 browser tests and 2 three-client soak tests passing.
+- The three-client all-mode soak also passed twice consecutively after its Random
+  Rush timing race was corrected.
+- All shipped JavaScript passes `node --check`; deployment and LAN shell scripts
+  pass `bash -n`; `git diff --check` passes.
+- `npm audit --omit=dev`: 0 known vulnerabilities.
+- Analytics is disabled without a validated GA4 Measurement ID, and automated
+  coverage confirms that saved denial prevents all Google requests.
 
 ### 2026-07-18 production follow-up
 
