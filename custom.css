@@ -759,3 +759,93 @@ html[data-theme="dark"] #resultsScreen .achievement { color: #2c1c37; }
   color: #f6c85f;
   box-shadow: 0 3px 0 #2c1c37;
 }
+
+/* Progress lives at the end of the document and gets a celebratory finish. */
+.home-achievements-heading {
+  align-items: end;
+  margin-top: 30px;
+  padding: 0 2px 10px;
+}
+.home-achievements-heading h2 {
+  margin: 3px 0 0;
+  color: #5b2d7f;
+  font-size: 1.35rem;
+}
+.home-achievements-heading .eyebrow {
+  margin: 0;
+  color: #dd5f58;
+  font-weight: 900;
+}
+.home-achievements-heading button {
+  color: #5b2d7f;
+  font-weight: 900;
+}
+.home-achievements {
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  padding: 4px 3px 10px;
+}
+.home-achievements::-webkit-scrollbar { display: none; }
+.home-achievements article {
+  position: relative;
+  min-width: 142px;
+  min-height: 116px;
+  border: 2px solid #2c1c37;
+  border-radius: 17px;
+  padding: 14px;
+  background: #fff9f0;
+  box-shadow: 0 5px 0 #2c1c37;
+  transform: rotate(-1.5deg);
+}
+.home-achievements article:nth-child(2) {
+  background: #b7f5ff;
+  transform: rotate(1.5deg);
+}
+.home-achievements article:nth-child(3) {
+  background: #e3c8ff;
+  transform: rotate(-.5deg);
+}
+.home-achievements strong {
+  color: #dd5f58;
+  font-size: 2rem;
+  line-height: 1;
+}
+.home-achievements b { color: #2c1c37; }
+.home-achievements small { color: #5e5266; }
+.progress {
+  margin: 30px 0 25px;
+  padding: 18px;
+  border: 2px solid #2c1c37;
+  border-radius: 20px;
+  background: linear-gradient(120deg, #f7b2a8, #ffe278 52%, #b7f5ff);
+  color: #2c1c37;
+  box-shadow: 0 5px 0 #2c1c37;
+}
+.progress b { color: #2c1c37; }
+.progress i {
+  height: 12px;
+  border: 2px solid #2c1c37;
+  border-radius: 99px;
+  background: #fff9f0;
+  overflow: hidden;
+}
+.achievement-list article {
+  border: 2px solid #2c1c37;
+  border-radius: 16px;
+  background: #fff9f0;
+  color: #5b2d7f;
+  box-shadow: 0 4px 0 #2c1c37;
+}
+.achievement-list article:nth-child(3n + 2) { background: #b7f5ff; }
+.achievement-list article:nth-child(3n) { background: #e3c8ff; }
+.achievement-list article:nth-child(4n) { background: #eaf9d2; }
+.achievement-list article > span { font-size: 1.8rem; }
+.achievement-list b { color: #2c1c37; }
+.achievement-list small { color: #5e5266; }
+.achievement-list em { color: #5b2d7f; font-weight: 900; }
+@media (prefers-reduced-motion: no-preference) {
+  .home-achievements article:hover,
+  .achievement-list article:hover { transform: translateY(-3px) rotate(0); }
+}
