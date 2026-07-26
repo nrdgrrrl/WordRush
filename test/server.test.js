@@ -7,6 +7,7 @@ const http = require("node:http");
 const WebSocket = require("ws");
 const { COMMON_WORDS, ADULT_WORDS } = require("../game-config");
 const { neighbors } = require("../game-core");
+const { Leaderboard } = require("../leaderboard");
 process.env.RANDOM_RUSH_DELAY = "50";
 process.env.WORDRUSH_ROOM_RECONNECT_GRACE_MS = "100";
 process.env.WORDRUSH_MAX_WS_PER_IP = "100";
@@ -693,8 +694,21 @@ test("a disconnected guest needs its private token to reclaim a room seat", asyn
   message(guest, "join_room", { code: created.code });
   const joined = await joinedPromise;
 
+  const disconnectedStatePromise = nextMatching(
+    host,
+    "room_state",
+    (state) =>
+      state.players.find((player) => player.id === "persistent-guest")
+        ?.connected === false,
+  );
   guest.close();
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  const disconnectedState = await disconnectedStatePromise;
+  assert.equal(
+    disconnectedState.players.find((player) => player.id === "persistent-guest")
+      .connected,
+    false,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(rooms.get(created.code).players.has("persistent-guest"), true);
 
   const resumedGuest = await client("persistent-guest");
@@ -716,6 +730,27 @@ test("a disconnected guest needs its private token to reclaim a room seat", asyn
   await closedGuest;
   host.close();
   resumedGuest.close();
+});
+
+test("expired disconnected guests release their room seats", async () => {
+  const host = await client("expiring-guest-host");
+  const guest = await client("expiring-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+
+  guest.close();
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const room = rooms.get(created.code);
+  assert.equal(room.players.has("expiring-guest"), false);
+  assert.equal(room.players.size, 1);
+
+  host.close();
 });
 
 test("connection identity cannot be reset with a second hello", async () => {
@@ -812,6 +847,44 @@ test("competitive players can score the same word independently", async () => {
   );
   host.close();
   guest.close();
+});
+
+test("authoritative multiplayer results populate trusted leaderboard persistence", async () => {
+  const host = await client("leaderboard-winner");
+  const guest = await client("leaderboard-loser");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room", { customWords: ["CAT"] });
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code, name: "Leaderboard Loser" });
+  await joinedPromise;
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  const started = await startedPromise;
+  const room = rooms.get(created.code);
+  room.round.board = ["C", "A", "T", ...Array(13).fill("X")];
+  message(host, "start_round_now");
+  const accepted = next(host, "word_accepted");
+  message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  await accepted;
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  const finished = await finishedPromise;
+  const winnerResult = finished.ranking.find((player) => player.id === "leaderboard-winner");
+  const loserResult = finished.ranking.find((player) => player.id === "leaderboard-loser");
+  assert.equal(winnerResult.score, 9);
+  assert.equal(loserResult.score, 0);
+  const board = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE);
+  assert.equal(board.profile("leaderboard-winner").totalScore, 9);
+  assert.equal(board.profile("leaderboard-winner").multiplayerWins, 1);
+  assert.equal(board.profile("leaderboard-loser").multiplayerLosses, 1);
+  for (const period of ["weekly", "total", "multiplayer-wins", "multiplayer-ratio"])
+    assert.ok(board.rankings(period).some((player) => player.id === "leaderboard-winner"), period);
+  host.close();
+  guest.close();
+  assert.equal(started.config.label.length > 0, true);
 });
 
 test("long haul leaves players with no words at zero", async () => {
@@ -959,6 +1032,47 @@ test("room cleanup releases guests so they can create a new session", async () =
   assert.equal(replacement.code.length, 5);
   guest.close();
   host.close();
+});
+
+test("public leaderboard submissions are rejected without touching persistence", async () => {
+  const endpoint =
+    "http://127.0.0.1:" + server.address().port + "/api/leaderboard/score";
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: "spoofed-player",
+      name: "Imposter",
+      score: 1000000,
+      multiplayer: true,
+      multiplayerWin: true,
+    }),
+  });
+  assert.equal(response.status, 410);
+  assert.deepEqual(await response.json(), { error: "UNVERIFIED_SCORE" });
+  assert.equal(
+    await fetch(
+      "http://127.0.0.1:" +
+        server.address().port +
+        "/api/leaderboard/spoofed-player",
+    ).then((result) => result.status),
+    404,
+  );
+});
+
+test("public leaderboard score rejection is rate limited", async () => {
+  const endpoint =
+    "http://127.0.0.1:" + server.address().port + "/api/leaderboard/score";
+  let last;
+  for (let index = 0; index < 31; index++) {
+    last = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "rate-limit-test", score: index }),
+    });
+  }
+  assert.equal(last.status, 429);
+  assert.deepEqual(await last.json(), { error: "RATE_LIMITED" });
 });
 
 test("security bookkeeping expires and direct LAN clients cannot spoof proxy IPs", () => {

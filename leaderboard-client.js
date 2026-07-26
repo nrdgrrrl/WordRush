@@ -1,11 +1,4 @@
 (() => {
-  const guestId =
-    localStorage.getItem("wordrush-guest-id") || crypto.randomUUID();
-  localStorage.setItem("wordrush-guest-id", guestId);
-  const profile = () =>
-    window.wordrushProfile
-      ? window.wordrushProfile()
-      : { name: "Guest", avatar: "🐈" };
   const request = (url, options) =>
     fetch(url, options).then((response) => {
       if (!response.ok) throw new Error("leaderboard request failed");
@@ -13,71 +6,6 @@
     });
   let loadToken = 0;
   let profileLoadToken = 0;
-  const readStoredProfile = () => {
-    try {
-      return JSON.parse(localStorage.getItem("wordrush-profile") || "{}");
-    } catch {
-      return {};
-    }
-  };
-  if (!sessionStorage.getItem("wordrush-leaderboard-baseline"))
-    sessionStorage.setItem(
-      "wordrush-leaderboard-baseline",
-      JSON.stringify(readStoredProfile()),
-    );
-  const scoreRound = (detail) => {
-    const own = detail.ranking?.find((player) => player.id === guestId);
-    const score = own?.score ?? detail.ranking?.[0]?.score;
-    const value = Number(score) || 0;
-    const current = readStoredProfile();
-    const previous = (() => {
-      try {
-        return JSON.parse(
-          sessionStorage.getItem("wordrush-leaderboard-baseline") || "{}",
-        );
-      } catch {
-        return {};
-      }
-    })();
-    const marker = [guestId, value, current.rounds || 0].join(":");
-    if (sessionStorage.getItem("wordrush-last-leaderboard-score") === marker)
-      return;
-    const delta = (key) =>
-      Math.max(0, (Number(current[key]) || 0) - (Number(previous[key]) || 0));
-    if (detail.multiplayer) {
-      sessionStorage.setItem("wordrush-last-leaderboard-score", marker);
-      sessionStorage.setItem(
-        "wordrush-leaderboard-baseline",
-        JSON.stringify(current),
-      );
-      return;
-    }
-    request("/api/leaderboard/score", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: guestId,
-        ...profile(),
-        score: value,
-        words: delta("words"),
-        correct: delta("correct"),
-        incorrect: delta("incorrect"),
-        longest: current.longest || 0,
-        totalWordLength: delta("totalWordLength"),
-        gameSeconds: Math.min(600, delta("totalGameSeconds")),
-        multiplayer: false,
-        multiplayerWin: false,
-      }),
-    })
-      .then(() => {
-        sessionStorage.setItem("wordrush-last-leaderboard-score", marker);
-        sessionStorage.setItem(
-          "wordrush-leaderboard-baseline",
-          JSON.stringify(current),
-        );
-      })
-      .catch(() => {});
-  };
   function addUI() {
     const card = document.querySelector("#sessionCard");
     if (!card || document.querySelector("#scoreboardButton")) return;
@@ -198,8 +126,5 @@
       })
       .catch(() => {});
   }
-  document.addEventListener("wordrush:round-complete", ({ detail }) => {
-    scoreRound(detail);
-  });
   addUI();
 })();

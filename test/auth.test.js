@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const net = require("node:net");
 const http = require("node:http");
 const { once } = require("node:events");
@@ -120,4 +122,28 @@ test("public production routes still enforce configured host and origin", async 
     body: JSON.stringify({ id: "blocked" }),
   });
   assert.equal(badOrigin.status, 403);
+});
+
+test("production templates keep state writable and proxy rate limits trustworthy", () => {
+  const service = fs.readFileSync(
+    path.join(process.cwd(), "deploy", "wordrush.service"),
+    "utf8",
+  );
+  assert.match(
+    service,
+    /^Environment=WORDRUSH_LEADERBOARD_FILE=\/var\/lib\/wordrush\/leaderboard\.json$/m,
+  );
+  assert.match(service, /^ReadWritePaths=\/var\/lib\/wordrush$/m);
+  assert.match(service, /^StateDirectory=wordrush$/m);
+
+  const apache = fs.readFileSync(
+    path.join(process.cwd(), "deploy", "wordrush.party.conf"),
+    "utf8",
+  );
+  assert.match(apache, /^\s*RequestHeader unset X-Forwarded-For early$/m);
+  assert.match(apache, /^\s*ProxyAddHeaders On$/m);
+  assert.ok(
+    apache.indexOf("RequestHeader unset X-Forwarded-For early") <
+      apache.indexOf("ProxyPass /ws"),
+  );
 });

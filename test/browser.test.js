@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { chromium } = require("playwright");
+const WebSocket = require("ws");
 process.env.RANDOM_RUSH_DELAY = "50";
 process.env.WORDRUSH_LEADERBOARD_FILE = path.join(
   fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-browser-")),
@@ -18,7 +19,7 @@ const {
   RANDOM_RUSH_MODES,
   RANDOM_RUSH_EXCLUDED_MODES,
 } = require("../game-config");
-const { server } = require("../server");
+const { server, rooms } = require("../server");
 
 const executablePath =
   process.env.PLAYWRIGHT_CHROMIUM ||
@@ -37,6 +38,35 @@ async function startIntro(page) {
   );
   await page.evaluate(() => document.querySelector("#introStart")?.click());
   await page.waitForSelector("#gameScreen.active");
+}
+function wsClient(name) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+    ws.once("error", reject);
+    ws.once("open", () => {
+      ws.send(JSON.stringify({ type: "hello", guestId: name, name }));
+      const handler = (raw) => {
+        if (JSON.parse(raw).type !== "hello_ack") return;
+        ws.off("message", handler);
+        resolve(ws);
+      };
+      ws.on("message", handler);
+    });
+  });
+}
+function wsNext(ws, type) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Timed out waiting for " + type)), 2000);
+    const handler = (raw) => {
+      const data = JSON.parse(raw);
+      if (data.type === type) {
+        clearTimeout(timer);
+        ws.off("message", handler);
+        resolve(data);
+      }
+    };
+    ws.on("message", handler);
+  });
 }
 test.before(
   () =>
@@ -534,14 +564,14 @@ test("active games hide the title bar and preserve a no-scroll compact layout", 
   await browser.close();
 });
 
-test("global scoreboard lists players and opens their stats", async () => {
+test("global scoreboard rejects unverified browser scores", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   const id = "browser-score-" + Date.now();
-  await page.evaluate(
+  const response = await page.evaluate(
     async ({ id }) =>
-      fetch("/api/leaderboard/score", {
+      (await fetch("/api/leaderboard/score", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -551,48 +581,59 @@ test("global scoreboard lists players and opens their stats", async () => {
           score: 321,
           words: 9,
         }),
-      }),
+      })).status,
     { id },
   );
+  assert.equal(response, 410);
   await page.locator("#scoreboardButton").click();
   await page.waitForSelector("#scoreboardScreen.active");
   await page.waitForFunction(() =>
-    document.querySelector("#scoreboardList").textContent.includes("BoardCat"),
+    !document.querySelector("#scoreboardList").textContent.includes("BoardCat"),
   );
-  assert.equal(
-    await page
-      .locator(".scoreboard-row")
-      .first()
-      .locator(".scoreboard-avatar")
-      .textContent(),
-    "🐯",
-  );
+  await browser.close();
+});
+
+test("global scoreboard displays an authoritative multiplayer result and all periods", async () => {
+  const host = await wsClient("browser-leaderboard-winner");
+  const guest = await wsClient("browser-leaderboard-loser");
+  const createdPromise = wsNext(host, "room_created");
+  host.send(JSON.stringify({ type: "create_room", customWords: ["CAT"] }));
+  const created = await createdPromise;
+  const joinedPromise = wsNext(guest, "joined_room");
+  guest.send(JSON.stringify({ type: "join_room", code: created.code, name: "Browser Loser" }));
+  await joinedPromise;
+  const startedPromise = wsNext(host, "round_started");
+  host.send(JSON.stringify({ type: "start_game", mode: "classic" }));
+  await startedPromise;
+  rooms.get(created.code).round.board = ["C", "A", "T", ...Array(13).fill("X")];
+  host.send(JSON.stringify({ type: "start_round_now" }));
+  const acceptedPromise = wsNext(host, "word_accepted");
+  host.send(JSON.stringify({ type: "submit_word", word: "CAT", path: [0, 1, 2] }));
+  await acceptedPromise;
+  const finishedPromise = wsNext(host, "round_finished");
+  host.send(JSON.stringify({ type: "end_round" }));
+  await finishedPromise;
+  host.close();
+  guest.close();
+
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator("#scoreboardButton").click();
+  await page.waitForSelector("#scoreboardScreen.active");
+  await page.waitForFunction(() => !document.querySelector("#scoreboardList").textContent.includes("Loading"));
+  assert.equal(await page.locator(".scoreboard-row").count(), 1);
+  assert.match(await page.locator(".scoreboard-row").first().textContent(), /browser-leaderboard-winner|9/);
   await page.locator(".scoreboard-row").first().click();
-  await page.waitForFunction(
-    () => document.querySelector("#leaderboardProfileDialog").open,
-  );
-  assert.equal(
-    await page
-      .locator("#leaderboardProfileDialog")
-      .evaluate((dialog) => dialog.open),
-    true,
-  );
-  assert.match(
-    await page.locator("#leaderboardProfileName").textContent(),
-    /BoardCat/,
-  );
-  assert.match(
-    await page.locator("#leaderboardProfileBody").textContent(),
-    /321/,
-  );
+  await page.waitForSelector("#leaderboardProfileDialog[open]");
+  assert.match(await page.locator("#leaderboardProfileBody").textContent(), /total score/);
+  assert.match(await page.locator("#leaderboardProfileBody").textContent(), /1.*rounds/);
   await page.locator("#leaderboardProfileClose").click();
-  await page.locator('[data-period="total"]').click();
-  assert.equal(
-    await page
-      .locator('.scoreboard-tabs [data-period="total"]')
-      .evaluate((node) => node.classList.contains("active")),
-    true,
-  );
+  for (const period of ["total", "multiplayer-wins", "multiplayer-ratio"]) {
+    await page.locator(`[data-period="${period}"]`).click();
+    await page.waitForFunction(() => !document.querySelector("#scoreboardList").textContent.includes("Loading"));
+    assert.equal(await page.locator(".scoreboard-row").count(), 1, period);
+  }
   await browser.close();
 });
 
