@@ -1,15 +1,22 @@
 (() => {
   const $ = (selector) => document.querySelector(selector);
   const SPEEDS = { slow: 1800, medium: 900, fast: 350 };
-  const storedSpeed = localStorage.getItem("wordrush-results-speed");
-  let settings = {
-    view: "reveal",
-    speed: Object.hasOwn(SPEEDS, storedSpeed) ? storedSpeed : "medium",
-  };
+
+  function readSoloSettings() {
+    const storedView = localStorage.getItem("wordrush-results-view");
+    const storedSpeed = localStorage.getItem("wordrush-results-speed");
+    return {
+      view: storedView === "static" || storedView === "reveal" ? storedView : "reveal",
+      speed: Object.hasOwn(SPEEDS, storedSpeed) ? storedSpeed : "medium",
+    };
+  }
+
+  let settings = readSoloSettings();
   let localWords = [];
   let resultRows = [];
   let revealTimer = null;
   let revealToken = 0;
+  let renderedView = null;
 
   function localRow() {
     const profile = window.wordrushProfile?.() || {
@@ -141,7 +148,7 @@
     revealNextGroup();
   }
 
-  function applyResults() {
+  function applyResults(restartReveal = false) {
     const reveal = settings.view === "reveal";
     $("#staticResultsView").hidden = reveal;
     $("#animatedResultsView").hidden = !reveal;
@@ -154,20 +161,67 @@
       button.classList.toggle("active", active);
       button.setAttribute("aria-pressed", String(active));
     });
-    if (reveal) renderReveal();
-    else {
+    if (reveal && (restartReveal || renderedView !== "reveal")) renderReveal();
+    else if (!reveal) {
       revealToken++;
       clearTimeout(revealTimer);
     }
+    renderedView = reveal ? "reveal" : "static";
+  }
+
+  function updateGuestControls() {
+    const isGuest =
+      window.wordrushSessionCode &&
+      window.wordrushCanSetResultsSettings === false;
+    [ $("#staticResultsButton"), $("#animatedResultsButton") ].forEach((btn) => {
+      if (!btn) return;
+      if (isGuest) {
+        btn.disabled = true;
+        btn.setAttribute("aria-disabled", "true");
+        btn.title = "Only the host can change multiplayer results";
+      } else {
+        btn.disabled = false;
+        btn.removeAttribute("aria-disabled");
+        btn.title = "";
+      }
+    });
+    document.querySelectorAll("[data-speed]").forEach((btn) => {
+      if (isGuest) {
+        btn.disabled = true;
+        btn.setAttribute("aria-disabled", "true");
+        btn.title = "Only the host can change multiplayer results";
+      } else {
+        btn.disabled = false;
+        btn.removeAttribute("aria-disabled");
+        btn.title = "";
+      }
+    });
+  }
+
+  function persistSoloSettings() {
+    if (window.wordrushSessionCode) return;
+    localStorage.setItem("wordrush-results-view", settings.view);
+    localStorage.setItem("wordrush-results-speed", settings.speed);
   }
 
   function setSettings(next, broadcast = false) {
+    if (
+      broadcast &&
+      window.wordrushSessionCode &&
+      window.wordrushCanSetResultsSettings === false
+    )
+      return;
+    const previousView = settings.view;
+    const previousSpeed = settings.speed;
     settings = {
-      view: "reveal",
+      view: Object.hasOwn(next, "view")
+        ? next.view === "static"
+          ? "static"
+          : "reveal"
+        : settings.view,
       speed: Object.hasOwn(SPEEDS, next.speed) ? next.speed : settings.speed,
     };
-    localStorage.setItem("wordrush-results-view", settings.view);
-    localStorage.setItem("wordrush-results-speed", settings.speed);
+    persistSoloSettings();
     if (
       broadcast &&
       window.wordrushSessionCode &&
@@ -177,12 +231,14 @@
         JSON.stringify({ type: "set_results_settings", ...settings }),
       );
     }
-    applyResults();
+    const viewChanged = previousView !== settings.view;
+    applyResults(viewChanged);
   }
 
   document.addEventListener("wordrush:round-started", () => {
     localWords = [];
     resultRows = [];
+    renderedView = null;
     revealToken++;
     clearTimeout(revealTimer);
   });
@@ -205,9 +261,24 @@
       words: player.words || [],
     }));
     if (detail.result?.results)
-      settings = { ...settings, ...detail.result.results, view: "reveal" };
+      settings = {
+        ...settings,
+        ...detail.result.results,
+        view: detail.result.results.view === "static" ? "static" : "reveal",
+      };
     renderHighlights(rows());
-    applyResults();
+    applyResults(true);
+  });
+
+  window.addEventListener("wordrush:room-change", () => {
+    updateGuestControls();
+    if (!window.wordrushSessionCode) {
+      const solo = readSoloSettings();
+      const viewChanged = solo.view !== settings.view;
+      settings.view = solo.view;
+      settings.speed = solo.speed;
+      applyResults(viewChanged);
+    }
   });
 
   window.wordrushResultsSettings = (next) => setSettings(next, false);
