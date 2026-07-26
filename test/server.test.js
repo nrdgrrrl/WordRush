@@ -921,6 +921,48 @@ test("static serving exposes only browser assets and keeps runtime data private"
   assert.equal(await request("/.env"), 404);
 });
 
+test("home publishes crawlable SEO metadata and crawler routes", async () => {
+  const origin = "http://127.0.0.1:" + server.address().port;
+  const home = await fetch(origin + "/");
+  assert.equal(home.status, 200);
+  assert.equal(home.headers.get("cache-control"), "no-cache");
+  const html = await home.text();
+  assert.match(html, /<html lang="en">/);
+  assert.match(html, /<title>Wordrush — Fast Multiplayer Word Game<\/title>/);
+  assert.match(html, /<meta\s+name="description"/);
+  assert.match(html, /<link rel="canonical" href="https:\/\/rush\.nrdgrrrl\.com\/"/);
+  assert.match(html, /property="og:image"/);
+  const jsonLd = JSON.parse(
+    html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1],
+  );
+  assert.deepEqual(jsonLd["@context"], "https://schema.org");
+  assert.ok(jsonLd["@graph"].some((entry) => entry["@type"] === "WebSite"));
+  assert.ok(jsonLd["@graph"].some((entry) => entry["@type"]?.includes("WebApplication")));
+
+  const robots = await fetch(origin + "/robots.txt");
+  assert.equal(robots.status, 200);
+  assert.equal(robots.headers.get("content-type"), "text/plain; charset=utf-8");
+  assert.match(await robots.text(), /Sitemap: https:\/\/rush\.nrdgrrrl\.com\/sitemap\.xml/);
+
+  const sitemap = await fetch(origin + "/sitemap.xml");
+  assert.equal(sitemap.status, 200);
+  assert.equal(sitemap.headers.get("content-type"), "application/xml");
+  assert.match(await sitemap.text(), /<loc>https:\/\/rush\.nrdgrrrl\.com\/<\/loc>/);
+
+  const manifest = await fetch(origin + "/manifest.webmanifest");
+  assert.equal(manifest.status, 200);
+  assert.equal(manifest.headers.get("content-type"), "application/manifest+json");
+  assert.equal((await manifest.json()).short_name, "Wordrush");
+
+  const favicon = await fetch(origin + "/favicon.svg");
+  assert.equal(favicon.status, 200);
+  assert.equal(favicon.headers.get("content-type"), "image/svg+xml");
+
+  const receiver = await fetch(origin + "/receiver/");
+  assert.equal(receiver.status, 200);
+  assert.equal(receiver.headers.get("x-robots-tag"), "noindex, nofollow");
+});
+
 test("analytics configuration is disabled by default and validates GA4 IDs", async () => {
   const endpoint =
     "http://127.0.0.1:" + server.address().port + "/api/analytics-config";

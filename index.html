@@ -6,7 +6,72 @@
       name="viewport"
       content="width=device-width,initial-scale=1,viewport-fit=cover"
     />
-    <title>Wordrush</title>
+    <title>Wordrush — Fast Multiplayer Word Game</title>
+    <meta
+      name="description"
+      content="Play Wordrush, a fast online word game with solo challenges, Random Rush, and multiplayer word battles."
+    />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="theme-color" content="#f5f3ee" />
+    <link rel="canonical" href="https://rush.nrdgrrrl.com/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Wordrush" />
+    <meta property="og:url" content="https://rush.nrdgrrrl.com/" />
+    <meta property="og:title" content="Wordrush — Fast Multiplayer Word Game" />
+    <meta
+      property="og:description"
+      content="Play Wordrush, a fast online word game with solo challenges, Random Rush, and multiplayer word battles."
+    />
+    <meta property="og:image" content="https://rush.nrdgrrrl.com/assets/cat-rush.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1536" />
+    <meta property="og:image:height" content="1024" />
+    <meta property="og:image:alt" content="Wordrush word game board with playful cats" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Wordrush — Fast Multiplayer Word Game" />
+    <meta
+      name="twitter:description"
+      content="Play Wordrush, a fast online word game with solo challenges, Random Rush, and multiplayer word battles."
+    />
+    <meta name="twitter:image" content="https://rush.nrdgrrrl.com/assets/cat-rush.png" />
+    <meta name="twitter:image:alt" content="Wordrush word game board with playful cats" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://rush.nrdgrrrl.com/#website",
+            "url": "https://rush.nrdgrrrl.com/",
+            "name": "Wordrush",
+            "inLanguage": "en"
+          },
+          {
+            "@type": ["WebApplication", "VideoGame"],
+            "@id": "https://rush.nrdgrrrl.com/#game",
+            "url": "https://rush.nrdgrrrl.com/",
+            "name": "Wordrush",
+            "description": "A fast online word game with solo challenges, Random Rush, and multiplayer word battles.",
+            "applicationCategory": "GameApplication",
+            "operatingSystem": "Any",
+            "browserRequirements": "Requires JavaScript",
+            "isAccessibleForFree": true,
+            "offers": {
+              "@type": "Offer",
+              "price": 0,
+              "priceCurrency": "USD"
+            },
+            "inLanguage": "en",
+            "isPartOf": {"@id": "https://rush.nrdgrrrl.com/#website"}
+          }
+        ]
+      }
+    </script>
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="stats.css" />
     <link rel="stylesheet" href="custom.css" />
@@ -27,9 +92,9 @@
         </button>
       </header>
       <section class="screen active" id="homeScreen">
-        <div class="hero-art" aria-hidden="true">
+        <h1 class="hero-art" aria-label="Wordrush">
           <span>W</span><span>O</span><span>R</span><span>D</span><b>✦</b><span>R</span><span>U</span><span>S</span><span>H</span>
-        </div>
+        </h1>
         <div class="stats home-stats">
           <div><b id="homeScore">0</b><small>all-time score</small></div>
           <div><b id="homeWords">0</b><small>words found</small></div>
@@ -137,6 +202,9 @@
             <strong>♢</strong><b>Grid master</b><small>Win on 8×8</small>
           </article>
         </div>
+        <footer class="site-footer">
+          Wordrush is a fast, free online word game for solo play and multiplayer word battles.
+        </footer>
       </section>
       <section class="screen round-intro-screen" id="roundIntroScreen">
         <div class="intro-orbit" aria-hidden="true">

@@ -407,6 +407,15 @@ nav small {
 #toast.show {
   opacity: 1;
 }
+.site-footer {
+  margin: 28px 0 0;
+  padding: 16px 0 8px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
+}
 @media (min-width: 600px) {
   .app-shell {
     margin: 20px auto;

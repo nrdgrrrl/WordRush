@@ -902,6 +902,45 @@ test("home leads with Random Rush and offers a camera join path", async () => {
   await browser.close();
 });
 
+test("home SEO metadata and footer preserve the app shell layout", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 1440, height: 1000 },
+  ]) {
+    const page = await browser.newPage({ viewport });
+    await page.goto(baseUrl);
+    const seo = await page.evaluate(() => {
+      const shell = document.querySelector(".app-shell").getBoundingClientRect();
+      const heroNode = document.querySelector(".hero-art");
+      const footer = document.querySelector(".site-footer").getBoundingClientRect();
+      const jsonLd = JSON.parse(document.querySelector('script[type="application/ld+json"]').textContent);
+      return {
+        title: document.title,
+        description: document.querySelector('meta[name="description"]').content,
+        canonical: document.querySelector('link[rel="canonical"]').href,
+        h1: document.querySelector("#homeScreen h1")?.getAttribute("aria-label"),
+        footerText: document.querySelector(".site-footer").textContent.trim(),
+        shellWidth: shell.width,
+        heroHeight: heroNode.offsetHeight,
+        footerVisible: footer.width > 0 && footer.height > 0,
+        graphTypes: jsonLd["@graph"].map((entry) => entry["@type"]),
+      };
+    });
+    assert.equal(seo.title, "Wordrush — Fast Multiplayer Word Game");
+    assert.match(seo.description, /online word game/);
+    assert.equal(seo.canonical, "https://rush.nrdgrrrl.com/");
+    assert.equal(seo.h1, "Wordrush");
+    assert.match(seo.footerText, /fast, free online word game/);
+    assert.equal(seo.shellWidth, Math.min(460, viewport.width));
+    assert.equal(seo.heroHeight, 126);
+    assert.equal(seo.footerVisible, true);
+    assert.deepEqual(seo.graphTypes, ["WebSite", ["WebApplication", "VideoGame"]]);
+    await page.close();
+  }
+  await browser.close();
+});
+
 test("analytics honors a saved denial even when server consent is optional", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const context = await browser.newContext();

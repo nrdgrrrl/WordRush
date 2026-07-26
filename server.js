@@ -138,6 +138,7 @@ async function authorizeRequest(req, res) {
     return false;
   }
   if (pathname === "/receiver" || pathname.startsWith("/receiver/")) {
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
     res.setHeader(
       "Content-Security-Policy",
       "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self'; script-src 'self' https://www.gstatic.com; base-uri 'none'; frame-ancestors 'none'",
@@ -949,6 +950,10 @@ const server = http.createServer((req, res) => {
     requested = "/receiver/index.html";
   const publicRootFiles = new Set([
     "/index.html",
+    "/robots.txt",
+    "/sitemap.xml",
+    "/manifest.webmanifest",
+    "/favicon.svg",
     "/styles.css",
     "/stats.css",
     "/custom.css",
@@ -988,14 +993,23 @@ const server = http.createServer((req, res) => {
       ".html": "text/html",
       ".js": "application/javascript",
       ".css": "text/css",
+      ".txt": "text/plain",
+      ".xml": "application/xml",
       ".png": "image/png",
       ".svg": "image/svg+xml",
+      ".webmanifest": "application/manifest+json",
     };
   res.writeHead(200, {
     "Content-Type":
       (types[ext] || "application/octet-stream") +
       (types[ext]?.startsWith("text/") ? "; charset=utf-8" : ""),
     "X-Content-Type-Options": "nosniff",
+    "Cache-Control":
+      requested === "/index.html"
+        ? "no-cache"
+        : requested === "/robots.txt" || requested === "/sitemap.xml"
+          ? "public, max-age=3600"
+          : "public, max-age=3600, stale-while-revalidate=86400",
   });
   fs.createReadStream(file).pipe(res);
 });
