@@ -313,6 +313,7 @@ function renderResults(ranking) {
         words: [...s.found].map((word) => ({ word, points: word.length ** 2 })),
       }];
   $("#resultName").textContent = profile.name + ".";
+  renderHeroScores(rows);
   const target = $("#resultPlayers");
   target.replaceChildren();
   rows.forEach((player, index) => {
@@ -343,6 +344,37 @@ function renderResults(ranking) {
     target.append(row);
   });
 }
+function renderHeroScores(players) {
+  const target = $("#resultHeroScores");
+  if (!target) return;
+  const ordered = [...players].sort(
+    (a, b) => (Number(b.score) || 0) - (Number(a.score) || 0),
+  );
+  const displayed = ordered.slice(0, 2);
+  const winningScore = Number(displayed[0]?.score) || 0;
+  const tied = displayed.filter(
+    (player) => (Number(player.score) || 0) === winningScore,
+  ).length > 1;
+  target.replaceChildren(
+    ...displayed.map((player) => {
+      const card = document.createElement("article");
+      const isWinner = (Number(player.score) || 0) === winningScore;
+      card.className = "result-hero-score-card" +
+        (isWinner ? " is-winner" : "") +
+        (player.id === window.wordrushGuestId ? " is-you" : "");
+      const badge = document.createElement("small");
+      badge.className = "hero-score-badge";
+      badge.textContent = isWinner ? (tied ? "LEADER" : "WINNER") : "RUNNER-UP";
+      const name = document.createElement("b");
+      name.className = "hero-score-name";
+      name.textContent = (player.avatar || "🐈") + " " + player.name;
+      const score = document.createElement("strong");
+      score.textContent = Number(player.score || 0).toLocaleString();
+      card.append(badge, name, score);
+      return card;
+    }),
+  );
+}
 function renderSuddenDeath(details) {
   const callout = $("#suddenDeathCallout");
   if (!callout) return;
@@ -371,7 +403,7 @@ function triggerSuddenDeathExplosion(details) {
   triggerSuddenDeathExplosion.timer = setTimeout(() => {
     explosion.hidden = true;
     explosion.classList.remove("is-active");
-  }, 1400);
+  }, 2600);
 }
 function end() {
   if (
@@ -442,12 +474,16 @@ function end() {
     }, rushDelay);
   }
 }
-function toast(m) {
+function toast(m, tone = "default") {
   const t = $("#toast");
   t.textContent = m;
+  t.classList.remove("toast-duplicate", "toast-wrong");
+  if (tone !== "default") t.classList.add("toast-" + tone);
   t.classList.add("show");
   clearTimeout(toast.id);
-  toast.id = setTimeout(() => t.classList.remove("show"), 1800);
+  toast.id = setTimeout(() => {
+    t.classList.remove("show", "toast-duplicate", "toast-wrong");
+  }, 1800);
 }
 function show(id) {
   document
@@ -611,20 +647,21 @@ async function submit() {
     emit("word-accepted", { word: w, points });
     if ((s.mode === "race" || s.target) && s.score >= 500) end();
   } else if (duplicate || s.found.has(w)) {
-    pulseIncorrectWord(trace);
+    pulseDuplicateWord(trace);
     profile.incorrect++;
     updateProfile();
-    toast("Already found");
+    toast("Already found — try a new word", "duplicate");
   } else {
     pulseIncorrectWord(trace);
     profile.incorrect++;
     updateProfile();
     toast(
       w.length < m[1]
-        ? "Need " + m[1] + " letters"
+        ? "Wrong word · need " + m[1] + " letters"
         : !validPath
-          ? "Tiles must connect"
-          : "Not in dictionary",
+          ? "Wrong word · tiles must connect"
+          : "Wrong word · not in dictionary",
+      "wrong",
     );
     if (s.mode === "sudden") {
       s.suddenDeath = {
@@ -684,7 +721,7 @@ function pulseWord(trace, className) {
     .map((index) => document.querySelector('.tile[data-i="' + index + '"]'))
     .filter(Boolean);
   tiles.forEach((tile) => {
-    tile.classList.remove("word-correct", "word-incorrect");
+    tile.classList.remove("word-correct", "word-incorrect", "word-duplicate");
     // Restart the animation when a player finds another word before the
     // previous completion animation has fully finished.
     void tile.offsetWidth;
@@ -696,6 +733,7 @@ function pulseWord(trace, className) {
 }
 function pulseAcceptedWord(trace) { pulseWord(trace, "word-correct"); }
 function pulseIncorrectWord(trace) { pulseWord(trace, "word-incorrect"); }
+function pulseDuplicateWord(trace) { pulseWord(trace, "word-duplicate"); }
 $("#quickPlay")?.addEventListener("click", () => start("classic"));
 $("#stopRush").onclick = stopRush;
 $("#stopRushResults").onclick = stopRush;
@@ -847,8 +885,11 @@ window.wordrushRecordOnlineWord = (word, points) => {
     points: Number(points) || word.length * word.length,
   });
 };
-window.wordrushRecordOnlineIncorrect = () => {
-  if (s.pendingOnlineTrace) pulseIncorrectWord(s.pendingOnlineTrace.trace);
+window.wordrushRecordOnlineIncorrect = (reason) => {
+  if (s.pendingOnlineTrace) {
+    if (reason === "duplicate") pulseDuplicateWord(s.pendingOnlineTrace.trace);
+    else pulseIncorrectWord(s.pendingOnlineTrace.trace);
+  }
   s.pendingOnlineTrace = null;
   profile.incorrect++;
   updateProfile();

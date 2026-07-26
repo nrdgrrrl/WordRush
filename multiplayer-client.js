@@ -31,13 +31,17 @@
     window.wordrushProfile
       ? window.wordrushProfile()
       : { name: "Guest", avatar: "🐈" };
-  const toast = (message) => {
+  const toast = (message, tone = "default") => {
     const el = $("#toast");
     if (!el) return;
     el.textContent = message;
+    el.classList.remove("toast-duplicate", "toast-wrong");
+    if (tone !== "default") el.classList.add("toast-" + tone);
     el.classList.add("show");
     clearTimeout(toast.timer);
-    toast.timer = setTimeout(() => el.classList.remove("show"), 1800);
+    toast.timer = setTimeout(() => {
+      el.classList.remove("show", "toast-duplicate", "toast-wrong");
+    }, 1800);
   };
   function clearSession(code = sessionCode) {
     clearTimeout(reconnectTimer);
@@ -330,14 +334,19 @@
       }
       if (message.type === "word_rejected") {
         if (message.playerId === guestId)
-          window.wordrushRecordOnlineIncorrect?.();
+          window.wordrushRecordOnlineIncorrect?.(message.reason);
         const rejection = {
           minimum: `Need at least ${message.minimum || 3} letters`,
           path: "Tiles must connect in order",
           duplicate: "Already found that word",
           dictionary: `${message.word || "That word"} is not in the Wordrush dictionary`,
         };
-        toast(rejection[message.reason] || "Word rejected");
+        toast(
+          message.reason === "duplicate"
+            ? "Already found — try a new word"
+            : "Wrong word · " + (rejection[message.reason] || "not accepted"),
+          message.reason === "duplicate" ? "duplicate" : "wrong",
+        );
       }
       if (message.type === "display_token" && displayTokenRequest) {
         const request = displayTokenRequest;

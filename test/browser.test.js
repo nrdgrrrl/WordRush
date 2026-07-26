@@ -1686,6 +1686,12 @@ test("Word Party is forced for every player and celebrates sudden death", async 
   assert.equal(await page.locator("#animatedResultsView").isHidden(), false);
   assert.equal(await page.locator("#staticResultsView").isHidden(), true);
   assert.equal(await page.locator(".reveal-player").count(), 3);
+  assert.equal(await page.locator(".result-hero-score-card").count(), 2);
+  assert.equal(
+    await page.locator(".result-hero-score-card.is-winner").textContent(),
+    "WINNER🦊 Nova49",
+  );
+  assert.match(await page.locator(".result-hero-scores").textContent(), /🐈 Moon25/);
   assert.match(await page.locator("#resultLongestWord").textContent(), /PLANETS · 49 pts · 🦊 Nova/);
   assert.match(await page.locator("#suddenDeathCallout").textContent(), /Moon/);
   assert.match(await page.locator("#suddenDeathCallout").textContent(), /ZZZ/);

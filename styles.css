@@ -1065,23 +1065,30 @@ html[data-theme="dark"] .tile.selected {
   }
 }
 .tile.word-incorrect {
-  animation: word-incorrect 0.65s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+  animation: word-incorrect 1.05s cubic-bezier(0.18, 0.89, 0.32, 1.28);
   background-color: #ff345e;
   color: #fff;
+  outline: 4px solid #ff174e;
+  outline-offset: 2px;
 }
 @keyframes word-incorrect {
   0% {
     transform: scale(1);
-    background-color: #ff345e;
+    background-color: #ff174e;
     box-shadow: 0 3px 0 #b51f42;
   }
-  35% {
-    transform: scale(1.2) rotate(5deg);
-    background-color: #ff633f;
-    box-shadow: 0 12px 24px #ff345eaa;
+  25% {
+    transform: scale(1.24) rotate(8deg);
+    background-color: #ff003d;
+    box-shadow: 0 0 0 7px #ff174e66, 0 14px 28px #ff345ecc;
   }
-  68% {
-    transform: scale(1.12) rotate(-5deg);
+  45% {
+    transform: scale(1.08) rotate(-8deg);
+    background-color: #ff633f;
+    box-shadow: 0 0 0 4px #ff174e55, 0 8px 18px #ff345eaa;
+  }
+  65% {
+    transform: scale(1.18) rotate(5deg);
     background-color: #ff174e;
   }
   100% {
@@ -1089,6 +1096,16 @@ html[data-theme="dark"] .tile.selected {
     background-color: #ff345e;
     box-shadow: 0 4px 0 #b51f42;
   }
+}
+.tile.word-duplicate {
+  animation: word-duplicate .48s ease-in-out;
+  background-color: #f6c85f;
+  color: #2c1c37;
+}
+@keyframes word-duplicate {
+  0%, 100% { transform: scale(1); }
+  30% { transform: scale(1.08) rotate(-2deg); box-shadow: 0 0 0 4px #f6c85f66; }
+  60% { transform: scale(.96) rotate(2deg); }
 }
 
 /* A bright, candy-like board makes scanning letters feel more playful. */
@@ -1143,6 +1160,12 @@ html[data-theme="dark"] .tile.selected {
   box-shadow:
     inset 0 1px 0 #ffffffb8,
     0 6px 18px #ff345eaa;
+}
+#grid .tile.word-duplicate {
+  background-color: #f6c85f;
+  box-shadow:
+    inset 0 1px 0 #ffffffb8,
+    0 4px 12px #f6c85f99;
 }
 @media (prefers-reduced-motion: reduce) {
   #grid .tile,
@@ -1378,6 +1401,26 @@ html[data-theme="dark"] #resultsScreen > #again {
 }
 #toast.show {
   transform: translate(-50%, 0);
+}
+#toast.toast-duplicate {
+  border: 2px solid #2c1c37;
+  background: #f6c85f;
+  color: #2c1c37;
+  font-weight: 900;
+}
+#toast.toast-wrong {
+  border: 2px solid #fff;
+  background: #dd2857;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 950;
+  box-shadow: 0 4px 0 #7b1737;
+  animation: wrong-toast-shake .42s ease-in-out;
+}
+@keyframes wrong-toast-shake {
+  0%, 100% { transform: translate(-50%, 0); }
+  25% { transform: translate(calc(-50% - 7px), 0) rotate(-1deg); }
+  75% { transform: translate(calc(-50% + 7px), 0) rotate(1deg); }
 }
 body:has(#gameScreen.active) #toast {
   top: 10px;
