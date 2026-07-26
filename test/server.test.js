@@ -350,6 +350,34 @@ test("display tokens reject invalid, expired, replayed, and cross-room access", 
   display.close();
 });
 
+test("only the creator can skip the intro or mint a display token", async () => {
+  const host = await client("permission-host");
+  const guest = await client("permission-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  await startedPromise;
+
+  const startDenied = next(guest, "error");
+  message(guest, "start_round_now");
+  assert.deepEqual(await startDenied, { type: "error", code: "CREATOR_ONLY" });
+
+  const tokenDenied = next(guest, "error");
+  message(guest, "create_display_token");
+  assert.deepEqual(await tokenDenied, { type: "error", code: "CREATOR_ONLY" });
+
+  host.close();
+  guest.close();
+});
+
 function displaysForRoom(code) {
   return rooms.get(code)?.displays.size || 0;
 }

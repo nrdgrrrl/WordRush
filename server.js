@@ -761,6 +761,8 @@ function handle(ws, message) {
   const room = rooms.get(client.roomCode);
   if (!room) return send(ws, { type: "error", code: "NOT_IN_ROOM" });
   if (type === "create_display_token") {
+    if (client.id !== room.creatorId)
+      return send(ws, { type: "error", code: "CREATOR_ONLY" });
     const displayToken = issueDisplayToken(room, client);
     return send(ws, { type: "display_token", ...displayToken });
   }
@@ -810,6 +812,8 @@ function handle(ws, message) {
     );
   }
   if (type === "start_round_now") {
+    if (client.id !== room.creatorId)
+      return send(ws, { type: "error", code: "CREATOR_ONLY" });
     if (room.status !== "playing" || !room.round)
       return send(ws, { type: "error", code: "ROUND_NOT_PLAYING" });
     if (Date.now() >= room.round.introEndsAt)
