@@ -4,4 +4,4 @@ Disallow: /api/
 Disallow: /ws
 Disallow: /display
 
-Sitemap: https://rush.nrdgrrrl.com/sitemap.xml
+Sitemap: https://wordrush.party/sitemap.xml

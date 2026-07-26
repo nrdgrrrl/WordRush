@@ -929,7 +929,7 @@ test("home SEO metadata and footer preserve the app shell layout", async () => {
     });
     assert.equal(seo.title, "Wordrush — Fast Multiplayer Word Game");
     assert.match(seo.description, /online word game/);
-    assert.equal(seo.canonical, "https://rush.nrdgrrrl.com/");
+    assert.equal(seo.canonical, "https://wordrush.party/");
     assert.equal(seo.h1, "Wordrush");
     assert.match(seo.footerText, /fast, free online word game/);
     assert.equal(seo.shellWidth, Math.min(460, viewport.width));

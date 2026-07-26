@@ -14,7 +14,7 @@ Tokens expire within five minutes, are consumed on first use, authorize only a
 read-only display connection, and never appear in QR codes, URLs, logs, or
 player messages.
 
-The receiver opens `wss://rush.nrdgrrrl.com/display` and sends the token as its
+The receiver opens `wss://wordrush.party/display` and sends the token as its
 first `display_hello` message. A successful connection receives sanitized
 `display_state` snapshots only. Any player action from a display is rejected,
 displays do not count toward room capacity, and a closed room closes its

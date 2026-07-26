@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Safely deploy a committed WordRush revision to rush.nrdgrrrl.com.
+# Safely deploy a committed WordRush revision to wordrush.party.
 #
 # This script intentionally targets only /home/victoria/sites/rush/wordrush
 # and the wordrush systemd unit.  It never changes Apache, certificates, or
@@ -9,7 +9,7 @@ set -euo pipefail
 readonly HOST="${WORDRUSH_DEPLOY_HOST:-racknerd}"
 readonly APP="/home/victoria/sites/rush/wordrush"
 readonly BASE="/home/victoria/sites/rush"
-readonly URL="${WORDRUSH_DEPLOY_URL:-https://rush.nrdgrrrl.com/}"
+readonly URL="${WORDRUSH_DEPLOY_URL:-https://wordrush.party/}"
 MODE="dry-run"
 COMMIT="HEAD"
 

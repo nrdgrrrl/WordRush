@@ -1,6 +1,6 @@
 # Wordrush production deployment
 
-Production runs at `https://rush.nrdgrrrl.com`.
+Production runs at `https://wordrush.party`.
 
 The Apache template keeps player and Cast display WebSockets open for up to 24
 hours. Do not reduce the `/display` proxy timeout to a short request-style
@@ -19,7 +19,7 @@ connected to the room.
 - Google Analytics remains disabled unless `WORDRUSH_GOOGLE_ANALYTICS_ID` is
   configured. See `ANALYTICS.md`; consent is required by default.
 - The source templates are `deploy/wordrush.service` and
-  `deploy/rush.nrdgrrrl.com.conf`. The dedicated LAN command is
+  `deploy/wordrush.party.conf`. The dedicated LAN command is
   `bash serve-lan.sh`; it is intentionally not a public deployment mode.
 - Install `wamerican` on the host. Wordrush uses `/usr/share/dict/words` as the
   authoritative normal-word dictionary; production intentionally refuses to
@@ -39,14 +39,14 @@ sudo certbot certificates
 The production health check is expected to return the public application:
 
 ```sh
-curl -I https://rush.nrdgrrrl.com/
+curl -I https://wordrush.party/
 ```
 
 Do not put a display token in a diagnostic command.
 
 ## Certificate renewal
 
-Certbot renews the `rush.nrdgrrrl.com` certificate through the webroot
+Certbot renews the `wordrush.party` certificate through the webroot
 `/var/www/letsencrypt`, which matches the Apache ACME challenge alias. Check
 the timer and test renewal without changing certificates:
 
@@ -124,7 +124,7 @@ Install production dependencies, then restart only the Wordrush service:
 
 ```sh
 ssh racknerd 'set -eu; cd /home/victoria/sites/rush/wordrush; PATH=/opt/node/bin:$PATH npm ci --omit=dev; sudo systemctl restart wordrush; sudo systemctl is-active --quiet wordrush'
-curl -I https://rush.nrdgrrrl.com/
+curl -I https://wordrush.party/
 ```
 
 Do not use `rsync --delete` for this manual deployment: the host retains

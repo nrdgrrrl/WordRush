@@ -973,7 +973,7 @@ test("home publishes crawlable SEO metadata and crawler routes", async () => {
   assert.match(html, /<html lang="en">/);
   assert.match(html, /<title>Wordrush — Fast Multiplayer Word Game<\/title>/);
   assert.match(html, /<meta\s+name="description"/);
-  assert.match(html, /<link rel="canonical" href="https:\/\/rush\.nrdgrrrl\.com\/"/);
+  assert.match(html, /<link rel="canonical" href="https:\/\/wordrush\.party\/"/);
   assert.match(html, /property="og:image"/);
   const jsonLd = JSON.parse(
     html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1],
@@ -985,12 +985,12 @@ test("home publishes crawlable SEO metadata and crawler routes", async () => {
   const robots = await fetch(origin + "/robots.txt");
   assert.equal(robots.status, 200);
   assert.equal(robots.headers.get("content-type"), "text/plain; charset=utf-8");
-  assert.match(await robots.text(), /Sitemap: https:\/\/rush\.nrdgrrrl\.com\/sitemap\.xml/);
+  assert.match(await robots.text(), /Sitemap: https:\/\/wordrush\.party\/sitemap\.xml/);
 
   const sitemap = await fetch(origin + "/sitemap.xml");
   assert.equal(sitemap.status, 200);
   assert.equal(sitemap.headers.get("content-type"), "application/xml");
-  assert.match(await sitemap.text(), /<loc>https:\/\/rush\.nrdgrrrl\.com\/<\/loc>/);
+  assert.match(await sitemap.text(), /<loc>https:\/\/wordrush\.party\/<\/loc>/);
 
   const manifest = await fetch(origin + "/manifest.webmanifest");
   assert.equal(manifest.status, 200);

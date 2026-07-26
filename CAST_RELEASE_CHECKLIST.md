@@ -41,10 +41,10 @@ The registered device can use the unpublished receiver. Publishing in the Cast
 SDK Developer Console makes the receiver available beyond registered test
 devices and is an account-owner decision. Before publishing, complete the
 real-device matrix above and confirm the receiver URL remains
-`https://rush.nrdgrrrl.com/receiver/`.
+`https://wordrush.party/receiver/`.
 
 For the console entry, use Custom Receiver, the receiver URL above, and the
-web sender URL `https://rush.nrdgrrrl.com/`. Keep **Supports casting to
+web sender URL `https://wordrush.party/`. Keep **Supports casting to
 audio-only devices** unchecked: Wordrush is a visual TV companion, not an
 audio receiver. Enable relay casting only if cross-network casting is an
 intended, tested feature.
