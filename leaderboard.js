@@ -8,7 +8,12 @@ const EMPTY_TRUSTED_DATA = Object.freeze({
   trustModel: TRUST_MODEL,
   players: {},
 });
-const DEFAULT_FILE = "/var/lib/wordrush/leaderboard.json";
+const DEFAULT_DIRECTORY =
+  process.env.STATE_DIRECTORY ||
+  (process.env.NODE_ENV === "production"
+    ? "/var/lib/wordrush"
+    : path.join(__dirname, "data"));
+const DEFAULT_FILE = path.join(DEFAULT_DIRECTORY, "leaderboard.json");
 
 function weekKey(date = new Date()) {
   const day = date.getUTCDay() || 7;
