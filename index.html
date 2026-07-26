@@ -172,9 +172,8 @@
           <article><span>👑</span><div><small>ROUND LEADER</small><b id="resultTopPlayer">—</b></div></article>
         </div>
         <div class="results-switcher" aria-label="Results view">
-          <button class="active" id="staticResultsButton" type="button">
-            🏆 Score party</button
-          ><button id="animatedResultsButton" type="button">✨ Word parade</button>
+          <button id="staticResultsButton" type="button" hidden>🏆 Score party</button
+          ><button class="active" id="animatedResultsButton" type="button">✨ Word Party · everyone’s invited</button>
         </div>
         <div id="staticResultsView">
           <div class="result-podium" id="resultPlayers"></div>
@@ -193,6 +192,13 @@
             <small>TOTAL SCORE</small><strong id="revealTotal">0</strong>
           </div>
           <div class="reveal-players" id="revealPlayers"></div>
+        </div>
+        <div class="sudden-death-callout" id="suddenDeathCallout" hidden>
+          <span aria-hidden="true">💥</span>
+          <div>
+            <b id="suddenDeathCalloutTitle">Sudden death!</b>
+            <small id="suddenDeathCalloutDetail"></small>
+          </div>
         </div>
         <div class="achievement" id="resultAchievement" hidden>
           ✦
@@ -522,6 +528,11 @@
         </form>
       </dialog>
     </main>
+    <div class="sudden-death-explosion" id="suddenDeathExplosion" hidden role="status" aria-live="assertive">
+      <div class="explosion-confetti" aria-hidden="true"><i>✦</i><i>●</i><i>▲</i><i>★</i><i>◆</i><i>✹</i><i>✦</i></div>
+      <strong id="suddenDeathExplosionTitle">💥 SUDDEN DEATH!</strong>
+      <span id="suddenDeathExplosionDetail"></span>
+    </div>
     <div id="toast"></div>
     <script src="game-config.js"></script>
     <script src="board-core.js"></script>

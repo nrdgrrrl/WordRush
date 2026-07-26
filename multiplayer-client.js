@@ -348,9 +348,13 @@
       if (message.type === "round_finished") {
         roomStatus = "finished";
         window.wordrushOnlineFinish?.(message.ranking, {
+          roundId: message.roundId,
+          gameSeconds: message.gameSeconds,
           cooperative: message.cooperative,
           teamScore: message.teamScore,
           stats: message.stats,
+          reason: message.reason,
+          suddenDeath: message.suddenDeath,
           results: message.results,
         });
         toast(message.cooperative ? "Team round complete" : "Round complete");

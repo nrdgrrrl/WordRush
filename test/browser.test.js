@@ -1657,3 +1657,46 @@ test("animated results safely render ten players without phone overflow", async 
   assert.deepEqual(pageErrors, []);
   await browser.close();
 });
+
+test("Word Party is forced for every player and celebrates sudden death", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    const guestId = window.wordrushGuestId;
+    window.wordrushOnlineRound(
+      { board: Array(16).fill("A"), size: 4, endsAt: Date.now() + 60000 },
+      { label: "SUDDEN DEATH", min: 3, rule: "One invalid word ends the round", sudden: true },
+      "sudden",
+    );
+    window.wordrushOnlineFinish(
+      [
+        { id: guestId, name: "Nova", avatar: "🦊", score: 49, words: [{ word: "PLANETS", points: 49 }] },
+        { id: "moon", name: "Moon", avatar: "🐈", score: 25, words: [{ word: "STARS", points: 25 }] },
+        { id: "sun", name: "Sun", avatar: "🐸", score: 16, words: [{ word: "MOON", points: 16 }] },
+      ],
+      {
+        reason: "invalid_word",
+        suddenDeath: { playerId: "moon", playerName: "Moon", playerAvatar: "🐈", word: "ZZZ" },
+        results: { view: "static", speed: "fast" },
+      },
+    );
+  });
+  await page.waitForSelector("#resultsScreen.active");
+  assert.equal(await page.locator("#animatedResultsView").isHidden(), false);
+  assert.equal(await page.locator("#staticResultsView").isHidden(), true);
+  assert.equal(await page.locator(".reveal-player").count(), 3);
+  assert.match(await page.locator("#resultLongestWord").textContent(), /PLANETS · 49 pts · 🦊 Nova/);
+  assert.match(await page.locator("#suddenDeathCallout").textContent(), /Moon/);
+  assert.match(await page.locator("#suddenDeathCallout").textContent(), /ZZZ/);
+  assert.equal(await page.locator("#suddenDeathExplosion").isHidden(), false);
+  const revealLayout = await page.locator("#revealPlayers").evaluate((node) => ({
+    maxHeight: getComputedStyle(node).maxHeight,
+    overflow: getComputedStyle(node).overflow,
+    thirdBottom: node.children[2].getBoundingClientRect().bottom,
+  }));
+  assert.equal(revealLayout.maxHeight, "none");
+  assert.equal(revealLayout.overflow, "visible");
+  assert.ok(revealLayout.thirdBottom > 0);
+  await browser.close();
+});

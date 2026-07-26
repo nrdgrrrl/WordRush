@@ -1,10 +1,9 @@
 (() => {
   const $ = (selector) => document.querySelector(selector);
   const SPEEDS = { slow: 1800, medium: 900, fast: 350 };
-  const storedView = localStorage.getItem("wordrush-results-view");
   const storedSpeed = localStorage.getItem("wordrush-results-speed");
   let settings = {
-    view: ["static", "reveal"].includes(storedView) ? storedView : "static",
+    view: "reveal",
     speed: Object.hasOwn(SPEEDS, storedSpeed) ? storedSpeed : "medium",
   };
   let localWords = [];
@@ -83,7 +82,8 @@
         : "—";
     if ($("#resultLongestWord"))
       $("#resultLongestWord").textContent = longest
-        ? String(longest.word).toUpperCase() + " · " + longest.points + " pts"
+      ? String(longest.word).toUpperCase() + " · " + longest.points +
+        " pts · " + (longest.player.avatar || "🐈") + " " + longest.player.name
         : "—";
   }
 
@@ -163,12 +163,7 @@
 
   function setSettings(next, broadcast = false) {
     settings = {
-      view:
-        next.view === "reveal"
-          ? "reveal"
-          : next.view === "static"
-            ? "static"
-            : settings.view,
+      view: "reveal",
       speed: Object.hasOwn(SPEEDS, next.speed) ? next.speed : settings.speed,
     };
     localStorage.setItem("wordrush-results-view", settings.view);
@@ -210,7 +205,7 @@
       words: player.words || [],
     }));
     if (detail.result?.results)
-      settings = { ...settings, ...detail.result.results };
+      settings = { ...settings, ...detail.result.results, view: "reveal" };
     renderHighlights(rows());
     applyResults();
   });

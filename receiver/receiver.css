@@ -56,6 +56,25 @@ footer { color: #d1c1d8; font-size: clamp(.9rem, 1.35vw, 1.35rem); }
 .longest-banner span { color: #f6c85f; font-size: clamp(.75rem, 1.25vw, 1.25rem); font-weight: 950; letter-spacing: .13em; }
 .longest-banner strong { margin: .12em 0; color: #fff9f0; font-size: clamp(2rem, 4vw, 4.8rem); line-height: 1; overflow-wrap: anywhere; }
 .longest-banner b { color: #e3d8eb; font-size: clamp(.85rem, 1.3vw, 1.45rem); }
+.sudden-death-banner {
+  grid-column: 1;
+  align-self: start;
+  display: grid;
+  gap: .3em;
+  padding: clamp(.8rem, 1.5vw, 1.4rem);
+  border: .22rem solid #f6c85f;
+  border-radius: 1.4rem;
+  background: linear-gradient(120deg, #dd5f58, #5b2d7f);
+  box-shadow: 0 .45rem 0 #0c0911;
+  animation: receiver-sudden-death .8s ease-out both;
+}
+.sudden-death-banner strong { color: #f6c85f; font-size: clamp(1rem, 1.7vw, 1.8rem); }
+.sudden-death-banner span { color: #fff9f0; font-size: clamp(.8rem, 1.25vw, 1.3rem); font-weight: 800; }
+@keyframes receiver-sudden-death {
+  0% { opacity: 0; transform: scale(.7) rotate(-3deg); }
+  70% { transform: scale(1.04) rotate(1deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
 .final-player-grid {
   grid-column: 2;
   grid-row: 1 / 3;

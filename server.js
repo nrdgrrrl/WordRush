@@ -333,7 +333,7 @@ function startRound(room, selected = room.mode, rawConfig = null) {
   };
   room.status = "playing";
   room.teamScore = 0;
-  room.results = { view: "static", speed: "medium" };
+  room.results = { view: "reveal", speed: "medium" };
   room.lastResult = null;
   for (const player of room.players.values()) {
     player.score = 0;
@@ -347,7 +347,7 @@ function startRound(room, selected = room.mode, rawConfig = null) {
   room.round.timer.unref?.();
   broadcast(room, { ...state(room), type: "round_started", config });
 }
-function finishRound(room, reason = "complete") {
+function finishRound(room, reason = "complete", suddenDeath = null) {
   if (!room.round || room.status !== "playing") return;
   clearTimeout(room.round.timer);
   room.status = "finished";
@@ -372,6 +372,7 @@ function finishRound(room, reason = "complete") {
     stats: { wordsFound: room.round.found.size },
     results: room.results,
     reason,
+    suddenDeath,
     ranking: rankedPlayers.map((p) => ({
         id: p.id,
         name: p.name,
@@ -772,7 +773,7 @@ function handle(ws, message) {
   if (type === "set_results_settings") {
     if (room.status !== "finished")
       return send(ws, { type: "error", code: "RESULTS_NOT_READY" });
-    const view = message.view === "reveal" ? "reveal" : "static";
+    const view = "reveal";
     const speed = ["slow", "medium", "fast"].includes(message.speed)
       ? message.speed
       : room.results.speed;
@@ -812,7 +813,12 @@ function handle(ws, message) {
         (room.mode === "sudden" || roomConfig(room).sudden) &&
         result.reason !== "duplicate"
       )
-        finishRound(room, "invalid_word");
+        finishRound(room, "invalid_word", {
+          playerId: client.id,
+          playerName: player.name,
+          playerAvatar: player.avatar || "🐈",
+          word: result.word,
+        });
       return;
     }
     room.round.found.add(result.word);

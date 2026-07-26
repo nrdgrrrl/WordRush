@@ -76,6 +76,9 @@
     const longestBanner = longest
       ? `<div class="longest-banner"><span>🏆 LONGEST WORD</span><strong>${escape(longest.item.word)}</strong><b>${escape(longest.player.avatar || "🐈")} ${escape(longest.player.name)} · ${longestLength} letters · ${Number(longest.item.points || 0).toLocaleString()} pts</b></div>`
       : `<div class="longest-banner empty"><span>✨ NEXT ROUND</span><strong>No words yet</strong><b>A fresh board is waiting.</b></div>`;
+    const suddenDeathBanner = result.suddenDeath
+      ? `<div class="sudden-death-banner"><strong>💥 SUDDEN DEATH!</strong><span>${escape(result.suddenDeath.playerAvatar || "🐈")} ${escape(result.suddenDeath.playerName || "Someone")} ended it with “${escape(result.suddenDeath.word)}”</span></div>`
+      : "";
     const playerCards = ranking.map((player, index) => {
       const words = player.words || [];
       const wordChips = words.length
@@ -89,7 +92,7 @@
     }).join("");
     eyebrow.textContent = "FINAL RESULTS";
     screen.className = "screen finished results-party";
-    screen.innerHTML = `<div class="finish-title"><p class="kicker">ROUND COMPLETE!</p><h1>${headline}</h1></div>${longestBanner}<div class="final-player-grid players-${Math.min(ranking.length, 4)}">${playerCards}</div><div class="word-color-key"><span class="length-short">3–4 letters</span><span class="length-medium">5–6 letters</span><span class="length-long">7+ letters</span></div>`;
+    screen.innerHTML = `<div class="finish-title"><p class="kicker">ROUND COMPLETE!</p><h1>${headline}</h1></div>${longestBanner}${suddenDeathBanner}<div class="final-player-grid players-${Math.min(ranking.length, 4)}">${playerCards}</div><div class="word-color-key"><span class="length-short">3–4 letters</span><span class="length-medium">5–6 letters</span><span class="length-long">7+ letters</span></div>`;
     connection.textContent = "Final scores · live room connection";
   };
   const render = (state) => {

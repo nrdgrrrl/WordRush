@@ -84,6 +84,7 @@ const s = {
   onlineRoundKey: null,
   pendingOnlineTrace: null,
   party: false,
+  suddenDeath: null,
 };
 const avatarOptions = [
     "🐈",
@@ -342,6 +343,36 @@ function renderResults(ranking) {
     target.append(row);
   });
 }
+function renderSuddenDeath(details) {
+  const callout = $("#suddenDeathCallout");
+  if (!callout) return;
+  const valid = details && details.word && (details.playerName || details.name);
+  callout.hidden = !valid;
+  if (!valid) return;
+  $("#suddenDeathCalloutTitle").textContent =
+    (details.playerAvatar || details.avatar || "🐈") + " " +
+    (details.playerName || details.name) + " ended it!";
+  $("#suddenDeathCalloutDetail").textContent =
+    String(details.word).toUpperCase() + " was the wrong word — boom!";
+}
+function triggerSuddenDeathExplosion(details) {
+  const explosion = $("#suddenDeathExplosion");
+  if (!explosion || !details?.word) return;
+  $("#suddenDeathExplosionTitle").textContent = "💥 SUDDEN DEATH!";
+  $("#suddenDeathExplosionDetail").textContent =
+    (details.playerAvatar || details.avatar || "🐈") + " " +
+    (details.playerName || details.name || "Someone") +
+    " detonated the round with “" + String(details.word).toUpperCase() + "”";
+  explosion.hidden = false;
+  explosion.classList.remove("is-active");
+  void explosion.offsetWidth;
+  explosion.classList.add("is-active");
+  clearTimeout(triggerSuddenDeathExplosion.timer);
+  triggerSuddenDeathExplosion.timer = setTimeout(() => {
+    explosion.hidden = true;
+    explosion.classList.remove("is-active");
+  }, 1400);
+}
 function end() {
   if (
     window.wordrushSocket?.readyState === 1 &&
@@ -357,6 +388,8 @@ function end() {
   $("#finalScore").textContent = s.score;
   $("#resultWordCount").textContent = s.found.size;
   renderResults();
+  renderSuddenDeath(s.suddenDeath);
+  if (s.suddenDeath) triggerSuddenDeathExplosion(s.suddenDeath);
   $("#resultAchievement").hidden = !s.found.size;
   $("#resultAchievementTitle").textContent = s.found.size
     ? "Round complete"
@@ -389,6 +422,7 @@ function end() {
     ],
     multiplayer: false,
     cooperative: false,
+    suddenDeath: s.suddenDeath,
   });
   if (s.rush) {
     const rushDelay = window.wordrushRushDelay || 20000;
@@ -494,6 +528,7 @@ async function start(mode, override = null, adultMode = false, rush = false) {
   s.party = Boolean(override?.[0] === "PARTY MODE");
   s.onlineRoundKey = null;
   s.pendingOnlineTrace = null;
+  s.suddenDeath = null;
   document.body.dataset.mode = mode;
   s.n = m[2];
   s.time = m[3];
@@ -591,7 +626,15 @@ async function submit() {
           ? "Tiles must connect"
           : "Not in dictionary",
     );
-    if (s.mode === "sudden") setTimeout(end, 300);
+    if (s.mode === "sudden") {
+      s.suddenDeath = {
+        playerName: profile.name,
+        playerAvatar: profile.avatar,
+        word: w,
+      };
+      triggerSuddenDeathExplosion(s.suddenDeath);
+      setTimeout(end, 300);
+    }
   }
   setTimeout(() => {
     $("#preview").classList.remove("found");
@@ -820,6 +863,7 @@ window.wordrushOnlineRound = (round, config, mode) => {
   s.mode = mode || match?.[0] || "classic";
   s.party = config?.label === "PARTY MODE";
   s.pendingOnlineTrace = null;
+  s.suddenDeath = null;
   customAdult = Boolean(config?.adult);
   s.customConfig = [
     config?.label || "MULTIPLAYER",
@@ -874,12 +918,16 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   const ownPlayer = normalizedRanking.find((player) => player.id === guestId);
   const mine = ownPlayer?.score ?? s.score;
   const ownWords = ownPlayer?.words || [];
+  const suddenDeath = result.reason === "invalid_word" ? result.suddenDeath : null;
+  s.suddenDeath = suddenDeath || null;
   s.score = mine;
   s.found.clear();
   ownWords.forEach((item) => s.found.add(item.word));
   $("#finalScore").textContent = mine;
   $("#resultWordCount").textContent = ownWords.length;
   renderResults(normalizedRanking);
+  renderSuddenDeath(suddenDeath);
+  if (suddenDeath) triggerSuddenDeathExplosion(suddenDeath);
   $("#resultAchievement").hidden = false;
   $("#resultAchievementTitle").textContent = result.cooperative
     ? "Co-op complete"
