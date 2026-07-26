@@ -364,6 +364,7 @@ test("authoritatively accepts a valid path and rejects an invalid word", async (
   const startedPromise = next(ws, "round_started");
   message(ws, "start_game", { mode: "classic" });
   const started = await startedPromise;
+  rooms.get(created.code).round.startedAt = Date.now() - 1;
   const board = started.round.board;
   let found;
   for (let i = 0; i < board.length && !found; i++)
@@ -380,12 +381,51 @@ test("authoritatively accepts a valid path and rejects an invalid word", async (
   ws.close();
 });
 
+test("rejects multiplayer submissions before the authoritative round start", async () => {
+  const ws = await client("early-submitter");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room", { mode: "classic" });
+  const created = await createdPromise;
+  await lobbyPromise;
+  const startedPromise = next(ws, "round_started");
+  message(ws, "start_game", { mode: "classic" });
+  await startedPromise;
+  const room = rooms.get(created.code);
+  room.round.startedAt = Date.now() + 1000;
+  const errorPromise = next(ws, "error");
+  message(ws, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  assert.equal((await errorPromise).code, "ROUND_NOT_STARTED");
+  assert.equal(room.players.get("early-submitter").score, 0);
+  ws.close();
+});
+
+test("does not score submissions at or after the authoritative deadline", async () => {
+  const ws = await client("late-submitter");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room", { mode: "classic" });
+  const created = await createdPromise;
+  await lobbyPromise;
+  const startedPromise = next(ws, "round_started");
+  message(ws, "start_game", { mode: "classic" });
+  await startedPromise;
+  const room = rooms.get(created.code);
+  room.round.startedAt = Date.now() - 1;
+  room.round.endsAt = Date.now();
+  const finishedPromise = next(ws, "round_finished");
+  message(ws, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  assert.equal((await finishedPromise).reason, "timeout");
+  assert.equal(room.players.get("late-submitter").score, 0);
+  ws.close();
+});
+
 test("every built-in multiplayer mode accepts a generated board word", async () => {
   const ws = await client("generated-word-scorer");
   const createdPromise = next(ws, "room_created");
   const lobbyPromise = next(ws, "room_state");
   message(ws, "create_room", { mode: "classic" });
-  await createdPromise;
+  const created = await createdPromise;
   await lobbyPromise;
   for (const mode of [
     "classic",
@@ -403,6 +443,7 @@ test("every built-in multiplayer mode accepts a generated board word", async () 
     const startedPromise = next(ws, "round_started");
     message(ws, "start_game", { mode });
     const started = await startedPromise;
+    rooms.get(created.code).round.startedAt = Date.now() - 1;
     const candidates = mode === "dirty"
       ? [...COMMON_WORDS, ...ADULT_WORDS]
       : COMMON_WORDS;
@@ -701,6 +742,7 @@ test("competitive players can score the same word independently", async () => {
   message(host, "start_game", { mode: "classic" });
   await startedPromise;
   const room = rooms.get(created.code);
+  room.round.startedAt = Date.now() - 1;
   room.round.board = [
     "C",
     "A",
@@ -759,6 +801,7 @@ test("long haul leaves players with no words at zero", async () => {
   message(host, "start_game", { mode: "longhaul" });
   const started = await startedPromise;
   const room = rooms.get(created.code);
+  room.round.startedAt = Date.now() - 1;
   room.round.board = [
     "P", "L", "A", "N", "E", "T",
     ...Array(30).fill("X"),

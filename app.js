@@ -759,7 +759,12 @@ async function submit() {
     w.length >= m[1] && validPath && !duplicate
       ? custom.has(w) || await isServerDictionaryWord(w, customAdult)
       : false;
-  if (s.done || s.startedAt !== roundStartedAt) return;
+  if (
+    s.done ||
+    s.startedAt !== roundStartedAt ||
+    (s.endsAt && Date.now() >= s.endsAt)
+  )
+    return;
   const chainBreak =
     s.chain && s.lastWord && w[0] !== s.lastWord.at(-1);
   const ok = w.length >= m[1] && validPath && inDictionary && !chainBreak;

@@ -848,7 +848,10 @@ function handle(ws, message) {
   if (type === "submit_word") {
     if (room.status !== "playing" || !room.round)
       return send(ws, { type: "error", code: "ROUND_NOT_PLAYING" });
-    if (Date.now() >= room.round.endsAt) return finishRound(room, "timeout");
+    const now = Date.now();
+    if (now < room.round.startedAt)
+      return send(ws, { type: "error", code: "ROUND_NOT_STARTED" });
+    if (now >= room.round.endsAt) return finishRound(room, "timeout");
     const player = room.players.get(client.id);
     let result = validateSubmission({
       ...message,
