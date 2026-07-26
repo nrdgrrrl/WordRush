@@ -898,6 +898,10 @@ function handle(ws, message) {
         });
       return;
     }
+    // Validation is synchronous today, but keep the scoring boundary
+    // authoritative if validation or future policy checks ever take time.
+    // A word received before the deadline must not be awarded after it.
+    if (Date.now() >= room.round.endsAt) return finishRound(room, "timeout");
     room.round.found.add(result.word);
     room.round.lastWord = result.word;
     player.found.add(result.word);
