@@ -431,6 +431,7 @@
           timeout: "Adult consent request timed out",
           player_declined: "A player declined the adult round",
           player_disconnected: "A player disconnected — adult consent cancelled",
+          player_left: "A player left — adult consent cancelled",
           configuration_changed: "The host changed the game mode",
           room_closed: "The room was closed",
         };
@@ -471,8 +472,7 @@
         if (prePanel) prePanel.hidden = true;
         if (actions) actions.hidden = true;
         rememberSession(message);
-        showLobby(message.code, false);
-        toast("Joined room with adult content");
+        toast("Join accepted — entering room");
       }
       if (message.type === "adult_pre_admission_declined") {
         pendingChallengeId = "";
@@ -530,6 +530,14 @@
           player_count: message.players.length,
           random_rush: message.randomRush,
         });
+        pendingConsentRequestId = "";
+        pendingChallengeId = "";
+        const consentPanel = $("#consentPanel");
+        const prePanel = $("#preAdmissionPanel");
+        const actions = $("#consentActions");
+        if (consentPanel) consentPanel.hidden = true;
+        if (prePanel) prePanel.hidden = true;
+        if (actions) actions.hidden = true;
         roomStatus = "playing";
         creatorId = message.creatorId || creatorId;
         updateLobbyControls();
