@@ -1152,7 +1152,7 @@ test("main screen join QR remains available after a multiplayer round starts", a
   await browser.close();
 });
 
-test("multiplayer lobby no longer offers a dirty mode option", async () => {
+test("multiplayer lobby now offers a dirty mode option", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
@@ -1164,12 +1164,12 @@ test("multiplayer lobby no longer offers a dirty mode option", async () => {
   const options = await page.locator("#sessionType option").evaluateAll((nodes) =>
     nodes.map((node) => node.value),
   );
-  assert.equal(options.includes("dirty"), false);
+  assert.equal(options.includes("dirty"), true);
   assert.ok(options.includes("classic"));
   await browser.close();
 });
 
-test("dirty mode card is blocked in multiplayer", async () => {
+test("dirty mode card triggers consent flow in multiplayer", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
@@ -1189,24 +1189,18 @@ test("dirty mode card is blocked in multiplayer", async () => {
   });
   await page.locator('[data-mode="dirty"]').click();
   await page.waitForTimeout(100);
-  const gameActive = await page
+  const consentRequested = await page.evaluate(() =>
+    window.__sentMessages.some((msg) => msg.type === "start_game"),
+  );
+  assert.equal(consentRequested, true);
+  const gameNotActive = await page
     .locator("#gameScreen")
     .evaluate((node) => node.classList.contains("active"));
-  assert.equal(gameActive, false);
-  assert.equal(
-    await page.evaluate(() =>
-      window.__sentMessages.some((msg) => msg.type === "start_game"),
-    ),
-    false,
-  );
-  assert.match(
-    await page.locator("#toast").textContent(),
-    /not available in multiplayer/i,
-  );
+  assert.equal(gameNotActive, false);
   await browser.close();
 });
 
-test("adult custom game is blocked in multiplayer", async () => {
+test("adult custom game triggers consent flow in multiplayer", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
@@ -1228,24 +1222,18 @@ test("adult custom game is blocked in multiplayer", async () => {
   await page.locator('[data-custom-type="dirty"]').click();
   await page.locator("#customStart").click();
   await page.waitForTimeout(100);
-  const gameActive = await page
+  const consentRequested = await page.evaluate(() =>
+    window.__sentMessages.some((msg) => msg.type === "start_game"),
+  );
+  assert.equal(consentRequested, true);
+  const gameNotActive = await page
     .locator("#gameScreen")
     .evaluate((node) => node.classList.contains("active"));
-  assert.equal(gameActive, false);
-  assert.equal(
-    await page.evaluate(() =>
-      window.__sentMessages.some((msg) => msg.type === "start_game"),
-    ),
-    false,
-  );
-  assert.match(
-    await page.locator("#toast").textContent(),
-    /not available in multiplayer/i,
-  );
+  assert.equal(gameNotActive, false);
   await browser.close();
 });
 
-test("room is recoverable after blocked adult attempt", async () => {
+test("room recovers after consent cancellation and starts classic", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
@@ -1256,15 +1244,21 @@ test("room is recoverable after blocked adult attempt", async () => {
   );
   await page.locator('#multiplayerDialog button[value="cancel"]').click();
   await page.evaluate(() => {
+    window.__sentMessages = [];
+    const original = window.wordrushSocket.send.bind(window.wordrushSocket);
+    window.wordrushSocket.send = function (message) {
+      window.__sentMessages.push(JSON.parse(message));
+      return original(message);
+    };
+  });
+  await page.evaluate(() => {
     window.wordrushStartSessionGame({ mode: "dirty" });
   });
   await page.waitForTimeout(50);
-  assert.equal(
-    await page
-      .locator("#gameScreen")
-      .evaluate((node) => node.classList.contains("active")),
-    false,
+  const consentSent = await page.evaluate(() =>
+    window.__sentMessages.some((msg) => msg.type === "start_game"),
   );
+  assert.equal(consentSent, true);
   await page.locator("#sessionManage").click();
   await page.waitForFunction(() =>
     !document.querySelector("#sessionLobby").hidden,
@@ -1276,7 +1270,7 @@ test("room is recoverable after blocked adult attempt", async () => {
   await browser.close();
 });
 
-test("late join after adult rejection sees lobby with no round or board", async () => {
+test("late join during consent sees pre-admission panel", async () => {
   const host = await chromium.launch({ headless: true, executablePath });
   const guest = await chromium.launch({ headless: true, executablePath });
   const hostPage = await host.newPage({ viewport: { width: 390, height: 844 } });
@@ -1299,23 +1293,13 @@ test("late join after adult rejection sees lobby with no round or board", async 
       .evaluate((node) => node.classList.contains("active")),
     false,
   );
-  assert.equal(
-    await hostPage.evaluate(() => window.wordrushSessionCode),
-    code,
-  );
   await guestPage.locator("#sessionManage").click();
   guestPage.once("dialog", (dialog) => dialog.accept(code));
   await guestPage.locator("#sessionJoin").click();
-  await guestPage.waitForFunction(() =>
-    !document.querySelector("#sessionLobby").hidden &&
-    document.querySelector("#sessionPlayersText").textContent.includes("2 player"),
-  );
-  assert.equal(
-    await guestPage
-      .locator("#sessionLobby")
-      .evaluate((node) => node.hidden),
-    false,
-  );
+  const prePanelVisible = await guestPage.locator("#preAdmissionPanel").evaluate((node) => !node.hidden);
+  assert.equal(prePanelVisible, true);
+  const lobbyHidden = await guestPage.locator("#sessionLobby").evaluate((node) => node.hidden);
+  assert.equal(lobbyHidden, true);
   await hostPage.locator("#sessionManage").click();
   await hostPage.waitForFunction(() =>
     !document.querySelector("#sessionLobby").hidden,

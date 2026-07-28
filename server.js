@@ -1,4 +1,6 @@
 const RANDOM_RUSH_DELAY = Number(process.env.RANDOM_RUSH_DELAY || 20000);
+const CONSENT_TIMEOUT_MS = Number(process.env.WORDRUSH_CONSENT_TIMEOUT_MS || 60_000);
+const CHALLENGE_TIMEOUT_MS = Number(process.env.WORDRUSH_CHALLENGE_TIMEOUT_MS || 30_000);
 const http = require("node:http"),
   fs = require("node:fs"),
   path = require("node:path"),
@@ -47,6 +49,7 @@ const RATE_WINDOW_MS = 60_000;
 const displayTokens = new Map();
 const displayCredentials = new Map();
 const rateLimits = new Map();
+const preAdmissionChallenges = new Map();
 const configuredOrigins = (process.env.WORDRUSH_ALLOWED_ORIGINS || "")
   .split(",")
   .map((value) => value.trim())
@@ -181,6 +184,15 @@ function boundedNumber(value, fallback, minimum, maximum) {
 function isAdultRequest(mode, rawConfig) {
   return mode === "dirty" || Boolean(rawConfig?.adult);
 }
+function isAdultRoom(room) {
+  return room.mode === "dirty" || room.config?.adult === true;
+}
+function isAdultLastResult(room) {
+  return room.status === "finished" && room.lastResult && isAdultRoom(room);
+}
+function roomExposesAdultContent(room) {
+  return Boolean(room.pendingConsent) || isAdultRoom(room) || isAdultLastResult(room);
+}
 function requestedConfig(mode, raw) {
   if (mode !== "custom") return MODE_CONFIG[mode] || MODE_CONFIG.classic;
   return {
@@ -208,6 +220,120 @@ function recordedScore(player) {
     (total, item) => total + Math.max(0, Number(item.points) || 0),
     0,
   );
+}
+function createPendingConsent(room, mode, rawConfig) {
+  const config = requestedConfig(mode === "dirty" ? "dirty" : mode, { adult: true, ...rawConfig });
+  const requestId = crypto.randomUUID();
+  const expiresAt = Date.now() + CONSENT_TIMEOUT_MS;
+  room.pendingConsent = {
+    requestId,
+    mode,
+    config,
+    requiredPlayerIds: [...room.players.keys()],
+    acceptedPlayerIds: [],
+    expiresAt,
+    timer: setTimeout(() => {
+      if (room.pendingConsent?.requestId === requestId)
+        cancelPendingConsent(room, "timeout");
+    }, CONSENT_TIMEOUT_MS),
+  };
+  room.pendingConsent.timer.unref?.();
+  broadcast(room, {
+    type: "adult_consent_request",
+    requestId,
+    mode,
+    config: { adult: true, min: config.min, size: config.size, seconds: config.seconds },
+    requiredPlayerIds: room.pendingConsent.requiredPlayerIds,
+    acceptedPlayerIds: [],
+    expiresAt,
+  });
+}
+function cancelPendingConsent(room, reason) {
+  const pending = room.pendingConsent;
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  room.pendingConsent = null;
+  broadcast(room, {
+    type: "adult_consent_cancelled",
+    requestId: pending.requestId,
+    reason,
+  });
+}
+function completeAdultConsent(room, requestId) {
+  const pending = room.pendingConsent;
+  if (
+    !pending ||
+    pending.requestId !== requestId ||
+    room.status !== "lobby" ||
+    room.round !== null
+  )
+    return false;
+  if (pending.acceptedPlayerIds.length !== pending.requiredPlayerIds.length)
+    return false;
+  for (const id of pending.requiredPlayerIds) {
+    if (!pending.acceptedPlayerIds.includes(id)) return false;
+    const player = room.players.get(id);
+    if (!player || player.ws?.readyState !== 1) return false;
+  }
+  const acceptedIds = [...pending.acceptedPlayerIds];
+  clearTimeout(pending.timer);
+  room.pendingConsent = null;
+  startRound(room, pending.mode, pending.config, acceptedIds);
+  if (room.round) room.round.adultConsentRequestId = requestId;
+  return true;
+}
+function createPreAdmissionChallenge(room, client, ws, options = {}) {
+  const challengeId = crypto.randomUUID();
+  const challenge = {
+    challengeId,
+    roomCode: room.code,
+    clientId: client.id,
+    ws,
+    targetRequestId: options.targetRequestId || (room.pendingConsent ? room.pendingConsent.requestId : null),
+    roundId: options.roundId || (room.round ? room.round.id : null),
+    resultRoundId: options.resultRoundId || null,
+    expiresAt: Date.now() + CHALLENGE_TIMEOUT_MS,
+  };
+  preAdmissionChallenges.set(challengeId, challenge);
+  const safeConfig = roomConfig(room);
+  const safeMeta = {
+    adult: true,
+    min: safeConfig.min,
+    size: safeConfig.size,
+    seconds: safeConfig.seconds,
+  };
+  const mode = room.pendingConsent?.mode || room.mode;
+  const payload = {
+    type: "adult_pre_admission_challenge",
+    challengeId,
+    roomCode: room.code,
+    expiresAt: challenge.expiresAt,
+    mode,
+    config: safeMeta,
+  };
+  if (room.round) payload.roundId = room.round.id;
+  if (room.lastResult && isAdultLastResult(room)) payload.resultRoundId = room.lastResult.roundId;
+  if (room.pendingConsent) payload.targetRequestId = room.pendingConsent.requestId;
+  send(ws, payload);
+  return challenge;
+}
+function findPreAdmissionBySocket(ws) {
+  for (const challenge of preAdmissionChallenges.values())
+    if (challenge.ws === ws) return challenge;
+  return null;
+}
+function cleanupPreAdmission(ws) {
+  const challenge = findPreAdmissionBySocket(ws);
+  if (challenge) preAdmissionChallenges.delete(challenge.challengeId);
+}
+function prunePreAdmissionChallenges(now = Date.now()) {
+  for (const [id, challenge] of preAdmissionChallenges) {
+    if (challenge.expiresAt <= now) {
+      preAdmissionChallenges.delete(id);
+      if (challenge.ws?.readyState === 1)
+        send(challenge.ws, { type: "adult_pre_admission_timeout", challengeId: id });
+    }
+  }
 }
 function playerScore(room, player) {
   return room.mode === "coop"
@@ -294,6 +420,9 @@ function clearRoomTimer(room) {
 }
 function closeRoom(room, reason) {
   clearRoomTimer(room);
+  if (room.pendingConsent) cancelPendingConsent(room, "room_closed");
+  for (const [id, challenge] of preAdmissionChallenges)
+    if (challenge.roomCode === room.code) preAdmissionChallenges.delete(id);
   rooms.delete(room.code);
   for (const member of room.players.values()) {
     clearTimeout(member.disconnectTimer);
@@ -341,10 +470,10 @@ function randomMode(room) {
     room.randomModeQueue = shuffledModes(room.mode);
   return room.randomModeQueue.shift();
 }
-function startRound(room, selected = room.mode, rawConfig = null) {
+function startRound(room, selected = room.mode, rawConfig = null, roundConsentedPlayerIds = null) {
   const rawMode =
     selected === "custom" || MODE_CONFIG[selected] ? selected : "classic";
-  if (isAdultRequest(rawMode, rawConfig)) {
+  if (isAdultRequest(rawMode, rawConfig) && !roundConsentedPlayerIds) {
     return;
   }
   clearRoomTimer(room);
@@ -373,6 +502,9 @@ function startRound(room, selected = room.mode, rawConfig = null) {
     timer: null,
     config,
     validationMode,
+    consentedPlayerIds: roundConsentedPlayerIds
+      ? [...roundConsentedPlayerIds]
+      : [...room.players.keys()],
   };
   room.status = "playing";
   room.teamScore = 0;
@@ -555,6 +687,7 @@ function expireDisconnectedPlayer(room, player, ws) {
   broadcast(room, state(room));
 }
 function leave(ws) {
+  cleanupPreAdmission(ws);
   const info = clients.get(ws);
   if (!info) return leaveDisplay(ws);
   clients.delete(ws);
@@ -562,6 +695,11 @@ function leave(ws) {
   if (!room) return;
   const player = room.players.get(info.id);
   if (!player || player.ws !== ws) return;
+  if (
+    room.pendingConsent &&
+    room.pendingConsent.requiredPlayerIds.includes(info.id)
+  )
+    cancelPendingConsent(room, "player_disconnected");
   clearTimeout(player.disconnectTimer);
   player.disconnectTimer = null;
   // Preserve the seat during the bounded reconnect grace period for both host
@@ -637,6 +775,11 @@ function handle(ws, message) {
       return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
     const player = room?.players.get(client.id);
     if (!room || !player || player.reconnectToken !== message.reconnectToken)
+      return send(ws, { type: "error", code: "RESUME_FAILED" });
+    if (
+      roomExposesAdultContent(room) &&
+      !room.round?.consentedPlayerIds?.includes(client.id)
+    )
       return send(ws, { type: "error", code: "RESUME_FAILED" });
     const oldSocket = player.ws;
     clearTimeout(player.disconnectTimer);
@@ -740,6 +883,12 @@ function handle(ws, message) {
     }
     if (room.players.size >= MAX_PLAYERS)
       return send(ws, { type: "error", code: "ROOM_FULL" });
+    if (roomExposesAdultContent(room)) {
+      const existingChallenge = findPreAdmissionBySocket(ws);
+      if (existingChallenge) preAdmissionChallenges.delete(existingChallenge.challengeId);
+      createPreAdmissionChallenge(room, client, ws);
+      return;
+    }
     client.roomCode = room.code;
     client.name = cleanText(message.name, client.name);
     client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
@@ -762,6 +911,176 @@ function handle(ws, message) {
       reconnectToken: player.reconnectToken,
     });
     broadcast(room, state(room));
+    return;
+  }
+  if (type === "adult_consent_response") {
+    const hasRequestId = typeof message.requestId === "string";
+    const hasChallengeId = typeof message.challengeId === "string";
+    if (hasRequestId && hasChallengeId)
+      return send(ws, { type: "error", code: "CONSENT_AMBIGUOUS" });
+    if (!hasRequestId && !hasChallengeId)
+      return send(ws, { type: "error", code: "CONSENT_MISSING_TARGET" });
+    if (message.accepted !== true && message.accepted !== false)
+      return send(ws, { type: "error", code: "CONSENT_INVALID_VALUE" });
+    if (hasChallengeId) {
+      const challenge = preAdmissionChallenges.get(message.challengeId);
+      if (!challenge || challenge.ws !== ws) return;
+      const challengeClient = clients.get(ws);
+      if (!challengeClient || challengeClient.id !== challenge.clientId) return;
+      const targetRoom = rooms.get(challenge.roomCode);
+      if (!targetRoom || targetRoom.status === "closed") {
+        preAdmissionChallenges.delete(challenge.challengeId);
+        return send(ws, { type: "adult_pre_admission_declined", challengeId: message.challengeId });
+      }
+      if (challenge.expiresAt <= Date.now()) {
+        preAdmissionChallenges.delete(challenge.challengeId);
+        return send(ws, { type: "adult_pre_admission_timeout", challengeId: message.challengeId });
+      }
+      if (!message.accepted) {
+        preAdmissionChallenges.delete(challenge.challengeId);
+        return send(ws, { type: "adult_pre_admission_declined", challengeId: message.challengeId });
+      }
+      preAdmissionChallenges.delete(challenge.challengeId);
+      const wasPending = Boolean(targetRoom.pendingConsent);
+      if (wasPending && challenge.targetRequestId) {
+        if (targetRoom.pendingConsent?.requestId !== challenge.targetRequestId) {
+          createPreAdmissionChallenge(targetRoom, challengeClient, ws);
+          return;
+        }
+        if (challengeClient.roomCode) return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
+        if (targetRoom.players.size >= MAX_PLAYERS)
+          return send(ws, { type: "error", code: "ROOM_FULL" });
+        challengeClient.roomCode = targetRoom.code;
+        const player = {
+          ...challengeClient,
+          ws,
+          reconnectToken: crypto.randomBytes(32).toString("base64url"),
+          disconnectTimer: null,
+          score: targetRoom.mode === "coop" ? targetRoom.teamScore : 0,
+          words: [],
+          found: new Set(),
+          sessionWins: 0,
+          sessionLosses: 0,
+          sessionPoints: 0,
+        };
+        targetRoom.players.set(challengeClient.id, player);
+        if (!targetRoom.pendingConsent.requiredPlayerIds.includes(challengeClient.id))
+          targetRoom.pendingConsent.requiredPlayerIds.push(challengeClient.id);
+        if (!targetRoom.pendingConsent.acceptedPlayerIds.includes(challengeClient.id))
+          targetRoom.pendingConsent.acceptedPlayerIds.push(challengeClient.id);
+        send(ws, {
+          type: "joined_room",
+          code: targetRoom.code,
+          reconnectToken: player.reconnectToken,
+        });
+        broadcast(targetRoom, state(targetRoom));
+        completeAdultConsent(targetRoom, challenge.targetRequestId);
+        return;
+      }
+      if (targetRoom.round && challenge.roundId && challenge.roundId === targetRoom.round.id) {
+        if (isAdultRoom(targetRoom)) {
+          if (challengeClient.roomCode) return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
+          if (targetRoom.players.size >= MAX_PLAYERS)
+            return send(ws, { type: "error", code: "ROOM_FULL" });
+          challengeClient.roomCode = targetRoom.code;
+          const player = {
+            ...challengeClient,
+            ws,
+            reconnectToken: crypto.randomBytes(32).toString("base64url"),
+            disconnectTimer: null,
+            score: targetRoom.mode === "coop" ? targetRoom.teamScore : 0,
+            words: [],
+            found: new Set(),
+            sessionWins: 0,
+            sessionLosses: 0,
+            sessionPoints: 0,
+          };
+          targetRoom.players.set(challengeClient.id, player);
+          targetRoom.round.consentedPlayerIds.push(challengeClient.id);
+          send(ws, {
+            type: "joined_room",
+            code: targetRoom.code,
+            reconnectToken: player.reconnectToken,
+          });
+          broadcast(targetRoom, state(targetRoom));
+          return;
+        }
+        createPreAdmissionChallenge(targetRoom, challengeClient, ws);
+        return;
+      }
+      if (targetRoom.lastResult && challenge.resultRoundId && challenge.resultRoundId === targetRoom.lastResult.roundId) {
+        if (isAdultLastResult(targetRoom)) {
+          if (challengeClient.roomCode) return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
+          if (targetRoom.players.size >= MAX_PLAYERS)
+            return send(ws, { type: "error", code: "ROOM_FULL" });
+          challengeClient.roomCode = targetRoom.code;
+          const player = {
+            ...challengeClient,
+            ws,
+            reconnectToken: crypto.randomBytes(32).toString("base64url"),
+            disconnectTimer: null,
+            score: targetRoom.mode === "coop" ? targetRoom.teamScore : 0,
+            words: [],
+            found: new Set(),
+            sessionWins: 0,
+            sessionLosses: 0,
+            sessionPoints: 0,
+          };
+          targetRoom.players.set(challengeClient.id, player);
+          targetRoom.lastResult.consentedPlayerIds = targetRoom.lastResult.consentedPlayerIds || [];
+          targetRoom.lastResult.consentedPlayerIds.push(challengeClient.id);
+          send(ws, {
+            type: "joined_room",
+            code: targetRoom.code,
+            reconnectToken: player.reconnectToken,
+          });
+          broadcast(targetRoom, state(targetRoom));
+          return;
+        }
+        createPreAdmissionChallenge(targetRoom, challengeClient, ws);
+        return;
+      }
+      if (challenge.targetRequestId && challenge.targetRequestId !== targetRoom.pendingConsent?.requestId) {
+        createPreAdmissionChallenge(targetRoom, challengeClient, ws);
+        return;
+      }
+      createPreAdmissionChallenge(targetRoom, challengeClient, ws);
+      return;
+    }
+    const responseClient = clients.get(ws);
+    if (!responseClient) return send(ws, { type: "error", code: "HELLO_REQUIRED" });
+    const responseRoom = rooms.get(responseClient.roomCode);
+    if (!responseRoom) return send(ws, { type: "error", code: "NOT_IN_ROOM" });
+    const pending = responseRoom.pendingConsent;
+    if (!pending || pending.requestId !== message.requestId)
+      return send(ws, { type: "error", code: "CONSENT_MISMATCH" });
+    if (!pending.requiredPlayerIds.includes(responseClient.id))
+      return send(ws, { type: "error", code: "CONSENT_NOT_REQUIRED" });
+    if (!message.accepted) {
+      cancelPendingConsent(responseRoom, "player_declined");
+      return;
+    }
+    if (!pending.acceptedPlayerIds.includes(responseClient.id))
+      pending.acceptedPlayerIds.push(responseClient.id);
+    broadcast(responseRoom, {
+      type: "adult_consent_player_accepted",
+      requestId: pending.requestId,
+      playerId: responseClient.id,
+      acceptedPlayerIds: pending.acceptedPlayerIds,
+      requiredPlayerIds: pending.requiredPlayerIds,
+    });
+    completeAdultConsent(responseRoom, pending.requestId);
+    return;
+  }
+  if (type === "adult_consent_cancel") {
+    const cancelClient = clients.get(ws);
+    if (!cancelClient) return send(ws, { type: "error", code: "HELLO_REQUIRED" });
+    const cancelRoom = rooms.get(cancelClient.roomCode);
+    if (!cancelRoom) return send(ws, { type: "error", code: "NOT_IN_ROOM" });
+    if (cancelClient.id !== cancelRoom.creatorId)
+      return send(ws, { type: "error", code: "CREATOR_ONLY" });
+    if (cancelRoom.pendingConsent && cancelRoom.pendingConsent.requestId === message.requestId)
+      cancelPendingConsent(cancelRoom, "host_cancelled");
     return;
   }
   const room = rooms.get(client.roomCode);
@@ -808,8 +1127,13 @@ function handle(ws, message) {
       return send(ws, { type: "error", code: "CUSTOM_WORDS_REJECTED" });
     }
     if (isAdultRequest(requested, message.config)) {
-      return send(ws, { type: "error", code: "ADULT_CONTENT_REJECTED" });
+      if (room.pendingConsent)
+        cancelPendingConsent(room, "configuration_changed");
+      createPendingConsent(room, requested, message.config);
+      return;
     }
+    if (room.pendingConsent)
+      cancelPendingConsent(room, "configuration_changed");
     if (requested === "random") {
       room.randomRush = true;
       room.randomModeQueue = [];
@@ -1103,6 +1427,7 @@ const heartbeat = setInterval(() => {
         credential.expiresAt = now + DISPLAY_RECONNECT_TTL_MS;
       else displayCredentials.delete(token);
     }
+  prunePreAdmissionChallenges(now);
   for (const ws of wss.clients) {
     heartbeatSocket(ws);
   }
@@ -1116,15 +1441,28 @@ module.exports = {
   server,
   rooms,
   handle,
+  startRound,
   MAX_PLAYERS,
   displayTokens,
   displayCredentials,
   rateLimits,
+  preAdmissionChallenges,
   clientIp,
   pruneExpiredRateLimits,
   heartbeatSocket,
   WS_HEARTBEAT_MISSES,
   isAdultRequest,
+  isAdultRoom,
+  isAdultLastResult,
+  roomExposesAdultContent,
+  createPendingConsent,
+  cancelPendingConsent,
+  completeAdultConsent,
+  createPreAdmissionChallenge,
+  cleanupPreAdmission,
+  prunePreAdmissionChallenges,
+  CONSENT_TIMEOUT_MS,
+  CHALLENGE_TIMEOUT_MS,
 };
 
 const { Leaderboard } = require("./leaderboard");

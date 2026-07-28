@@ -457,6 +457,7 @@
                 <option value="sudden">Sudden death</option>
                 <option value="race">Race mode</option>
                 <option value="coop">Co-op</option>
+                <option value="dirty">Dirty Mode</option>
                 <option value="random">Random Rush</option>
               </select>
               <button
@@ -482,6 +483,34 @@
               >
                 Cast to TV
               </button>
+            </div>
+            <div id="consentPanel" class="consent-panel" hidden>
+              <div class="consent-heading">
+                <span>😼</span>
+                <div>
+                  <strong id="consentMode">Dirty Mode</strong>
+                  <small>Adult content consent required</small>
+                </div>
+              </div>
+              <p id="consentDescription">This round contains adult language. Everyone in the room must accept before it starts.</p>
+              <p id="consentConfig" class="consent-config"></p>
+              <div class="consent-players" id="consentPlayers"></div>
+            </div>
+            <div id="preAdmissionPanel" class="consent-panel" hidden>
+              <div class="consent-heading">
+                <span>😼</span>
+                <div>
+                  <strong id="preAdmissionMode">Dirty Mode</strong>
+                  <small>Adult content in this room</small>
+                </div>
+              </div>
+              <p id="preAdmissionDescription">This room has adult content. You must accept before joining.</p>
+              <p id="preAdmissionConfig" class="consent-config"></p>
+            </div>
+            <div class="consent-actions" id="consentActions" hidden>
+              <button type="button" class="primary consent-accept" id="consentAccept">Accept</button>
+              <button type="button" class="secondary consent-decline" id="consentDecline">Decline</button>
+              <button type="button" class="secondary consent-cancel" id="consentCancel" hidden>Cancel request</button>
             </div>
             <button
               type="button"
