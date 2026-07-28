@@ -625,11 +625,6 @@ function stopRush() {
 }
 async function start(mode, override = null, adultMode = false, rush = false) {
   if (
-    (mode === "dirty" || adultMode) &&
-    !confirm("Dirty Mode contains adult language. Continue?")
-  )
-    return;
-  if (
     window.wordrushStartSessionGame?.({
       mode,
       config: override
@@ -646,6 +641,11 @@ async function start(mode, override = null, adultMode = false, rush = false) {
         : null,
       randomRush: rush,
     })
+  )
+    return;
+  if (
+    (mode === "dirty" || adultMode) &&
+    !confirm("Dirty Mode contains adult language. Continue?")
   )
     return;
   let m = override || MODE[mode];

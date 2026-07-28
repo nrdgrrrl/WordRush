@@ -18,6 +18,7 @@ const {
   MODE_CONFIG,
   RANDOM_RUSH_MODES,
   RANDOM_RUSH_EXCLUDED_MODES,
+  ADULT_WORDS,
 } = require("../game-config");
 const { server, rooms } = require("../server");
 
@@ -1148,6 +1149,168 @@ test("main screen join QR remains available after a multiplayer round starts", a
   await returningPlayer.goto(baseUrl + "/?join=" + code);
   await returningPlayer.waitForSelector("#gameScreen.active");
   assert.equal(await returningPlayer.locator("#gameMode").textContent(), "CLASSIC");
+  await browser.close();
+});
+
+test("multiplayer lobby no longer offers a dirty mode option", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator("#sessionManage").click();
+  await page.locator("#sessionCreate").click();
+  await page.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  const options = await page.locator("#sessionType option").evaluateAll((nodes) =>
+    nodes.map((node) => node.value),
+  );
+  assert.equal(options.includes("dirty"), false);
+  assert.ok(options.includes("classic"));
+  await browser.close();
+});
+
+test("dirty mode card is blocked in multiplayer", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator("#sessionManage").click();
+  await page.locator("#sessionCreate").click();
+  await page.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  await page.locator('#multiplayerDialog button[value="cancel"]').click();
+  const sentMessages = [];
+  await page.evaluate(() => {
+    const original = window.wordrushSocket.send;
+    window.wordrushSocket.send = function (message) {
+      sentMessages.push(JSON.parse(message));
+      return original.call(this, message);
+    };
+  });
+  await page.locator('[data-mode="dirty"]').click();
+  await page.waitForTimeout(100);
+  const gameActive = await page
+    .locator("#gameScreen")
+    .evaluate((node) => node.classList.contains("active"));
+  assert.equal(gameActive, false);
+  assert.equal(
+    sentMessages.some((msg) => msg.type === "start_game"),
+    false,
+  );
+  await browser.close();
+});
+
+test("adult custom game is blocked in multiplayer", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator("#sessionManage").click();
+  await page.locator("#sessionCreate").click();
+  await page.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  await page.locator('#multiplayerDialog button[value="cancel"]').click();
+  const sentMessages = [];
+  await page.evaluate(() => {
+    const original = window.wordrushSocket.send;
+    window.wordrushSocket.send = function (message) {
+      sentMessages.push(JSON.parse(message));
+      return original.call(this, message);
+    };
+  });
+  await page.locator("#customGame").click();
+  await page.locator('[data-custom-type="dirty"]').click();
+  await page.locator("#customStart").click();
+  await page.waitForTimeout(100);
+  const gameActive = await page
+    .locator("#gameScreen")
+    .evaluate((node) => node.classList.contains("active"));
+  assert.equal(gameActive, false);
+  assert.equal(
+    sentMessages.some((msg) => msg.type === "start_game"),
+    false,
+  );
+  await browser.close();
+});
+
+test("room is recoverable after blocked adult attempt", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.locator("#sessionManage").click();
+  await page.locator("#sessionCreate").click();
+  await page.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  await page.locator("#sessionType").selectOption("coop");
+  await page.locator("#sessionStart").click();
+  await startIntro(page);
+  assert.equal(await page.locator("#gameMode").textContent(), "CO-OP");
+  await browser.close();
+});
+
+test("solo dirty mode still works with confirmation dialog", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.locator('[data-mode="dirty"]').click();
+  await startIntro(page);
+  assert.equal(
+    await page
+      .locator("#gameScreen")
+      .evaluate((node) => node.classList.contains("active")),
+    true,
+  );
+  assert.equal(await page.locator(".tile").count(), 25);
+  await browser.close();
+});
+
+test("solo dirty custom game still works with confirmation dialog", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.locator("#customGame").click();
+  await page.locator('[data-custom-type="dirty"]').click();
+  await page.locator('[data-custom-size="4"]').click();
+  await page.locator("#customStart").click();
+  await startIntro(page);
+  assert.equal(
+    await page
+      .locator("#gameScreen")
+      .evaluate((node) => node.classList.contains("active")),
+    true,
+  );
+  const playable = await page.evaluate((words) => {
+    const board = [...document.querySelectorAll(".tile")].map((tile) => tile.textContent);
+    const size = 4;
+    const neighbors = (index) => {
+      const row = Math.floor(index / size), column = index % size, result = [];
+      for (let dr = -1; dr <= 1; dr++)
+        for (let dc = -1; dc <= 1; dc++) {
+          const nextRow = row + dr, nextColumn = column + dc;
+          if ((dr || dc) && nextRow >= 0 && nextColumn >= 0 && nextRow < size && nextColumn < size)
+            result.push(nextRow * size + nextColumn);
+        }
+      return result;
+    };
+    const hasPath = (word) => {
+      const walk = (index, offset, used) => {
+        if (offset === word.length) return true;
+        return neighbors(index).some((next) => {
+          if (used.has(next) || board[next] !== word[offset]) return false;
+          const following = new Set(used).add(next);
+          return walk(next, offset + 1, following);
+        });
+      };
+      return board.some((letter, index) =>
+        letter === word[0] && walk(index, 1, new Set([index])),
+      );
+    };
+    return words.filter(hasPath);
+  }, ADULT_WORDS);
+  assert.ok(playable.length >= 5, `expected at least 5 dirty words, found ${playable.join(", ")}`);
   await browser.close();
 });
 
