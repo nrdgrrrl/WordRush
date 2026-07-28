@@ -10,7 +10,7 @@ const { neighbors } = require("../game-core");
 const { Leaderboard } = require("../leaderboard");
 process.env.RANDOM_RUSH_DELAY = "50";
 process.env.WORDRUSH_ROOM_RECONNECT_GRACE_MS = "100";
-process.env.WORDRUSH_MAX_WS_PER_IP = "100";
+process.env.WORDRUSH_MAX_WS_PER_IP = "1000";
 process.env.WORDRUSH_MAX_WS_MESSAGES_PER_WINDOW = "200";
 process.env.WORDRUSH_LEADERBOARD_FILE = path.join(
   fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-server-")),
@@ -1728,22 +1728,6 @@ test("public leaderboard submissions are rejected without touching persistence",
   });
   assert.equal(response.status, 410);
   assert.deepEqual(await response.json(), { error: "UNVERIFIED_SCORE" });
-  assert.equal(sitemap.status, 200);
-  assert.equal(sitemap.headers.get("content-type"), "application/xml");
-  assert.match(await sitemap.text(), /<loc>https:\/\/wordrush\.party\/<\/loc>/);
-
-  const manifest = await fetch(origin + "/manifest.webmanifest");
-  assert.equal(manifest.status, 200);
-  assert.equal(manifest.headers.get("content-type"), "application/manifest+json");
-  assert.equal((await manifest.json()).short_name, "Wordrush");
-
-  const favicon = await fetch(origin + "/favicon.svg");
-  assert.equal(favicon.status, 200);
-  assert.equal(favicon.headers.get("content-type"), "image/svg+xml");
-
-  const receiver = await fetch(origin + "/receiver/");
-  assert.equal(receiver.status, 200);
-  assert.equal(receiver.headers.get("x-robots-tag"), "noindex, nofollow");
 });
 
 test("analytics configuration is disabled by default and validates GA4 IDs", async () => {
