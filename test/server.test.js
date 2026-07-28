@@ -531,6 +531,48 @@ test("room is recoverable after customWords rejection in start_game", async () =
   ws.close();
 });
 
+test("reconnect after customWords rejection sees unchanged authoritative room", async () => {
+  const host = await client("custom-words-reconnect-host");
+  const guest = await client("custom-words-reconnect-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+  const errorPromise = next(host, "error");
+  message(host, "start_game", { mode: "classic", customWords: ["XYZZY"] });
+  const error = await errorPromise;
+  assert.equal(error.code, "CUSTOM_WORDS_REJECTED");
+  assert.equal(room.status, "lobby");
+  assert.equal(room.mode, "classic");
+  assert.equal(room.round, null);
+  host.close();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const reconnectedHost = await client("custom-words-reconnect-host");
+  const resumedPromise = next(reconnectedHost, "room_resumed");
+  const statePromise = next(reconnectedHost, "room_state");
+  message(reconnectedHost, "resume_room", {
+    code: created.code,
+    reconnectToken: created.reconnectToken,
+  });
+  await resumedPromise;
+  const resumedState = await statePromise;
+  assert.equal(resumedState.status, "lobby");
+  assert.equal(resumedState.mode, "classic");
+  assert.equal(resumedState.round, null);
+  assert.equal(resumedState.code, created.code);
+  const startedPromise = next(reconnectedHost, "round_started");
+  message(reconnectedHost, "start_game", { mode: "classic" });
+  await startedPromise;
+  assert.equal(room.status, "playing");
+  reconnectedHost.close();
+  guest.close();
+});
+
 test("start_game with dirty mode is authoritatively rejected", async () => {
   const ws = await client("dirty-reject");
   const createdPromise = next(ws, "room_created");

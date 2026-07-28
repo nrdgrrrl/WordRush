@@ -1432,14 +1432,45 @@ test("legacy wordrush-custom localStorage data is dormant and does not affect so
   );
   assert.equal(JSON.parse(storedValue)[0], "XYZZY");
   await startClassic(page);
-  const board = await page.evaluate(() =>
-    [...document.querySelectorAll(".tile")].map((tile) => tile.textContent),
+  const xyZzyExcluded = await page.evaluate(() => {
+    const xyZzyInCommon = window.WordrushConfig.COMMON_WORDS.includes("XYZZY");
+    s.b = [
+      "X", "Y", "Z", "A",
+      "A", "A", "Z", "Y",
+      "A", "A", "A", "A",
+      "A", "A", "A", "A",
+    ];
+    document.querySelectorAll(".tile").forEach((tile, i) => {
+      tile.textContent = s.b[i];
+    });
+    s.pick = [0, 1, 2, 6, 7];
+    s.found = new Set();
+    s.score = 0;
+    document.querySelector("#gameScore").textContent = "0";
+    return { xyZzyInCommon, boardLength: s.b.length, mode: s.mode };
+  });
+  assert.equal(xyZzyExcluded.xyZzyInCommon, false);
+  assert.equal(xyZzyExcluded.boardLength, 16);
+  const result = await page.evaluate(async () => {
+    const word = s.pick.map((i) => s.b[i]).join("");
+    const minimum = 3;
+    const inDictionary = word.length >= minimum
+      ? await fetch("/api/word-check?word=" + encodeURIComponent(word) + "&adult=0")
+          .then((r) => r.json())
+          .then((r) => r.valid === true)
+          .catch(() => false)
+      : false;
+    return { word, inDictionary, scoreBefore: Number(s.score) };
+  });
+  assert.equal(result.word, "XYZZY");
+  assert.equal(result.inDictionary, false);
+  assert.equal(result.scoreBefore, 0);
+  const score = await page.locator("#gameScore").textContent();
+  assert.equal(score, "0");
+  const afterTestValue = await page.evaluate(() =>
+    localStorage.getItem("wordrush-custom"),
   );
-  const hasXyZzy = board.some((letter) => letter === "X");
-  assert.equal(
-    await page.evaluate(() => window.WordrushConfig.COMMON_WORDS.includes("XYZZY")),
-    false,
-  );
+  assert.equal(JSON.parse(afterTestValue)[0], "XYZZY");
   await browser.close();
 });
 
