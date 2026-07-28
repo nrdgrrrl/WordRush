@@ -153,23 +153,21 @@
             receiverHealthy = false;
             probeRoom();
           } else if (state === cast.framework.SessionState.SESSION_ENDED) {
-            clearAttempt();
             receiverMessageSession = null;
             receiverHealthy = false;
             clearTimeout(receiverHealthTimer);
             clearTimeout(receiverProbeTimer);
             receiverProbeTimer = null;
-            if (gameButton) gameButton.textContent = "📺 Cast to TV";
-            updateAvailability();
+            if (currentRequest === null) {
+              if (gameButton) gameButton.textContent = "📺 Cast to TV";
+              updateAvailability();
+            }
           } else if (state === cast.framework.SessionState.SESSION_START_FAILED) {
-            clearAttempt();
             receiverMessageSession = null;
             receiverHealthy = false;
             clearTimeout(receiverHealthTimer);
             clearTimeout(receiverProbeTimer);
             receiverProbeTimer = null;
-            if (gameButton) gameButton.textContent = "📺 Cast to TV";
-            setStatus("Cast failed — tap to try again", true);
             trackCast("session_start_failed");
           }
         },

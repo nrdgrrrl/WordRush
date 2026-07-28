@@ -1495,7 +1495,10 @@ test("SESSION_START_FAILED restores retry state", async () => {
   await page.waitForTimeout(300);
   assert.equal(await page.evaluate(() => window.__castRSCount), 1);
   assert.match(await page.locator("#castStatus").textContent(), /Choose a TV/);
-  await page.evaluate(() => window.__castStateListener({ sessionState: "start_failed" }));
+  await page.evaluate(() => {
+    window.__castStateListener({ sessionState: "start_failed" });
+    window.__castRSReject(new Error("session start failed"));
+  });
   await page.waitForTimeout(100);
   assert.match(await page.locator("#castStatus").textContent(), /try again/);
   assert.equal(await page.locator("#gameCastButton").isDisabled(), false);
@@ -1511,9 +1514,12 @@ test("SESSION_ENDED during startup restores retry state", async () => {
   await page.waitForTimeout(300);
   assert.equal(await page.evaluate(() => window.__castRSCount), 1);
   assert.match(await page.locator("#castStatus").textContent(), /Choose a TV/);
-  await page.evaluate(() => window.__castStateListener({ sessionState: "ended" }));
+  await page.evaluate(() => {
+    window.__castStateListener({ sessionState: "ended" });
+    window.__castRSReject(new Error("session ended"));
+  });
   await page.waitForTimeout(100);
-  assert.match(await page.locator("#castStatus").textContent(), /Ready to cast this room/);
+  assert.match(await page.locator("#castStatus").textContent(), /try again/);
   assert.equal(await page.locator("#gameCastButton").isDisabled(), false);
   await browser.close();
 });
@@ -1552,6 +1558,80 @@ test("late SESSION_STARTED for an obsolete attempt does not send a duplicate han
   assert.equal(await page.evaluate(() => window.__castSent.filter(
     (m) => m.type === "display_token").length), 1);
   await page.evaluate(() => window.__castStateListener({ sessionState: "started" }));
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => window.__castSent.filter(
+    (m) => m.type === "display_token").length), 1);
+  await browser.close();
+});
+
+test("late SESSION_START_FAILED from an obsolete request does not corrupt the active request", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await castPageSetup(page);
+  await page.evaluate(() => { window.wordrushCastRequestTimeoutMs = 100; });
+  await page.evaluate(() => document.querySelector("#gameCastButton").click());
+  await page.waitForFunction(() =>
+    document.querySelector("#castStatus").textContent.includes("try again"),
+    null, { timeout: 10000 });
+  assert.equal(await page.evaluate(() => window.__castRSCount), 1);
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), false);
+  await page.evaluate(() => { window.wordrushCastRequestTimeoutMs = 5000; });
+  await page.evaluate(() => document.querySelector("#gameCastButton").click());
+  assert.equal(await page.evaluate(() => window.__castRSCount), 2);
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), true);
+  assert.match(await page.locator("#castStatus").textContent(), /Choose a TV/);
+  await page.evaluate(() => window.__castStateListener({ sessionState: "start_failed" }));
+  await page.waitForTimeout(50);
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), true);
+  assert.match(await page.locator("#castStatus").textContent(), /Choose a TV/);
+  await page.evaluate(() => {
+    window.__castContext.getCurrentSession = () => window.__castSession;
+    window.__castRSResolve();
+  });
+  await page.evaluate(() => window.__castStateListener({ sessionState: "started" }));
+  await page.waitForFunction(() => window.__castSent?.length === 1, null, { timeout: 5000 });
+  assert.deepEqual(await page.evaluate(() => window.__castSent[0]), {
+    type: "display_token",
+    token: "display-token",
+    roomCode: "ABCDE",
+  });
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => window.__castSent.filter(
+    (m) => m.type === "display_token").length), 1);
+  await browser.close();
+});
+
+test("late SESSION_ENDED from an obsolete request does not corrupt the active request", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await castPageSetup(page);
+  await page.evaluate(() => { window.wordrushCastRequestTimeoutMs = 100; });
+  await page.evaluate(() => document.querySelector("#gameCastButton").click());
+  await page.waitForFunction(() =>
+    document.querySelector("#castStatus").textContent.includes("try again"),
+    null, { timeout: 10000 });
+  assert.equal(await page.evaluate(() => window.__castRSCount), 1);
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), false);
+  await page.evaluate(() => { window.wordrushCastRequestTimeoutMs = 5000; });
+  await page.evaluate(() => document.querySelector("#gameCastButton").click());
+  assert.equal(await page.evaluate(() => window.__castRSCount), 2);
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), true);
+  assert.match(await page.locator("#castStatus").textContent(), /Choose a TV/);
+  await page.evaluate(() => window.__castStateListener({ sessionState: "ended" }));
+  await page.waitForTimeout(50);
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), true);
+  assert.match(await page.locator("#castStatus").textContent(), /Choose a TV/);
+  await page.evaluate(() => {
+    window.__castContext.getCurrentSession = () => window.__castSession;
+    window.__castRSResolve();
+  });
+  await page.evaluate(() => window.__castStateListener({ sessionState: "started" }));
+  await page.waitForFunction(() => window.__castSent?.length === 1, null, { timeout: 5000 });
+  assert.deepEqual(await page.evaluate(() => window.__castSent[0]), {
+    type: "display_token",
+    token: "display-token",
+    roomCode: "ABCDE",
+  });
   await page.waitForTimeout(50);
   assert.equal(await page.evaluate(() => window.__castSent.filter(
     (m) => m.type === "display_token").length), 1);
