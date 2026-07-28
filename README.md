@@ -12,8 +12,10 @@ From this directory run bash serve-lan.sh. The script prints the machine Wi-Fi a
 - Classic, Minimum Word, Sudden Death, Race Mode, Co-op, Dirty Mode, Blitz,
   Long Haul, Letter Storm, Score Attack, Word Chain, and Random Rush
 - Balanced board generation with short, medium, and long word targets
-- Personal custom dictionary stored in browser local storage
 - Opt-in adult dictionary for Dirty Mode
+- Legacy `wordrush-custom` localStorage value is intentionally left dormant and
+  does not affect gameplay. Future controlled vocabulary work is tracked in
+  [issue #41](https://github.com/nrdgrrrl/WordRush/issues/41).
 - Authoritative WebSocket rooms for up to 10 players
 - Shared static or animated word-by-word results with synchronized reveal speed
 - Headless multi-client harness: PORT=8000 node headless-client.js --clients 10 --mode race

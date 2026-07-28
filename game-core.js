@@ -32,9 +32,8 @@ const BASE_WORD_SETS = {
   dirty: new Set(BASE_DIRTY_WORDS),
 };
 const { neighbors, hasPath, generateBoard } = boardCore;
-function createLexicon(mode, customWords = []) {
-  const base = mode === "dirty" ? BASE_DIRTY_WORDS : BASE_WORDS;
-  return customWords.length ? normalizeWords([...base, ...customWords]) : base;
+function createLexicon(mode) {
+  return mode === "dirty" ? BASE_DIRTY_WORDS : BASE_WORDS;
 }
 function isDictionaryWord(word, mode = "classic") {
   const cleanWord = String(word || "").trim().toUpperCase();
@@ -50,7 +49,6 @@ function validateSubmission({
   mode,
   minimum,
   found,
-  customWords,
 }) {
   const config = MODE_CONFIG[mode] || MODE_CONFIG.classic,
     cleanWord = String(word || "").toUpperCase(),
@@ -67,11 +65,9 @@ function validateSubmission({
             neighbors(indexes[position - 1], size).includes(index)) &&
           indexes.indexOf(index) === position,
       ),
-    lexicon = customWords?.length
-      ? new Set(createLexicon(mode, customWords))
-      : mode === "dirty"
-        ? BASE_WORD_SETS.dirty
-        : BASE_WORD_SETS.classic,
+    lexicon = mode === "dirty"
+      ? BASE_WORD_SETS.dirty
+      : BASE_WORD_SETS.classic,
     valid =
       cleanWord.length >= (Number.isFinite(minimum) ? minimum : config.min) &&
       lexicon.has(cleanWord) &&

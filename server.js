@@ -12,7 +12,6 @@ const {
   generateBoard,
   isDictionaryWord,
   validateSubmission,
-  normalizeWords,
 } = require("./game-core");
 const PORT = Number(process.env.PORT || 8000),
   HOST = process.env.HOST || "127.0.0.1",
@@ -354,7 +353,7 @@ function startRound(room, selected = room.mode, rawConfig = null) {
     validationMode = config.adult ? "dirty" : room.mode,
     board = generateBoard(
       config.size,
-      createLexicon(validationMode, [...room.customWords]),
+      createLexicon(validationMode),
       // Keep multiplayer boards discoverable from the shared browser vocabulary
       // even when a server happens to have a larger system dictionary installed.
       { preferredWords: COMMON_WORDS },
@@ -660,6 +659,9 @@ function handle(ws, message) {
   if (type === "create_room") {
     if (client.roomCode && rooms.has(client.roomCode))
       return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
+    if ("customWords" in message) {
+      return send(ws, { type: "error", code: "CUSTOM_WORDS_REJECTED" });
+    }
     const room = {
       code: code(),
       mode: "classic",
@@ -667,7 +669,6 @@ function handle(ws, message) {
       randomRush: false,
       randomModeQueue: [],
       teamScore: 0,
-      customWords: new Set(normalizeWords(message.customWords)),
       players: new Map(),
       displays: new Set(),
       status: "lobby",
@@ -803,6 +804,9 @@ function handle(ws, message) {
     if (room.status === "playing")
       return send(ws, { type: "error", code: "ROUND_PLAYING" });
     const requested = String(message.mode || "classic");
+    if ("customWords" in message) {
+      return send(ws, { type: "error", code: "CUSTOM_WORDS_REJECTED" });
+    }
     if (isAdultRequest(requested, message.config)) {
       return send(ws, { type: "error", code: "ADULT_CONTENT_REJECTED" });
     }
@@ -870,13 +874,13 @@ function handle(ws, message) {
     if (now >= room.round.endsAt) return finishRound(room, "timeout");
     const player = room.players.get(client.id);
     let result = validateSubmission({
-      ...message,
+      word: message.word,
+      path: message.path,
       board: room.round.board,
       size: room.round.size,
       mode: room.round.validationMode,
       minimum: roomConfig(room).min,
       found: room.mode === "coop" ? room.round.found : player.found,
-      customWords: [...room.customWords],
     });
     const chainBreak =
       roomConfig(room).chain &&

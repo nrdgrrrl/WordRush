@@ -45,14 +45,6 @@ function consumeNextRushMode() {
 }
 const common = sharedConfig.COMMON_WORDS,
   adult = sharedConfig.ADULT_WORDS;
-let custom = new Set();
-try {
-  custom = new Set(
-    JSON.parse(localStorage.getItem("wordrush-custom") || "[]").filter((w) =>
-      /^[A-Z]{3,}$/.test(w),
-    ),
-  );
-} catch {}
 const wordCheckCache = new Map();
 async function isServerDictionaryWord(word, adultMode) {
   const key = (adultMode ? "dirty:" : "classic:") + word;
@@ -301,12 +293,11 @@ updateProfile();
 let lexiconCache = null;
 let lexiconCacheKey = "";
 function lex() {
-  const key = s.mode + ":" + customAdult + ":" + custom.size;
+  const key = s.mode + ":" + customAdult;
   if (lexiconCache && lexiconCacheKey === key) return lexiconCache;
   lexiconCacheKey = key;
   lexiconCache = new Set([
     ...common,
-    ...custom,
     ...(s.mode === "dirty" || customAdult ? adult : []),
   ]);
   return lexiconCache;
@@ -757,7 +748,7 @@ async function submit() {
   clearPick();
   const inDictionary =
     w.length >= m[1] && validPath && !duplicate
-      ? custom.has(w) || await isServerDictionaryWord(w, customAdult)
+      ? await isServerDictionaryWord(w, customAdult)
       : false;
   if (
     s.done ||
@@ -952,16 +943,6 @@ document
     })) return;
     openRushBuilder(true);
   }));
-$("#dictionary").onclick = () => {
-  let w = prompt("Add a word to your personal dictionary")
-    ?.trim()
-    .toUpperCase();
-  if (w && /^[A-Z]{3,}$/.test(w)) {
-    custom.add(w);
-    localStorage.setItem("wordrush-custom", JSON.stringify([...custom]));
-    toast(w + " added");
-  } else if (w) toast("Letters only, 3+ characters");
-};
 let rushBuilder = { type: "classic", min: 3, size: 4, seconds: 120 };
 function syncRushBuilder() {
   for (const [attribute, value] of [
