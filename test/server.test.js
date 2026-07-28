@@ -467,6 +467,112 @@ test("isAdultRequest correctly identifies adult content requests", () => {
   assert.equal(isAdultRequest("coop", null), false);
 });
 
+test("create_room with customWords is rejected before room creation", async () => {
+  const ws = await client("custom-words-reject-room");
+  const errorPromise = next(ws, "error");
+  message(ws, "create_room", { customWords: ["ABCD"] });
+  const error = await errorPromise;
+  assert.equal(error.code, "CUSTOM_WORDS_REJECTED");
+  ws.close();
+});
+
+test("create_room with empty customWords is rejected", async () => {
+  const ws = await client("custom-words-empty");
+  const errorPromise = next(ws, "error");
+  message(ws, "create_room", { customWords: [] });
+  const error = await errorPromise;
+  assert.equal(error.code, "CUSTOM_WORDS_REJECTED");
+  ws.close();
+});
+
+test("start_game with customWords is rejected before room mutation", async () => {
+  const ws = await client("custom-words-reject-game");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const snapshot = {
+    mode: room.mode,
+    randomRush: room.randomRush,
+    randomModeQueue: [...room.randomModeQueue],
+    round: room.round,
+    status: room.status,
+  };
+  const errorPromise = next(ws, "error");
+  message(ws, "start_game", { mode: "classic", customWords: ["ABCD"] });
+  const error = await errorPromise;
+  assert.equal(error.code, "CUSTOM_WORDS_REJECTED");
+  assert.equal(room.mode, snapshot.mode);
+  assert.equal(room.randomRush, snapshot.randomRush);
+  assert.deepEqual([...room.randomModeQueue], snapshot.randomModeQueue);
+  assert.equal(room.round, snapshot.round);
+  assert.equal(room.status, snapshot.status);
+  ws.close();
+});
+
+test("room is recoverable after customWords rejection in start_game", async () => {
+  const ws = await client("custom-words-recoverable");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const gameErrorPromise = next(ws, "error");
+  message(ws, "start_game", { mode: "classic", customWords: ["ABCD"] });
+  await gameErrorPromise;
+  assert.equal(room.status, "lobby");
+  const startedPromise = next(ws, "round_started");
+  message(ws, "start_game", { mode: "classic" });
+  await startedPromise;
+  assert.equal(room.status, "playing");
+  ws.close();
+});
+
+test("reconnect after customWords rejection sees unchanged authoritative room", async () => {
+  const host = await client("custom-words-reconnect-host");
+  const guest = await client("custom-words-reconnect-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+  const errorPromise = next(host, "error");
+  message(host, "start_game", { mode: "classic", customWords: ["XYZZY"] });
+  const error = await errorPromise;
+  assert.equal(error.code, "CUSTOM_WORDS_REJECTED");
+  assert.equal(room.status, "lobby");
+  assert.equal(room.mode, "classic");
+  assert.equal(room.round, null);
+  host.close();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const reconnectedHost = await client("custom-words-reconnect-host");
+  const resumedPromise = next(reconnectedHost, "room_resumed");
+  const statePromise = next(reconnectedHost, "room_state");
+  message(reconnectedHost, "resume_room", {
+    code: created.code,
+    reconnectToken: created.reconnectToken,
+  });
+  await resumedPromise;
+  const resumedState = await statePromise;
+  assert.equal(resumedState.status, "lobby");
+  assert.equal(resumedState.mode, "classic");
+  assert.equal(resumedState.round, null);
+  assert.equal(resumedState.code, created.code);
+  const startedPromise = next(reconnectedHost, "round_started");
+  message(reconnectedHost, "start_game", { mode: "classic" });
+  await startedPromise;
+  assert.equal(room.status, "playing");
+  reconnectedHost.close();
+  guest.close();
+});
+
 test("start_game with dirty mode is authoritatively rejected", async () => {
   const ws = await client("dirty-reject");
   const createdPromise = next(ws, "room_created");
@@ -1045,7 +1151,7 @@ test("competitive players can score the same word independently", async () => {
   const guest = await client("shared-word-guest");
   const createdPromise = next(host, "room_created");
   const lobbyPromise = next(host, "room_state");
-  message(host, "create_room", { customWords: ["CAT"] });
+  message(host, "create_room");
   const created = await createdPromise;
   await lobbyPromise;
   const joinedPromise = next(guest, "joined_room");
@@ -1104,7 +1210,7 @@ test("authoritative multiplayer results populate trusted leaderboard persistence
   const guest = await client("leaderboard-loser");
   const createdPromise = next(host, "room_created");
   const lobbyPromise = next(host, "room_state");
-  message(host, "create_room", { customWords: ["CAT"] });
+  message(host, "create_room");
   const created = await createdPromise;
   await lobbyPromise;
   const joinedPromise = next(guest, "joined_room");
@@ -1142,7 +1248,7 @@ test("long haul leaves players with no words at zero", async () => {
   const guest = await client("longhaul-guest");
   const createdPromise = next(host, "room_created");
   const lobbyPromise = next(host, "room_state");
-  message(host, "create_room", { customWords: ["PLANET"] });
+  message(host, "create_room");
   const created = await createdPromise;
   await lobbyPromise;
   const joinedPromise = next(guest, "joined_room");
@@ -1154,11 +1260,11 @@ test("long haul leaves players with no words at zero", async () => {
   const room = rooms.get(created.code);
   room.round.startedAt = Date.now() - 1;
   room.round.board = [
-    "P", "L", "A", "N", "E", "T",
+    "S", "T", "R", "E", "A", "M",
     ...Array(30).fill("X"),
   ];
   const accepted = next(host, "word_accepted");
-  message(host, "submit_word", { word: "PLANET", path: [0, 1, 2, 3, 4, 5] });
+  message(host, "submit_word", { word: "STREAM", path: [0, 1, 2, 3, 4, 5] });
   const scoreUpdate = await accepted;
   const guestScore = scoreUpdate.scores.find((player) => player.id === "longhaul-guest");
   assert.equal(guestScore.score, 0);

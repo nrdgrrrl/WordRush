@@ -78,7 +78,6 @@ test("submissions require contiguous non-repeating paths", () => {
       path: [0, 1, 2, 3],
       mode: "classic",
       found: new Set(),
-      customWords: [],
     }).valid,
     true,
   );
@@ -90,7 +89,6 @@ test("submissions require contiguous non-repeating paths", () => {
       path: [0, 1, 2, 3],
       mode: "classic",
       found: new Set(["STAR"]),
-      customWords: [],
     }).reason,
     "duplicate",
   );
@@ -102,12 +100,11 @@ test("submissions require contiguous non-repeating paths", () => {
       path: [0, 1, 2, 7],
       mode: "classic",
       found: new Set(),
-      customWords: [],
     }).valid,
     false,
   );
 });
-test("dirty words are opt-in and custom words are accepted", () => {
+test("dirty words are opt-in and custom-only words are rejected", () => {
   const board = ["S", "H", "I", "A", "B", "T", "C", "D", "E"];
   assert.equal(
     validateSubmission({
@@ -117,7 +114,6 @@ test("dirty words are opt-in and custom words are accepted", () => {
       path: [0, 1, 2, 5],
       mode: "classic",
       found: new Set(),
-      customWords: [],
     }).valid,
     false,
   );
@@ -126,26 +122,23 @@ test("dirty words are opt-in and custom words are accepted", () => {
       board,
       size: 3,
       word: "SHIT",
-      path: [0, 1, 2, 3],
       path: [0, 1, 2, 5],
       mode: "dirty",
       found: new Set(),
-      customWords: [],
     }).valid,
     true,
   );
-  const customBoard = ["X", "X", "X", "A", "B", "C", "X", "X", "D"];
+  const customOnlyBoard = ["X", "X", "X", "A", "B", "C", "X", "X", "D"];
   assert.equal(
     validateSubmission({
-      board: customBoard,
+      board: customOnlyBoard,
       size: 3,
       word: "ABCD",
       path: [3, 4, 5, 8],
       mode: "classic",
       found: new Set(),
-      customWords: ["ABCD"],
     }).valid,
-    true,
+    false,
   );
 });
 test("dirty boards strongly favor playable adult words", () => {

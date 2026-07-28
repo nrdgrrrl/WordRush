@@ -598,7 +598,7 @@ test("global scoreboard displays an authoritative multiplayer result and all per
   const host = await wsClient("browser-leaderboard-winner");
   const guest = await wsClient("browser-leaderboard-loser");
   const createdPromise = wsNext(host, "room_created");
-  host.send(JSON.stringify({ type: "create_room", customWords: ["CAT"] }));
+  host.send(JSON.stringify({ type: "create_room" }));
   const created = await createdPromise;
   const joinedPromise = wsNext(guest, "joined_room");
   guest.send(JSON.stringify({ type: "join_room", code: created.code, name: "Browser Loser" }));
@@ -1407,6 +1407,70 @@ test("leaving a solo round disposes its timer instead of finishing in the backgr
   await page.evaluate(() => window.end());
   assert.equal(await page.locator("#homeScreen").isVisible(), true);
   assert.equal(await page.locator("#resultsScreen").isVisible(), false);
+  await browser.close();
+});
+
+test("my dictionary card is absent from the home screen", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  assert.equal(await page.locator("#dictionary").count(), 0);
+  assert.equal(await page.locator(".mode-dictionary").count(), 0);
+  await browser.close();
+});
+
+test("legacy wordrush-custom localStorage data is dormant and does not affect solo play", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    localStorage.setItem("wordrush-custom", JSON.stringify(["XYZZY"]));
+  });
+  await page.reload();
+  const storedValue = await page.evaluate(() =>
+    localStorage.getItem("wordrush-custom"),
+  );
+  assert.equal(JSON.parse(storedValue)[0], "XYZZY");
+  await startClassic(page);
+  const xyZzyExcluded = await page.evaluate(() => {
+    const xyZzyInCommon = window.WordrushConfig.COMMON_WORDS.includes("XYZZY");
+    s.b = [
+      "X", "Y", "Z", "A",
+      "A", "A", "Z", "Y",
+      "A", "A", "A", "A",
+      "A", "A", "A", "A",
+    ];
+    document.querySelectorAll(".tile").forEach((tile, i) => {
+      tile.textContent = s.b[i];
+    });
+    s.pick = [0, 1, 2, 6, 7];
+    s.found = new Set();
+    s.score = 0;
+    document.querySelector("#gameScore").textContent = "0";
+    return { xyZzyInCommon, boardLength: s.b.length, mode: s.mode };
+  });
+  assert.equal(xyZzyExcluded.xyZzyInCommon, false);
+  assert.equal(xyZzyExcluded.boardLength, 16);
+  const result = await page.evaluate(async () => {
+    const word = s.pick.map((i) => s.b[i]).join("");
+    const minimum = 3;
+    const inDictionary = word.length >= minimum
+      ? await fetch("/api/word-check?word=" + encodeURIComponent(word) + "&adult=0")
+          .then((r) => r.json())
+          .then((r) => r.valid === true)
+          .catch(() => false)
+      : false;
+    return { word, inDictionary, scoreBefore: Number(s.score) };
+  });
+  assert.equal(result.word, "XYZZY");
+  assert.equal(result.inDictionary, false);
+  assert.equal(result.scoreBefore, 0);
+  const score = await page.locator("#gameScore").textContent();
+  assert.equal(score, "0");
+  const afterTestValue = await page.evaluate(() =>
+    localStorage.getItem("wordrush-custom"),
+  );
+  assert.equal(JSON.parse(afterTestValue)[0], "XYZZY");
   await browser.close();
 });
 
