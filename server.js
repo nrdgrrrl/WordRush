@@ -971,9 +971,8 @@ function handle(ws, message) {
       preAdmissionChallenges.delete(challenge.challengeId);
 
       function admitPlayer() {
-        if (challengeClient.roomCode) return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
-        if (targetRoom.players.size >= MAX_PLAYERS)
-          return send(ws, { type: "error", code: "ROOM_FULL" });
+        if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
+        if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
         challengeClient.roomCode = targetRoom.code;
         const player = {
           ...challengeClient,
@@ -1000,6 +999,7 @@ function handle(ws, message) {
           reconnectToken: player.reconnectToken,
         });
         broadcast(targetRoom, state(targetRoom));
+        return player;
       }
 
       const samePending = challenge.targetRequestId && targetRoom.pendingConsent?.requestId === challenge.targetRequestId;
@@ -1008,7 +1008,8 @@ function handle(ws, message) {
       const sameFinishedResult = challenge.resultRoundId && targetRoom.lastResult?.roundId === challenge.resultRoundId;
 
       if (samePending) {
-        admitPlayer();
+        const admitted = admitPlayer();
+        if (!admitted) return;
         if (!targetRoom.pendingConsent.requiredPlayerIds.includes(challengeClient.id))
           targetRoom.pendingConsent.requiredPlayerIds.push(challengeClient.id);
         if (!targetRoom.pendingConsent.acceptedPlayerIds.includes(challengeClient.id))
@@ -1018,22 +1019,23 @@ function handle(ws, message) {
       }
       if (sameActiveRound || sameActiveRoundById) {
         if (!isAdultRoom(targetRoom)) return admitNormalJoin();
-        admitPlayer();
+        const admitted = admitPlayer();
+        if (!admitted) return;
         targetRoom.round.consentedPlayerIds.push(challengeClient.id);
         return;
       }
       if (sameFinishedResult) {
         if (!isAdultLastResult(targetRoom)) return admitNormalJoin();
-        admitPlayer();
+        const admitted = admitPlayer();
+        if (!admitted) return;
         targetRoom.lastResult.consentedPlayerIds = targetRoom.lastResult.consentedPlayerIds || [];
         targetRoom.lastResult.consentedPlayerIds.push(challengeClient.id);
         return;
       }
 
       function admitNormalJoin() {
-        if (challengeClient.roomCode) return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
-        if (targetRoom.players.size >= MAX_PLAYERS)
-          return send(ws, { type: "error", code: "ROOM_FULL" });
+        if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
+        if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
         challengeClient.roomCode = targetRoom.code;
         const player = {
           ...challengeClient,
@@ -1054,6 +1056,7 @@ function handle(ws, message) {
           reconnectToken: player.reconnectToken,
         });
         broadcast(targetRoom, state(targetRoom));
+        return player;
       }
 
       if (!targetRoom.pendingConsent && !isAdultRoom(targetRoom) && !isAdultLastResult(targetRoom)) {
