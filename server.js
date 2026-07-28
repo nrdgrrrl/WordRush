@@ -179,6 +179,9 @@ function boundedNumber(value, fallback, minimum, maximum) {
     ? Math.max(minimum, Math.min(maximum, parsed))
     : fallback;
 }
+function isAdultRequest(mode, rawConfig) {
+  return mode === "dirty" || Boolean(rawConfig?.adult);
+}
 function requestedConfig(mode, raw) {
   if (mode !== "custom") return MODE_CONFIG[mode] || MODE_CONFIG.classic;
   return {
@@ -340,9 +343,13 @@ function randomMode(room) {
   return room.randomModeQueue.shift();
 }
 function startRound(room, selected = room.mode, rawConfig = null) {
-  clearRoomTimer(room);
-  room.mode =
+  const rawMode =
     selected === "custom" || MODE_CONFIG[selected] ? selected : "classic";
+  if (isAdultRequest(rawMode, rawConfig)) {
+    return;
+  }
+  clearRoomTimer(room);
+  room.mode = rawMode;
   const config = requestedConfig(room.mode, rawConfig),
     validationMode = config.adult ? "dirty" : room.mode,
     board = generateBoard(
@@ -796,6 +803,9 @@ function handle(ws, message) {
     if (room.status === "playing")
       return send(ws, { type: "error", code: "ROUND_PLAYING" });
     const requested = String(message.mode || "classic");
+    if (isAdultRequest(requested, message.config)) {
+      return send(ws, { type: "error", code: "ADULT_CONTENT_REJECTED" });
+    }
     if (requested === "random") {
       room.randomRush = true;
       room.randomModeQueue = [];
@@ -1110,6 +1120,7 @@ module.exports = {
   pruneExpiredRateLimits,
   heartbeatSocket,
   WS_HEARTBEAT_MISSES,
+  isAdultRequest,
 };
 
 const { Leaderboard } = require("./leaderboard");

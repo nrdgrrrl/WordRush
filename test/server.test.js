@@ -30,6 +30,7 @@ const {
   pruneExpiredRateLimits,
   heartbeatSocket,
   WS_HEARTBEAT_MISSES,
+  isAdultRequest,
 } = require("../server");
 function message(ws, type, payload = {}) {
   ws.send(JSON.stringify({ type, ...payload }));
@@ -449,7 +450,259 @@ test("does not score submissions at or after the authoritative deadline", async 
   ws.close();
 });
 
-test("every built-in multiplayer mode accepts a generated board word", async () => {
+test("isAdultRequest correctly identifies adult content requests", () => {
+  assert.equal(isAdultRequest("dirty", null), true);
+  assert.equal(isAdultRequest("dirty", {}), true);
+  assert.equal(isAdultRequest("classic", null), false);
+  assert.equal(isAdultRequest("classic", { adult: false }), false);
+  assert.equal(isAdultRequest("custom", { adult: true }), true);
+  assert.equal(isAdultRequest("custom", { adult: false }), false);
+  assert.equal(isAdultRequest("custom", { adult: 1 }), true);
+  assert.equal(isAdultRequest("custom", { adult: "true" }), true);
+  assert.equal(isAdultRequest("custom", { adult: "false" }), true);
+  assert.equal(isAdultRequest("custom", { adult: {} }), true);
+  assert.equal(isAdultRequest("custom", { adult: [] }), true);
+  assert.equal(isAdultRequest("custom", { min: 3, size: 4 }), false);
+  assert.equal(isAdultRequest("race", null), false);
+  assert.equal(isAdultRequest("coop", null), false);
+});
+
+test("start_game with dirty mode is authoritatively rejected", async () => {
+  const ws = await client("dirty-reject");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const modeBefore = room.mode;
+  const statusBefore = room.status;
+  const errorPromise = next(ws, "error");
+  message(ws, "start_game", { mode: "dirty" });
+  const error = await errorPromise;
+  assert.equal(error.code, "ADULT_CONTENT_REJECTED");
+  assert.equal(room.mode, modeBefore);
+  assert.equal(room.status, statusBefore);
+  assert.equal(room.round, null);
+  ws.close();
+});
+
+test("start_game with custom adult config is authoritatively rejected", async () => {
+  const ws = await client("custom-adult-reject");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const modeBefore = room.mode;
+  const statusBefore = room.status;
+  const errorPromise = next(ws, "error");
+  message(ws, "start_game", { mode: "custom", config: { adult: true, min: 3, size: 4 } });
+  const error = await errorPromise;
+  assert.equal(error.code, "ADULT_CONTENT_REJECTED");
+  assert.equal(room.mode, modeBefore);
+  assert.equal(room.status, statusBefore);
+  assert.equal(room.round, null);
+  ws.close();
+});
+
+test("start_game with adult:1 is rejected before any room mutation", async () => {
+  const ws = await client("adult-numeric");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const snapshot = {
+    mode: room.mode,
+    randomRush: room.randomRush,
+    randomModeQueue: [...room.randomModeQueue],
+    round: room.round,
+    status: room.status,
+  };
+  const errorPromise = next(ws, "error");
+  message(ws, "start_game", { mode: "custom", config: { adult: 1, min: 3, size: 4 } });
+  const error = await errorPromise;
+  assert.equal(error.code, "ADULT_CONTENT_REJECTED");
+  assert.equal(room.mode, snapshot.mode);
+  assert.equal(room.randomRush, snapshot.randomRush);
+  assert.deepEqual([...room.randomModeQueue], snapshot.randomModeQueue);
+  assert.equal(room.round, snapshot.round);
+  assert.equal(room.status, snapshot.status);
+  ws.close();
+});
+
+test("start_game with adult string is rejected before any room mutation", async () => {
+  const ws = await client("adult-string");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const snapshot = {
+    mode: room.mode,
+    randomRush: room.randomRush,
+    randomModeQueue: [...room.randomModeQueue],
+    round: room.round,
+    status: room.status,
+  };
+  const errorPromise = next(ws, "error");
+  message(ws, "start_game", { mode: "custom", config: { adult: "yes", min: 3, size: 4 } });
+  const error = await errorPromise;
+  assert.equal(error.code, "ADULT_CONTENT_REJECTED");
+  assert.equal(room.mode, snapshot.mode);
+  assert.equal(room.randomRush, snapshot.randomRush);
+  assert.deepEqual([...room.randomModeQueue], snapshot.randomModeQueue);
+  assert.equal(room.round, snapshot.round);
+  assert.equal(room.status, snapshot.status);
+  ws.close();
+});
+
+test("adult check fires before any room mutation in start_game", async () => {
+  const ws = await client("mutation-check");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const snapshot = {
+    mode: room.mode,
+    randomRush: room.randomRush,
+    randomModeQueue: [...room.randomModeQueue],
+    round: room.round,
+    status: room.status,
+  };
+  const errorPromise = next(ws, "error");
+  message(ws, "start_game", { mode: "dirty" });
+  await errorPromise;
+  assert.equal(room.mode, snapshot.mode);
+  assert.equal(room.randomRush, snapshot.randomRush);
+  assert.deepEqual([...room.randomModeQueue], snapshot.randomModeQueue);
+  assert.equal(room.round, snapshot.round);
+  assert.equal(room.status, snapshot.status);
+  ws.close();
+});
+
+test("guest still gets CREATOR_ONLY before adult check in start_game", async () => {
+  const host = await client("guest-before-host");
+  const guest = await client("guest-before-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+  const deniedPromise = next(guest, "error");
+  message(guest, "start_game", { mode: "dirty" });
+  assert.equal((await deniedPromise).code, "CREATOR_ONLY");
+  host.close();
+  guest.close();
+});
+
+test("room is recoverable after adult content rejection", async () => {
+  const ws = await client("recoverable-host");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const adultErrorPromise = next(ws, "error");
+  message(ws, "start_game", { mode: "dirty" });
+  await adultErrorPromise;
+  assert.equal(room.status, "lobby");
+  const startedPromise = next(ws, "round_started");
+  message(ws, "start_game", { mode: "classic" });
+  const started = await startedPromise;
+  assert.equal(started.config.label, "CLASSIC");
+  assert.equal(room.status, "playing");
+  ws.close();
+});
+
+test("non-adult custom game is allowed in multiplayer", async () => {
+  const ws = await client("allowed-custom");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const startedPromise = next(ws, "round_started");
+  message(ws, "start_game", { mode: "custom", config: { min: 4, size: 5, seconds: 60, label: "ALLOWED CUSTOM", rule: "Custom round" } });
+  const started = await startedPromise;
+  assert.equal(started.config.min, 4);
+  assert.equal(started.round.board.length, 25);
+  ws.close();
+});
+
+test("reconnect after adult rejection leaves room non-adult with no round", async () => {
+  const host = await client("reconnect-host");
+  const guest = await client("reconnect-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+  const room = rooms.get(created.code);
+  const adultErrorPromise = next(host, "error");
+  message(host, "start_game", { mode: "dirty" });
+  await adultErrorPromise;
+  assert.equal(room.round, null);
+  assert.equal(room.status, "lobby");
+  host.close();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const resumedHost = await client("reconnect-host");
+  const resumedPromise = next(resumedHost, "room_resumed");
+  message(resumedHost, "resume_room", { code: created.code, reconnectToken: created.reconnectToken });
+  await resumedPromise;
+  assert.equal(room.round, null);
+  assert.equal(room.status, "lobby");
+  const startedPromise = next(resumedHost, "round_started");
+  message(resumedHost, "start_game", { mode: "classic" });
+  await startedPromise;
+  assert.equal(room.status, "playing");
+  host.close();
+  guest.close();
+});
+
+test("late join after adult content rejection sees lobby with no round or board", async () => {
+  const host = await client("late-join-host");
+  const guest = await client("late-join-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const adultErrorPromise = next(host, "error");
+  message(host, "start_game", { mode: "dirty" });
+  await adultErrorPromise;
+  assert.equal(room.status, "lobby");
+  assert.equal(room.round, null);
+  const joinedPromise = next(guest, "joined_room");
+  const hostStatePromise = next(host, "room_state");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+  const stateFromJoin = await hostStatePromise;
+  assert.equal(stateFromJoin.round, null);
+  assert.equal(stateFromJoin.status, "lobby");
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  await startedPromise;
+  assert.equal(room.status, "playing");
+  host.close();
+  guest.close();
+});
+
+test("every allowed multiplayer mode accepts a generated board word", async () => {
   const ws = await client("generated-word-scorer");
   const createdPromise = next(ws, "room_created");
   const lobbyPromise = next(ws, "room_state");
@@ -462,7 +715,6 @@ test("every built-in multiplayer mode accepts a generated board word", async () 
     "sudden",
     "race",
     "coop",
-    "dirty",
     "blitz",
     "longhaul",
     "storm",
@@ -473,9 +725,7 @@ test("every built-in multiplayer mode accepts a generated board word", async () 
     message(ws, "start_game", { mode });
     const started = await startedPromise;
     rooms.get(created.code).round.startedAt = Date.now() - 1;
-    const candidates = mode === "dirty"
-      ? [...COMMON_WORDS, ...ADULT_WORDS]
-      : COMMON_WORDS;
+    const candidates = COMMON_WORDS;
     const word = candidates.find(
       (candidate) =>
         candidate.length >= started.config.min &&

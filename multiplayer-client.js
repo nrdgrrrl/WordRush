@@ -558,6 +558,10 @@
   };
   window.wordrushStartSessionGame = ({ mode, config, randomRush } = {}) => {
     if (!sessionCode && !pendingSession && !savedSession()) return false;
+    if (mode === "dirty" || config?.adult) {
+      toast("Dirty Mode is not available in multiplayer");
+      return true;
+    }
     if (!sessionCode || !socket || socket.readyState !== WebSocket.OPEN) {
       pendingSession = true;
       toast("Reconnecting to the multiplayer session");
@@ -647,7 +651,7 @@
   $("#sessionStart")?.addEventListener("click", () => {
     const mode = $("#sessionType").value;
     trackMultiplayer("start_requested", { mode });
-    sendWhenReady({ type: "start_game", mode });
+    window.wordrushStartSessionGame({ mode });
   });
   function requestLeave() {
     if (

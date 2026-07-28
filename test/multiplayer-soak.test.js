@@ -150,7 +150,6 @@ test(
       "minimum",
       "sudden",
       "race",
-      "dirty",
       "coop",
       "random",
     ]) {
