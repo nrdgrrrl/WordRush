@@ -15,7 +15,17 @@
   let receiverHealthy = false;
   let receiverHealthTimer = null;
   let receiverProbeTimer = null;
+  let currentRequest = null;
+  let requestWatchdogTimer = null;
   let activeRoomCode = "";
+  const clearAttempt = (expectedRequest) => {
+    if (expectedRequest !== undefined && currentRequest !== expectedRequest) return;
+    if (requestWatchdogTimer) {
+      clearTimeout(requestWatchdogTimer);
+      requestWatchdogTimer = null;
+    }
+    currentRequest = null;
+  };
 
   if (!button || !control || !status) return;
 
@@ -138,12 +148,12 @@
           const state = event.sessionState;
           if (state === cast.framework.SessionState.SESSION_STARTED) {
             listenForReceiverMessages(context.getCurrentSession());
-            shareRoom();
           } else if (state === cast.framework.SessionState.SESSION_RESUMED) {
             listenForReceiverMessages(context.getCurrentSession());
             receiverHealthy = false;
             probeRoom();
           } else if (state === cast.framework.SessionState.SESSION_ENDED) {
+            clearAttempt();
             receiverMessageSession = null;
             receiverHealthy = false;
             clearTimeout(receiverHealthTimer);
@@ -151,6 +161,16 @@
             receiverProbeTimer = null;
             if (gameButton) gameButton.textContent = "📺 Cast to TV";
             updateAvailability();
+          } else if (state === cast.framework.SessionState.SESSION_START_FAILED) {
+            clearAttempt();
+            receiverMessageSession = null;
+            receiverHealthy = false;
+            clearTimeout(receiverHealthTimer);
+            clearTimeout(receiverProbeTimer);
+            receiverProbeTimer = null;
+            if (gameButton) gameButton.textContent = "📺 Cast to TV";
+            setStatus("Cast failed — tap to try again", true);
+            trackCast("session_start_failed");
           }
         },
       );
@@ -169,22 +189,41 @@
     else setStatus("Cast is unavailable in this browser");
   };
   const requestOrRefreshCast = async () => {
-    if (!hasRoom() || !context) return;
+    if (!hasRoom() || !context || currentRequest) return;
+    let myRequest;
     try {
       if (context.getCurrentSession()) {
         listenForReceiverMessages(context.getCurrentSession());
         await shareRoom();
         return;
       }
+      myRequest = {};
+      currentRequest = myRequest;
       setStatus("Choose a TV…");
-      await context.requestSession();
+      const timeoutMs = window.wordrushCastRequestTimeoutMs ?? 15_000;
+      await Promise.race([
+        context.requestSession(),
+        new Promise((_, reject) => {
+          requestWatchdogTimer = setTimeout(() => {
+            reject(new DOMException("Cast request timed out", "AbortError"));
+          }, timeoutMs);
+        }),
+      ]);
+      if (requestWatchdogTimer) {
+        clearTimeout(requestWatchdogTimer);
+        requestWatchdogTimer = null;
+      }
+      if (currentRequest !== myRequest) return;
       trackCast("session_requested");
       listenForReceiverMessages(context.getCurrentSession());
       await shareRoom();
     } catch (error) {
+      if (currentRequest !== myRequest) return;
       trackCast("session_request_failed", { error_type: error?.name || "Error" });
-      setStatus("Cast cancelled or unavailable. Your game is unchanged.", true);
+      setStatus("Cast failed — tap to try again", true);
       console.warn("Wordrush Cast session request failed", error);
+    } finally {
+      clearAttempt(myRequest);
     }
   };
   buttons.forEach((castButton) =>

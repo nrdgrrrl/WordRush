@@ -1355,6 +1355,209 @@ test("Cast health status exposes an in-game re-cast action with fresh credential
   await browser.close();
 });
 
+const castBodyCommon = `
+  window.chrome = { cast: { AutoJoinPolicy: { ORIGIN_SCOPED: "origin" } } };
+  window.__castSession = {
+    sendMessage: async (_namespace, message) => {
+      window.__castSent = [...(window.__castSent || []), message];
+    },
+    addMessageListener: (_namespace, listener) => { window.__castReceiverListener = listener; }
+  };
+  window.__castContext = {
+    setOptions: () => {},
+    addEventListener: (_type, listener) => { window.__castStateListener = listener; },
+    getCurrentSession: () => null,
+    requestSession: () => {
+      window.__castRSCount = (window.__castRSCount || 0) + 1;
+      return new Promise((resolve, reject) => {
+        window.__castRSResolve = resolve;
+        window.__castRSReject = reject;
+      });
+    }
+  };
+  window.cast = { framework: {
+    CastContext: { getInstance: () => window.__castContext },
+    CastContextEventType: { SESSION_STATE_CHANGED: "state" },
+    SessionState: {
+      SESSION_STARTED: "started",
+      SESSION_RESUMED: "resumed",
+      SESSION_ENDED: "ended",
+      SESSION_START_FAILED: "start_failed"
+    }
+  } };
+  queueMicrotask(() => window.__onGCastApiAvailable(true));
+`;
+
+async function castRoute(page) {
+  await page.route("https://www.gstatic.com/cv/js/sender/v1/cast_sender.js**", (route) =>
+    route.fulfill({ status: 200, contentType: "text/javascript", body: castBodyCommon }));
+}
+
+async function wordrushRoute(page) {
+  await page.route("https://wordrush.test/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/cast-config")
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ applicationId: "test-cast-app" }) });
+    const upstream = await fetch(baseUrl + url.pathname + url.search);
+    await route.fulfill({ status: upstream.status, contentType: upstream.headers.get("content-type") || "text/plain", body: Buffer.from(await upstream.arrayBuffer()) });
+  });
+}
+
+async function castPageSetup(page) {
+  await castRoute(page);
+  await wordrushRoute(page);
+  await page.goto("https://wordrush.test/");
+  await page.evaluate(() => {
+    window.wordrushSessionCode = "ABCDE";
+    window.wordrushRequestDisplayToken = async () => ({ token: "display-token" });
+    document.querySelector("#homeScreen").classList.remove("active");
+    document.querySelector("#gameScreen").classList.add("active");
+    window.dispatchEvent(new CustomEvent("wordrush:room-change"));
+  });
+  await page.waitForFunction(() => !document.querySelector("#gameCastButton").hidden);
+}
+
+test("Cast request rejection re-enables controls and preserves the room", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await castPageSetup(page);
+  await page.evaluate(() => { window.wordrushCastRequestTimeoutMs = 5000; });
+  await page.evaluate(() => document.querySelector("#gameCastButton").click());
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => window.__castRSCount), 1);
+  assert.equal(await page.locator("#castStatus").textContent(), "Choose a TV…");
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), true);
+  await page.evaluate(() => window.__castRSReject(new Error("cancelled")));
+  await page.waitForTimeout(300);
+  assert.ok((await page.locator("#castStatus").textContent()).includes("try again"));
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), false);
+  assert.equal(await page.evaluate(() => window.wordrushSessionCode), "ABCDE");
+  await browser.close();
+});
+
+test("A retry after rejection calls requestSession again and performs one handoff", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await castPageSetup(page);
+  await page.evaluate(() => { window.wordrushCastRequestTimeoutMs = 5000; });
+  await page.evaluate(() => document.querySelector("#gameCastButton").click());
+  await page.waitForTimeout(300);
+  await page.evaluate(() => window.__castRSReject(new Error("cancelled")));
+  await page.waitForTimeout(300);
+  assert.ok((await page.locator("#castStatus").textContent()).includes("try again"));
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), false);
+  await page.evaluate(() => document.querySelector("#gameCastButton").click());
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => window.__castRSCount), 2);
+  await page.evaluate(() => {
+    window.__castContext.getCurrentSession = () => window.__castSession;
+    window.__castRSResolve();
+  });
+  await page.evaluate(() => window.__castStateListener({ sessionState: "started" }));
+  await page.waitForFunction(() => window.__castSent?.length === 1, null, { timeout: 5000 });
+  assert.deepEqual(await page.evaluate(() => window.__castSent[0]), {
+    type: "display_token",
+    token: "display-token",
+    roomCode: "ABCDE",
+  });
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => window.__castSent.filter(
+    (m) => m.type === "display_token").length), 1);
+  await browser.close();
+});
+
+test("Watchdog recovers a stalled Cast request and late resolution is ignored", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await castPageSetup(page);
+  await page.evaluate(() => { window.wordrushCastRequestTimeoutMs = 100; });
+  await page.evaluate(() => document.querySelector("#gameCastButton").click());
+  await page.waitForFunction(() =>
+    document.querySelector("#castStatus").textContent.includes("try again"),
+    null, { timeout: 10000 });
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), false);
+  await page.evaluate(() => {
+    window.__castContext.getCurrentSession = () => window.__castSession;
+    window.__castRSResolve();
+    window.__castStateListener({ sessionState: "started" });
+  });
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => window.__castSent?.length || 0), 0);
+  await browser.close();
+});
+
+test("SESSION_START_FAILED restores retry state", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await castPageSetup(page);
+  await page.evaluate(() => { window.wordrushCastRequestTimeoutMs = 5000; });
+  await page.evaluate(() => document.querySelector("#gameCastButton").click());
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => window.__castRSCount), 1);
+  assert.match(await page.locator("#castStatus").textContent(), /Choose a TV/);
+  await page.evaluate(() => window.__castStateListener({ sessionState: "start_failed" }));
+  await page.waitForTimeout(100);
+  assert.match(await page.locator("#castStatus").textContent(), /try again/);
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), false);
+  await browser.close();
+});
+
+test("SESSION_ENDED during startup restores retry state", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await castPageSetup(page);
+  await page.evaluate(() => { window.wordrushCastRequestTimeoutMs = 5000; });
+  await page.evaluate(() => document.querySelector("#gameCastButton").click());
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => window.__castRSCount), 1);
+  assert.match(await page.locator("#castStatus").textContent(), /Choose a TV/);
+  await page.evaluate(() => window.__castStateListener({ sessionState: "ended" }));
+  await page.waitForTimeout(100);
+  assert.match(await page.locator("#castStatus").textContent(), /Ready to cast this room/);
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), false);
+  await browser.close();
+});
+
+test("late SESSION_STARTED for an obsolete attempt does not send a duplicate handoff", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await castPageSetup(page);
+  await page.evaluate(() => { window.wordrushCastRequestTimeoutMs = 100; });
+  await page.evaluate(() => document.querySelector("#gameCastButton").click());
+  await page.waitForFunction(() =>
+    document.querySelector("#castStatus").textContent.includes("try again"),
+    null, { timeout: 10000 });
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), false);
+  assert.equal(await page.evaluate(() => window.__castRSCount), 1);
+  await page.evaluate(() => { window.wordrushCastRequestTimeoutMs = 5000; });
+  await page.evaluate(() => document.querySelector("#gameCastButton").click());
+  assert.equal(await page.evaluate(() => window.__castRSCount), 2);
+  assert.equal(await page.locator("#gameCastButton").isDisabled(), true);
+  assert.match(await page.locator("#castStatus").textContent(), /Choose a TV/);
+  await page.evaluate(() => {
+    window.__castContext.getCurrentSession = () => window.__castSession;
+    window.__castStateListener({ sessionState: "started" });
+  });
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => window.__castSent?.length || 0), 0);
+  await page.evaluate(() => window.__castRSResolve());
+  await page.evaluate(() => window.__castStateListener({ sessionState: "started" }));
+  await page.waitForFunction(() => window.__castSent?.length === 1, null, { timeout: 5000 });
+  assert.deepEqual(await page.evaluate(() => window.__castSent[0]), {
+    type: "display_token",
+    token: "display-token",
+    roomCode: "ABCDE",
+  });
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => window.__castSent.filter(
+    (m) => m.type === "display_token").length), 1);
+  await page.evaluate(() => window.__castStateListener({ sessionState: "started" }));
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => window.__castSent.filter(
+    (m) => m.type === "display_token").length), 1);
+  await browser.close();
+});
+
 test("a room deep link joins through the normal multiplayer flow", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
