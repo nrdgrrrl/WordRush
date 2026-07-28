@@ -180,7 +180,7 @@ function boundedNumber(value, fallback, minimum, maximum) {
     : fallback;
 }
 function isAdultRequest(mode, rawConfig) {
-  return mode === "dirty" || rawConfig?.adult === true;
+  return mode === "dirty" || Boolean(rawConfig?.adult);
 }
 function requestedConfig(mode, raw) {
   if (mode !== "custom") return MODE_CONFIG[mode] || MODE_CONFIG.classic;

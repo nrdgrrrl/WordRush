@@ -457,6 +457,11 @@ test("isAdultRequest correctly identifies adult content requests", () => {
   assert.equal(isAdultRequest("classic", { adult: false }), false);
   assert.equal(isAdultRequest("custom", { adult: true }), true);
   assert.equal(isAdultRequest("custom", { adult: false }), false);
+  assert.equal(isAdultRequest("custom", { adult: 1 }), true);
+  assert.equal(isAdultRequest("custom", { adult: "true" }), true);
+  assert.equal(isAdultRequest("custom", { adult: "false" }), true);
+  assert.equal(isAdultRequest("custom", { adult: {} }), true);
+  assert.equal(isAdultRequest("custom", { adult: [] }), true);
   assert.equal(isAdultRequest("custom", { min: 3, size: 4 }), false);
   assert.equal(isAdultRequest("race", null), false);
   assert.equal(isAdultRequest("coop", null), false);
@@ -499,6 +504,60 @@ test("start_game with custom adult config is authoritatively rejected", async ()
   assert.equal(room.mode, modeBefore);
   assert.equal(room.status, statusBefore);
   assert.equal(room.round, null);
+  ws.close();
+});
+
+test("start_game with adult:1 is rejected before any room mutation", async () => {
+  const ws = await client("adult-numeric");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const snapshot = {
+    mode: room.mode,
+    randomRush: room.randomRush,
+    randomModeQueue: [...room.randomModeQueue],
+    round: room.round,
+    status: room.status,
+  };
+  const errorPromise = next(ws, "error");
+  message(ws, "start_game", { mode: "custom", config: { adult: 1, min: 3, size: 4 } });
+  const error = await errorPromise;
+  assert.equal(error.code, "ADULT_CONTENT_REJECTED");
+  assert.equal(room.mode, snapshot.mode);
+  assert.equal(room.randomRush, snapshot.randomRush);
+  assert.deepEqual([...room.randomModeQueue], snapshot.randomModeQueue);
+  assert.equal(room.round, snapshot.round);
+  assert.equal(room.status, snapshot.status);
+  ws.close();
+});
+
+test("start_game with adult string is rejected before any room mutation", async () => {
+  const ws = await client("adult-string");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  const snapshot = {
+    mode: room.mode,
+    randomRush: room.randomRush,
+    randomModeQueue: [...room.randomModeQueue],
+    round: room.round,
+    status: room.status,
+  };
+  const errorPromise = next(ws, "error");
+  message(ws, "start_game", { mode: "custom", config: { adult: "yes", min: 3, size: 4 } });
+  const error = await errorPromise;
+  assert.equal(error.code, "ADULT_CONTENT_REJECTED");
+  assert.equal(room.mode, snapshot.mode);
+  assert.equal(room.randomRush, snapshot.randomRush);
+  assert.deepEqual([...room.randomModeQueue], snapshot.randomModeQueue);
+  assert.equal(room.round, snapshot.round);
+  assert.equal(room.status, snapshot.status);
   ws.close();
 });
 
@@ -606,6 +665,35 @@ test("reconnect after adult rejection leaves room non-adult with no round", asyn
   assert.equal(room.status, "lobby");
   const startedPromise = next(resumedHost, "round_started");
   message(resumedHost, "start_game", { mode: "classic" });
+  await startedPromise;
+  assert.equal(room.status, "playing");
+  host.close();
+  guest.close();
+});
+
+test("late join after adult content rejection sees lobby with no round or board", async () => {
+  const host = await client("late-join-host");
+  const guest = await client("late-join-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  message(host, "start_game", { mode: "dirty" });
+  await next(host, "error");
+  assert.equal(room.status, "lobby");
+  assert.equal(room.round, null);
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  const joined = await joinedPromise;
+  assert.equal(room.status, "lobby");
+  assert.equal(room.round, null);
+  const stateFromJoin = await next(host, "room_state");
+  assert.equal(stateFromJoin.round, null);
+  assert.equal(stateFromJoin.status, "lobby");
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
   await startedPromise;
   assert.equal(room.status, "playing");
   host.close();

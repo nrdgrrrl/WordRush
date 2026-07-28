@@ -1179,12 +1179,12 @@ test("dirty mode card is blocked in multiplayer", async () => {
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
   );
   await page.locator('#multiplayerDialog button[value="cancel"]').click();
-  const sentMessages = [];
   await page.evaluate(() => {
-    const original = window.wordrushSocket.send;
+    window.__sentMessages = [];
+    const original = window.wordrushSocket.send.bind(window.wordrushSocket);
     window.wordrushSocket.send = function (message) {
-      sentMessages.push(JSON.parse(message));
-      return original.call(this, message);
+      window.__sentMessages.push(JSON.parse(message));
+      return original(message);
     };
   });
   await page.locator('[data-mode="dirty"]').click();
@@ -1194,8 +1194,14 @@ test("dirty mode card is blocked in multiplayer", async () => {
     .evaluate((node) => node.classList.contains("active"));
   assert.equal(gameActive, false);
   assert.equal(
-    sentMessages.some((msg) => msg.type === "start_game"),
+    await page.evaluate(() =>
+      window.__sentMessages.some((msg) => msg.type === "start_game"),
+    ),
     false,
+  );
+  assert.match(
+    await page.locator("#toast").textContent(),
+    /not available in multiplayer/i,
   );
   await browser.close();
 });
@@ -1210,12 +1216,12 @@ test("adult custom game is blocked in multiplayer", async () => {
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
   );
   await page.locator('#multiplayerDialog button[value="cancel"]').click();
-  const sentMessages = [];
   await page.evaluate(() => {
-    const original = window.wordrushSocket.send;
+    window.__sentMessages = [];
+    const original = window.wordrushSocket.send.bind(window.wordrushSocket);
     window.wordrushSocket.send = function (message) {
-      sentMessages.push(JSON.parse(message));
-      return original.call(this, message);
+      window.__sentMessages.push(JSON.parse(message));
+      return original(message);
     };
   });
   await page.locator("#customGame").click();
@@ -1227,8 +1233,14 @@ test("adult custom game is blocked in multiplayer", async () => {
     .evaluate((node) => node.classList.contains("active"));
   assert.equal(gameActive, false);
   assert.equal(
-    sentMessages.some((msg) => msg.type === "start_game"),
+    await page.evaluate(() =>
+      window.__sentMessages.some((msg) => msg.type === "start_game"),
+    ),
     false,
+  );
+  assert.match(
+    await page.locator("#toast").textContent(),
+    /not available in multiplayer/i,
   );
   await browser.close();
 });
@@ -1242,11 +1254,83 @@ test("room is recoverable after blocked adult attempt", async () => {
   await page.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
   );
+  await page.locator('#multiplayerDialog button[value="cancel"]').click();
+  await page.evaluate(() => {
+    window.wordrushStartSessionGame({ mode: "dirty" });
+  });
+  await page.waitForTimeout(50);
+  assert.equal(
+    await page
+      .locator("#gameScreen")
+      .evaluate((node) => node.classList.contains("active")),
+    false,
+  );
+  await page.locator("#sessionManage").click();
+  await page.waitForFunction(() =>
+    !document.querySelector("#sessionLobby").hidden,
+  );
   await page.locator("#sessionType").selectOption("coop");
   await page.locator("#sessionStart").click();
   await startIntro(page);
   assert.equal(await page.locator("#gameMode").textContent(), "CO-OP");
   await browser.close();
+});
+
+test("late join after adult rejection sees lobby with no round or board", async () => {
+  const host = await chromium.launch({ headless: true, executablePath });
+  const guest = await chromium.launch({ headless: true, executablePath });
+  const hostPage = await host.newPage({ viewport: { width: 390, height: 844 } });
+  const guestPage = await guest.newPage({ viewport: { width: 390, height: 844 } });
+  await Promise.all([hostPage.goto(baseUrl), guestPage.goto(baseUrl)]);
+  await hostPage.locator("#sessionManage").click();
+  await hostPage.locator("#sessionCreate").click();
+  await hostPage.waitForFunction(() =>
+    /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
+  );
+  const code = await hostPage.locator("#sessionCode").textContent();
+  await hostPage.locator('#multiplayerDialog button[value="cancel"]').click();
+  await hostPage.evaluate(() => {
+    window.wordrushStartSessionGame({ mode: "dirty" });
+  });
+  await hostPage.waitForTimeout(50);
+  assert.equal(
+    await hostPage
+      .locator("#gameScreen")
+      .evaluate((node) => node.classList.contains("active")),
+    false,
+  );
+  assert.equal(
+    await hostPage.evaluate(() => window.wordrushSessionCode),
+    code,
+  );
+  await guestPage.locator("#sessionManage").click();
+  guestPage.once("dialog", (dialog) => dialog.accept(code));
+  await guestPage.locator("#sessionJoin").click();
+  await guestPage.waitForFunction(() =>
+    !document.querySelector("#sessionLobby").hidden &&
+    document.querySelector("#sessionPlayersText").textContent.includes("2 player"),
+  );
+  assert.equal(
+    await guestPage
+      .locator("#sessionLobby")
+      .evaluate((node) => node.hidden),
+    false,
+  );
+  await hostPage.locator("#sessionManage").click();
+  await hostPage.waitForFunction(() =>
+    !document.querySelector("#sessionLobby").hidden,
+  );
+  await hostPage.locator("#sessionType").selectOption("classic");
+  await hostPage.locator("#sessionStart").click();
+  await startIntro(hostPage);
+  assert.equal(
+    await hostPage
+      .locator("#gameScreen")
+      .evaluate((node) => node.classList.contains("active")),
+    true,
+  );
+  await host.close();
+  await guest.close();
 });
 
 test("solo dirty mode still works with confirmation dialog", async () => {
