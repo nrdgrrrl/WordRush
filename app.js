@@ -150,7 +150,7 @@ function enqueueSoloSubmission(commit) {
   soloSubmissionTail = task.catch((error) => {
     logSoloSubmissionError(error);
   });
-  return task;
+  return soloSubmissionTail;
 }
 const avatarOptions = [
     "🐈",
@@ -1444,14 +1444,6 @@ function boardSeed() {
   return Date.now() >>> 0;
 }
 function make({ size, min, mode, adultMode, dictionaryWords, dictionaryId } = {}) {
-  const fixture = window.__wordrushTestBoard;
-  if (
-    fixture?.size === size &&
-    Array.isArray(fixture.board) &&
-    fixture.board.length === size * size &&
-    fixture.board.every((letter) => /^[A-Z]$/.test(letter))
-  )
-    return Promise.resolve({ ok: true, board: [...fixture.board] });
   return sharedBoardCore.generateBoardCooperatively(size, preparedLexicon(mode, adultMode, dictionaryWords, dictionaryId), {
     mode: adultMode ? "dirty" : "classic",
     min,

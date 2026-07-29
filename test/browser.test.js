@@ -73,11 +73,45 @@ async function resolveWord(pending, word, valid) {
     body: JSON.stringify({ valid }),
   });
 }
+async function failWord(pending, word) {
+  const route = pending.get(word);
+  assert.ok(route, "deferred word-check request for " + word);
+  pending.delete(word);
+  await route.abort("failed");
+}
+async function installBoardFixtureHook(page) {
+  await page.addInitScript(() => {
+    let boardCore;
+    Object.defineProperty(window, "WordrushBoardCore", {
+      configurable: true,
+      get: () => boardCore,
+      set: (nextBoardCore) => {
+        const originalGenerate = nextBoardCore.generateBoardCooperatively;
+        boardCore = Object.freeze({
+          ...nextBoardCore,
+          generateBoardCooperatively: async (size, prepared, options) => {
+            const fixture = window.__wordrushBrowserBoardFixture;
+            if (fixture?.size === size)
+              return { ok: true, board: [...fixture.board] };
+            return originalGenerate(size, prepared, options);
+          },
+        });
+      },
+    });
+  });
+}
+async function setBoardFixture(page, fixture) {
+  await page.evaluate((nextFixture) => {
+    window.__wordrushBrowserBoardFixture = nextFixture;
+  }, fixture);
+}
 async function resetSoloBrowserPage(page, fixture) {
+  await page.addInitScript((nextFixture) => {
+    window.__wordrushBrowserBoardFixture = nextFixture;
+  }, fixture);
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  await page.evaluate((nextFixture) => {
-    window.__wordrushTestBoard = nextFixture;
+  await page.evaluate(() => {
     window.__soloEvents = [];
     for (const name of ["word-accepted", "word-rejected"])
       document.addEventListener("wordrush:" + name, ({ detail }) => {
@@ -89,7 +123,7 @@ async function resetSoloBrowserPage(page, fixture) {
           toast: document.querySelector("#toast")?.textContent || "",
         });
       });
-  }, fixture);
+  });
 }
 function wsClient(name) {
   return new Promise((resolve, reject) => {
@@ -338,6 +372,7 @@ test("solo submission commits stay ordered across deferred dictionary responses"
     waiters.get(word)?.();
     waiters.delete(word);
   });
+  await installBoardFixtureHook(page);
   await page.goto(baseUrl);
 
   const generalFixture = {
@@ -356,7 +391,7 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   assert.deepEqual([...pending.keys()].sort(), ["CAT", "DOG"]);
   await resolveWord(pending, "DOG", false);
   assert.equal(await page.locator("#gameScore").textContent(), "0");
-  await resolveWord(pending, "CAT", true);
+  await failWord(pending, "CAT");
   await page.waitForFunction(() => window.__soloEvents.length === 2);
   assert.deepEqual(
     await page.evaluate(() => window.__soloEvents.map((event) => event.type)),
@@ -428,11 +463,9 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   assert.ok(pending.has("FOX"));
   await page.locator("#gameBack").click();
   await page.waitForSelector("#homeScreen.active");
-  await page.evaluate(() => {
-    window.__wordrushTestBoard = {
-      size: 4,
-      board: ["X", "X", "X", "X", "M", "A", "P", "X", "X", "X", "X", "X", "X", "X", "X", "X"],
-    };
+  await setBoardFixture(page, {
+    size: 4,
+    board: ["X", "X", "X", "X", "M", "A", "P", "X", "X", "X", "X", "X", "X", "X", "X", "X"],
   });
   await startSoloMode(page, "classic");
   const replacementRequest = wordRequestWaiter(pending, waiters, "MAP");
@@ -463,23 +496,27 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   await traceWord(page, [4, 5, 6]);
   await Promise.all(errorRequests);
   await page.evaluate(() => {
-    const original = document.querySelector.bind(document);
-    document.querySelector = (selector) => {
-      if (String(selector).startsWith(".tile")) {
-        document.querySelector = original;
-        throw new Error("intentional browser queue failure");
+    const original = Date.now;
+    Date.now = () => {
+      if (new Error().stack?.includes("app.js:896")) {
+        Date.now = original;
+        throw new Error("intentional browser deadline-check failure");
       }
-      return original(selector);
+      return original();
     };
   });
   await resolveWord(pending, "OWL", true);
   await resolveWord(pending, "PIG", true);
   await page.waitForFunction(() => window.__soloEvents.length === 1);
-  assert.equal(await page.locator("#gameScore").textContent(), "18");
+  assert.equal(await page.locator("#gameScore").textContent(), "9");
   assert.equal(
     await page.evaluate(() => window.__soloEvents[0].word),
     "PIG",
   );
+  const errorProfile = await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")));
+  assert.equal(errorProfile.words, 1);
+  assert.equal(errorProfile.correct, 1);
+  assert.equal(errorProfile.incorrect, 0);
   assert.equal(
     consoleErrors.filter((message) => message.includes("solo submission commit failed")).length,
     1,
