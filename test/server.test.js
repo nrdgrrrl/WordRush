@@ -696,6 +696,18 @@ test("host and guest both accept dirty consent and round starts", async () => {
 
 test("disconnecting consented player cancels an in-flight adult generation", async () => {
   generationTestHooks.limits = { operationsPerYield: 1 };
+  let generationYielded;
+  const generationYieldedPromise = new Promise((resolve) => {
+    generationYielded = resolve;
+  });
+  let releaseGeneration;
+  const generationGate = new Promise((resolve) => {
+    releaseGeneration = resolve;
+  });
+  generationTestHooks.yieldScheduler = () => {
+    generationYielded();
+    return generationGate;
+  };
   const host = await client("generation-consent-host");
   const guest = await client("generation-consent-guest");
   const createdPromise = next(host, "room_created");
@@ -715,14 +727,85 @@ test("disconnecting consented player cancels an in-flight adult generation", asy
   const guestAccepted = next(guest, "adult_consent_player_accepted");
   message(guest, "adult_consent_response", { requestId: consent.requestId, accepted: true });
   await guestAccepted;
+  await generationYieldedPromise;
   const cancelled = next(host, "adult_consent_cancelled");
   guest.close();
   assert.equal((await cancelled).reason, "player_disconnected");
-  await new Promise((resolve) => setImmediate(resolve));
+  const busyPromise = next(host, "error");
+  message(host, "start_game", { mode: "dirty" });
+  assert.equal((await busyPromise).code, "BOARD_GENERATING");
+  releaseGeneration();
+  for (let attempt = 0; attempt < 10 && roomGeneration(created.code); attempt++)
+    await new Promise((resolve) => setImmediate(resolve));
   const room = rooms.get(created.code);
   assert.equal(room.status, "lobby");
   assert.equal(room.round, null);
   assert.equal(room.generation, null);
+  host.close();
+});
+
+function roomGeneration(code) {
+  return rooms.get(code)?.generation;
+}
+
+test("a consenting guest admitted during Dirty generation can reconnect", async () => {
+  generationTestHooks.limits = { operationsPerYield: 1 };
+  let generationYielded;
+  const generationYieldedPromise = new Promise((resolve) => {
+    generationYielded = resolve;
+  });
+  let releaseGeneration;
+  const generationGate = new Promise((resolve) => {
+    releaseGeneration = resolve;
+  });
+  generationTestHooks.yieldScheduler = () => {
+    generationYielded();
+    return generationGate;
+  };
+  const host = await client("admission-generation-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const consentPromise = next(host, "adult_consent_request");
+  message(host, "start_game", { mode: "dirty" });
+  const consent = await consentPromise;
+  const hostAccepted = next(host, "adult_consent_player_accepted");
+  message(host, "adult_consent_response", { requestId: consent.requestId, accepted: true });
+  await hostAccepted;
+  await generationYieldedPromise;
+
+  const guest = await client("admission-generation-guest");
+  const challengePromise = next(guest, "adult_pre_admission_challenge");
+  message(guest, "join_room", { code: created.code });
+  const challenge = await challengePromise;
+  const preAcceptedPromise = next(guest, "adult_pre_admission_accepted");
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "adult_consent_response", {
+    challengeId: challenge.challengeId,
+    accepted: true,
+  });
+  const joined = await joinedPromise;
+  await preAcceptedPromise;
+
+  const startedPromise = next(host, "round_started");
+  releaseGeneration();
+  await startedPromise;
+  const room = rooms.get(created.code);
+  assert.ok(room.round.consentedPlayerIds.includes("admission-generation-guest"));
+
+  const closed = new Promise((resolve) => guest.once("close", resolve));
+  guest.close();
+  await closed;
+  const reconnected = await client("admission-generation-guest");
+  const resumedPromise = next(reconnected, "room_resumed");
+  message(reconnected, "resume_room", {
+    code: created.code,
+    reconnectToken: joined.reconnectToken,
+  });
+  assert.equal((await resumedPromise).code, created.code);
+  reconnected.close();
   host.close();
 });
 

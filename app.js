@@ -87,6 +87,7 @@ const s = {
   suddenDeathEvent: null,
   config: null,
 };
+let soloGenerationRequest = 0;
 const avatarOptions = [
     "🐈",
     "🦊",
@@ -297,14 +298,15 @@ function lex() {
   ]);
   return lexiconCache;
 }
-function preparedLexicon() {
-  const key = s.mode + ":" + customAdult;
+function preparedLexicon(mode = s.mode, adultMode = customAdult) {
+  const key = mode + ":" + adultMode;
   if (preparedLexiconCache && preparedLexiconCacheKey === key)
     return preparedLexiconCache;
   preparedLexiconCacheKey = key;
-  preparedLexiconCache = sharedBoardCore.prepareLexicon([...lex()], {
+  const words = [...common, ...(mode === "dirty" || adultMode ? adult : [])];
+  preparedLexiconCache = sharedBoardCore.prepareLexicon(words, {
     adultWords: adult,
-    preferredWords: customAdult ? adult : common,
+    preferredWords: adultMode ? adult : common,
   });
   return preparedLexiconCache;
 }
@@ -523,6 +525,7 @@ function toast(m, tone = "default") {
   }, 1800);
 }
 function show(id) {
+  if (id === "homeScreen") soloGenerationRequest++;
   document
     .querySelectorAll(".screen")
     .forEach((x) => x.classList.toggle("active", x.id === id));
@@ -583,6 +586,7 @@ $("#introStart")?.addEventListener("click", () => {
   finishRoundIntro();
 });
 function abandonActiveRound() {
+  soloGenerationRequest++;
   clearInterval(s.timer);
   clearTimeout(s.rushTimer);
   clearInterval(s.rushCountdown);
@@ -621,6 +625,7 @@ function stopRush() {
   show("homeScreen");
 }
 async function start(mode, rawConfig = null, adultMode = false, rush = false) {
+  const generationRequest = ++soloGenerationRequest;
   if (
     window.wordrushStartSessionGame?.({
       mode,
@@ -630,11 +635,13 @@ async function start(mode, rawConfig = null, adultMode = false, rush = false) {
   )
     return;
   const preset = configForPreset(mode);
+  let nextConfig;
+  let nextCustomAdult;
   if (preset) {
     if (usesAdultLexicon(preset) && !confirm("Dirty Mode contains adult language. Continue?"))
       return;
-    s.config = { ...preset };
-    customAdult = usesAdultLexicon(preset);
+    nextConfig = { ...preset };
+    nextCustomAdult = usesAdultLexicon(preset);
   } else if (mode === "custom") {
     const raw = { ...(rawConfig || {}), adult: adultMode || Boolean(rawConfig?.adult) };
     if (usesAdultLexicon(raw) && !confirm("Dirty Mode contains adult language. Continue?"))
@@ -644,25 +651,53 @@ async function start(mode, rawConfig = null, adultMode = false, rush = false) {
       toast(result.error || "Invalid custom configuration");
       return;
     }
-    s.config = result.config;
-    customAdult = usesAdultLexicon(result.config);
+    nextConfig = { ...result.config };
+    nextCustomAdult = usesAdultLexicon(result.config);
   } else {
     return;
   }
-  if (rush && !s.rush) {
-    randomModeQueue = [];
-    s.nextRushMode = null;
+  const generationInputs = Object.freeze({
+    mode,
+    config: Object.freeze(nextConfig),
+    adultMode: nextCustomAdult,
+    rush,
+  });
+  const wasRush = s.rush;
+  clearTimeout(s.rushTimer);
+  clearInterval(s.rushCountdown);
+  let generated;
+  try {
+    generated = await make({
+      size: generationInputs.config.size,
+      min: generationInputs.config.min,
+      mode: generationInputs.mode,
+      adultMode: generationInputs.adultMode,
+    });
+  } catch {
+    if (generationRequest !== soloGenerationRequest) return;
+    toast("Board generation failed. Please try again.");
+    return;
   }
-  s.mode = mode;
-  s.rush = rush;
+  if (generationRequest !== soloGenerationRequest) return;
+  if (!generated.ok) {
+    toast("No playable board is available for this configuration.");
+    return;
+  }
+  const config = generationInputs.config;
+  s.config = config;
+  customAdult = generationInputs.adultMode;
+  s.mode = generationInputs.mode;
+  s.rush = generationInputs.rush;
   s.suddenDeathEvent = null;
   s.onlineRoundKey = null;
   s.pendingOnlineTrace = null;
-  clearTimeout(s.rushTimer);
-  clearInterval(s.rushCountdown);
+  if (rush && !wasRush) {
+    randomModeQueue = [];
+    s.nextRushMode = null;
+  }
   document.body.dataset.mode = mode;
-  s.n = s.config.size;
-  s.time = s.config.seconds;
+  s.n = config.size;
+  s.time = config.seconds;
   s.score = 0;
   s.found.clear();
   s.lastWord = "";
@@ -671,22 +706,11 @@ async function start(mode, rawConfig = null, adultMode = false, rush = false) {
   s.done = 0;
   s.startedAt = Date.now();
   s.endsAt = s.startedAt + s.time * 1000;
-  let generated;
-  try {
-    generated = await make();
-  } catch {
-    toast("Board generation failed. Please try again.");
-    return;
-  }
-  if (!generated.ok) {
-    toast("No playable board is available for this configuration.");
-    return;
-  }
   s.b = generated.board;
-  $("#gameMode").textContent = s.config.label;
+  $("#gameMode").textContent = config.label;
   $("#gameTitle").textContent = "Round 01 · " + s.n + "×" + s.n;
-  $("#ruleBanner").textContent = s.config.rule;
-  $("#gameHint").textContent = "Minimum " + s.config.min + " letters";
+  $("#ruleBanner").textContent = config.rule;
+  $("#gameHint").textContent = "Minimum " + config.min + " letters";
   $("#gameScore").textContent = 0;
   $("#timer").textContent = formatTimer(s.time);
   $("#stopRush").hidden = !s.rush;
@@ -695,15 +719,15 @@ async function start(mode, rawConfig = null, adultMode = false, rush = false) {
   render();
   showRoundIntro({
     label: s.config.label,
-    rule: s.config.rule,
+    rule: config.rule,
     detail: s.rush ? "Random Rush · next challenge loading" : "Your board is ready",
     analytics: {
       mode,
       multiplayer: false,
       random_rush: s.rush,
-      party: isPartyRound(s.config),
+      party: isPartyRound(config),
       grid_size: s.n,
-      minimum_length: s.config.min,
+      minimum_length: config.min,
     },
     onStart: () => {
       show("gameScreen");
@@ -711,10 +735,10 @@ async function start(mode, rawConfig = null, adultMode = false, rush = false) {
         mode,
         multiplayer: false,
         random_rush: s.rush,
-        party: isPartyRound(s.config),
+        party: isPartyRound(config),
         grid_size: s.n,
-        minimum_length: s.config.min,
-        duration_seconds: s.config.seconds,
+        minimum_length: config.min,
+        duration_seconds: config.seconds,
       });
       clearInterval(s.timer);
       s.timer = setInterval(() => {
@@ -1292,10 +1316,10 @@ function boardSeed() {
   }
   return Date.now() >>> 0;
 }
-function make() {
-  return sharedBoardCore.generateBoardCooperatively(s.n, preparedLexicon(), {
-    mode: customAdult ? "dirty" : "classic",
-    min: s.config.min,
+function make({ size, min, mode, adultMode } = {}) {
+  return sharedBoardCore.generateBoardCooperatively(size, preparedLexicon(mode, adultMode), {
+    mode: adultMode ? "dirty" : "classic",
+    min,
     seed: boardSeed(),
   });
 }

@@ -272,7 +272,7 @@ function cancelPendingConsent(room, reason) {
     pending.generating &&
     room.generation?.consentRequestId === pending.requestId
   )
-    room.generation = null;
+    room.generation.cancelled = true;
   clearTimeout(pending.timer);
   room.pendingConsent = null;
   broadcast(room, {
@@ -451,6 +451,7 @@ function clearRoomTimer(room) {
 }
 function closeRoom(room, reason) {
   clearRoomTimer(room);
+  if (room.generation) room.generation.cancelled = true;
   room.generation = null;
   if (room.pendingConsent) cancelPendingConsent(room, "room_closed");
   for (const [id, challenge] of preAdmissionChallenges) {
@@ -555,6 +556,7 @@ async function startRound(
     token: crypto.randomUUID(),
     consentRequestId,
     seed: crypto.randomInt(0x100000000),
+    cancelled: false,
   };
   room.generation = generation;
   const prepared = generationTestHooks.lexicon || getPreparedLexicon(validationMode);
@@ -569,9 +571,14 @@ async function startRound(
         seed: generation.seed,
         limits: generationTestHooks.limits || undefined,
         yieldScheduler: generationTestHooks.yieldScheduler || nodeGenerationScheduler,
+        isCancelled: () => generation.cancelled,
       },
     );
   } catch {
+    if (generation.cancelled || room.generation !== generation) {
+      if (room.generation === generation) room.generation = null;
+      return false;
+    }
     return generationFailure(room, generation, {
       error: { code: "GENERATION_EXCEPTION" },
       diagnostics: {
@@ -584,11 +591,21 @@ async function startRound(
       },
     });
   }
+  if (generation.cancelled) {
+    room.generation = null;
+    return false;
+  }
   if (room.generation !== generation) return false;
+  const consentedPlayerIds =
+    consentRequestId && room.pendingConsent?.requestId === consentRequestId
+      ? [...room.pendingConsent.acceptedPlayerIds]
+      : roundConsentedPlayerIds
+        ? [...roundConsentedPlayerIds]
+        : [...room.players.keys()];
   if (
     usesAdultLexicon(config) &&
-    (!Array.isArray(roundConsentedPlayerIds) ||
-      !roundConsentedPlayerIds.every((id) => room.players.get(id)?.ws?.readyState === 1))
+    (!consentedPlayerIds.length ||
+      !consentedPlayerIds.every((id) => room.players.get(id)?.ws?.readyState === 1))
   )
     return generationFailure(room, generation, {
       ok: false,
@@ -618,9 +635,7 @@ async function startRound(
     config,
     validationMode,
     adultConsentRequestId: consentRequestId,
-    consentedPlayerIds: roundConsentedPlayerIds
-      ? [...roundConsentedPlayerIds]
-      : [...room.players.keys()],
+    consentedPlayerIds,
   };
   room.status = "playing";
   room.teamScore = 0;
@@ -1110,7 +1125,8 @@ async function handle(ws, message) {
           targetRoom.pendingConsent.requiredPlayerIds.push(challengeClient.id);
         if (!targetRoom.pendingConsent.acceptedPlayerIds.includes(challengeClient.id))
           targetRoom.pendingConsent.acceptedPlayerIds.push(challengeClient.id);
-        await completeAdultConsent(targetRoom, challenge.targetRequestId);
+        if (!targetRoom.pendingConsent.generating)
+          await completeAdultConsent(targetRoom, challenge.targetRequestId);
         return;
       }
       if (sameActiveRound || sameActiveRoundById) {

@@ -243,6 +243,42 @@ test("dirty boards strongly favor playable adult words", () => {
     );
   }
 });
+
+test("Dirty template fallback honors the prepared lexicon contract", () => {
+  const normal = [
+    "CAT", "DOG", "STAR", "STARE", "STONE", "STREAM", "PLANET", "PLANT",
+    "HEART", "HOUSE", "TRACE", "BRAIN", "WORDS", "RUSH",
+  ];
+  const adult = [
+    "ASS", "BITCH", "COCK", "CUNT", "DICK", "FUCK", "SHIT", "TIT", "SHTICK", "PENIS",
+  ];
+  const prepared = boardCore.prepareLexicon([...normal, ...adult], { adultWords: adult });
+  const result = generateBoard(4, prepared, {
+    mode: "dirty",
+    min: 3,
+    seed: 1,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.diagnostics.generationStrategy, "dirty-template");
+  const counts = prepared.candidateCounts(4, "dirty", 3);
+  assert.ok(
+    adult.filter((word) => hasPath(result.board, 4, word)).length >=
+      Math.min(5, counts.adult),
+  );
+  assert.ok(
+    adult.concat(normal).some(
+      (word) => word.length >= 3 && hasPath(result.board, 4, word),
+    ),
+  );
+  for (const family of ["3", "4", "5", "6plus"])
+    if (counts[family])
+      assert.ok(
+        [...adult, ...normal].some((word) =>
+          (family === "6plus" ? word.length >= 6 : word.length === Number(family)) &&
+          hasPath(result.board, 4, word),
+        ),
+      );
+});
 test("canonical config matches expected shape and validates correctly", () => {
   for (const [mode, expected] of Object.entries({
     classic: { sudden: false, chain: false, adult: false, party: false, target: null },

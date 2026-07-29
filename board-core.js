@@ -249,6 +249,13 @@
     }
   }
 
+  class GenerationCancelledError extends Error {
+    constructor() {
+      super("GENERATION_CANCELLED");
+      this.code = "GENERATION_CANCELLED";
+    }
+  }
+
   function normalizedLimits(limits = {}) {
     return {
       maxAttempts: Number.isInteger(limits.maxAttempts)
@@ -354,7 +361,20 @@
     for (let row = 0; row < 4; row++)
       for (let column = 0; column < 4; column++)
         board[row * size + column] = DIRTY_TEMPLATE[row * 4 + column];
-    if (!DIRTY_TEMPLATE_WORDS.every((word) => hasPath(board, size, word))) return null;
+    const playableAdultCount = getFamilyCandidates(source, size, "dirty", "adult")
+      .filter((word) => hasPath(board, size, word)).length;
+    const requiredAdultCount = Math.min(
+      5,
+      getFamilyCandidates(source, size, "dirty", "adult").length,
+    );
+    if (playableAdultCount < requiredAdultCount) return null;
+    if (!getMinimumCandidates(source, size, "dirty", minimum)
+      .some((word) => hasPath(board, size, word))) return null;
+    for (const family of [3, 4, 5, "6plus"]) {
+      const candidates = getFamilyCandidates(source, size, "dirty", family);
+      if (candidates.length && !candidates.some((word) => hasPath(board, size, word)))
+        return null;
+    }
     return board;
   }
 
@@ -370,7 +390,7 @@
     if (mode === "dirty") {
       const adultCandidates = getFamilyCandidates(source, size, "dirty", "adult");
       const adultTargets = shuffle(
-        [...getShortestCandidates(source, size, "dirty", "adult", 5)],
+        [...adultCandidates],
         context.random,
       ).slice(0, Math.min(5, adultCandidates.length));
       adultTargets.forEach((word) => addTarget(targets, seen, word));
@@ -531,7 +551,11 @@
     const iterator = generateIterator(size, prepared, options);
     let step = iterator.next();
     while (!step.done) {
-      if (step.value === YIELD_MARKER) await scheduler();
+      if (step.value === YIELD_MARKER) {
+        if (options.isCancelled?.()) throw new GenerationCancelledError();
+        await scheduler();
+        if (options.isCancelled?.()) throw new GenerationCancelledError();
+      }
       step = iterator.next();
     }
     return step.value;
