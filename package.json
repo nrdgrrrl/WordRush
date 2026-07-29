@@ -6,11 +6,12 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/auth.test.js test/core.test.js test/board-analysis.test.js test/server.test.js test/leaderboard.test.js test/reset-leaderboard.test.js",
+    "test": "node --test test/auth.test.js test/core.test.js test/board-analysis.test.js test/dictionary.test.js test/server.test.js test/leaderboard.test.js test/reset-leaderboard.test.js",
     "test:browser": "node --test test/browser.test.js",
     "test:soak": "node --test test/multiplayer-soak.test.js",
     "test:all": "npm test && npm run test:browser && npm run test:soak",
-    "check": "node --check game-config.js && node --check board-core.js && node --check board-analysis.js && node --check analytics.js && node --check app.js && node --check achievements.js && node --check leaderboard-client.js && node --check multiplayer-client.js && node --check random-rush.js && node --check cast-sender.js && node --check results.js && node --check stats.js && node --check headless-client.js && node --check server.js && node --check receiver/receiver.js",
+    "compile:dictionary": "node scripts/compile-dictionary.js",
+    "check": "node --check game-config.js && node --check board-core.js && node --check board-analysis.js && node --check analytics.js && node --check app.js && node --check achievements.js && node --check leaderboard-client.js && node --check multiplayer-client.js && node --check random-rush.js && node --check cast-sender.js && node --check results.js && node --check stats.js && node --check headless-client.js && node --check server.js && node --check dictionary-compiler.js && node --check dictionary-registry.js && node --check scripts/compile-dictionary.js && node --check receiver/receiver.js",
     "headless": "node headless-client.js"
   },
   "dependencies": {

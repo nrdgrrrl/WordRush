@@ -354,5 +354,5 @@ The release gate now covers 31 unit/integration tests, 35 browser tests, and 2 t
 
 - Rooms and active rounds are intentionally in-memory for this LAN application; a process restart ends them.
 - Solo leaderboard submissions remain client-reported because solo rounds run entirely in the browser. Numeric caps prevent data corruption, but tamper-resistant public rankings would require authenticated accounts and server-hosted solo rounds.
-- The available dictionary depends on the host OS dictionary, with a built-in fallback. A production deployment should bundle and version a complete licensed word list.
+- The standard dictionary is a checked-in, versioned, licensed artifact compiled from pinned ESDB data; runtime does not depend on a host OS dictionary or external download.
 - Native prompt/confirm dialogs remain for room joining, personal dictionary entry, and adult-mode consent. Dedicated dialogs would improve polish but do not block the current workflows.

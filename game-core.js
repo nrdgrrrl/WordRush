@@ -1,4 +1,3 @@
-const fs = require("node:fs");
 const {
   MODE_CONFIG,
   RANDOM_RUSH_MODES,
@@ -7,57 +6,68 @@ const {
   ADULT_WORDS,
 } = require("./game-config");
 const boardCore = require("./board-core");
-const SYSTEM_WORDS = (() => {
-  for (const file of [
-    "/usr/share/dict/american-english",
-    "/usr/share/dict/words",
-  ]) {
-    try {
-      return fs.readFileSync(file, "utf8").split(/\r?\n/);
-    } catch {}
-  }
-  return [];
-})();
+const {
+  DEFAULT_DICTIONARY_ID,
+  getDictionary,
+  getDictionaryMetadata,
+} = require("./dictionary-registry");
 const ADULT_SET = new Set(ADULT_WORDS);
 const normalizeWords = boardCore.normalizeWords;
-const BASE_WORDS = normalizeWords([
-  ...COMMON_WORDS,
-  ...SYSTEM_WORDS.filter(
-    (word) => !ADULT_SET.has(String(word).trim().toUpperCase()),
-  ),
-]);
-const BASE_DIRTY_WORDS = normalizeWords([...BASE_WORDS, ...ADULT_WORDS]);
-const BASE_WORD_SETS = {
-  classic: new Set(BASE_WORDS),
-  dirty: new Set(BASE_DIRTY_WORDS),
-};
-const PREPARED_LEXICONS = {
-  classic: boardCore.prepareLexicon(BASE_WORDS, {
-    adultWords: ADULT_WORDS,
-    preferredWords: COMMON_WORDS,
-  }),
-  dirty: boardCore.prepareLexicon(BASE_DIRTY_WORDS, {
-    adultWords: ADULT_WORDS,
-    preferredWords: COMMON_WORDS,
-  }),
-};
+const PREPARED_LEXICONS = new Map();
+const EFFECTIVE_WORDS = new Map();
+const EFFECTIVE_WORD_SETS = new Map();
 const {
   neighbors,
   hasPath,
   generateBoard,
   generateBoardCooperatively,
 } = boardCore;
-function createLexicon(mode) {
-  return mode === "dirty" ? BASE_DIRTY_WORDS : BASE_WORDS;
+function dictionaryArgs(dictionaryIdOrMode, mode) {
+  if (dictionaryIdOrMode === "classic" || dictionaryIdOrMode === "dirty")
+    return { dictionaryId: DEFAULT_DICTIONARY_ID, mode: dictionaryIdOrMode };
+  return {
+    dictionaryId: dictionaryIdOrMode || DEFAULT_DICTIONARY_ID,
+    mode: mode || "classic",
+  };
 }
-function getPreparedLexicon(mode) {
-  return mode === "dirty" ? PREPARED_LEXICONS.dirty : PREPARED_LEXICONS.classic;
+
+function effectiveWords(dictionaryIdOrMode, mode) {
+  const args = dictionaryArgs(dictionaryIdOrMode, mode);
+  const key = `${args.dictionaryId}:${args.mode}`;
+  if (EFFECTIVE_WORDS.has(key)) return EFFECTIVE_WORDS.get(key);
+  const dictionary = getDictionary(args.dictionaryId);
+  const standardWords = dictionary.words.filter((word) => !ADULT_SET.has(word));
+  const words = Object.freeze(args.mode === "dirty"
+    ? normalizeWords([...standardWords, ...ADULT_WORDS])
+    : standardWords);
+  EFFECTIVE_WORDS.set(key, words);
+  return words;
 }
-function isDictionaryWord(word, mode = "classic") {
+
+function createLexicon(dictionaryIdOrMode = DEFAULT_DICTIONARY_ID, mode = "classic") {
+  return effectiveWords(dictionaryIdOrMode, mode);
+}
+
+function getPreparedLexicon(dictionaryIdOrMode = DEFAULT_DICTIONARY_ID, mode = "classic") {
+  const args = dictionaryArgs(dictionaryIdOrMode, mode);
+  const key = `${args.dictionaryId}:${args.mode}`;
+  if (PREPARED_LEXICONS.has(key)) return PREPARED_LEXICONS.get(key);
+  const prepared = boardCore.prepareLexicon(effectiveWords(args.dictionaryId, args.mode), {
+    adultWords: ADULT_WORDS,
+    preferredWords: args.mode === "dirty"
+      ? [...COMMON_WORDS, ...ADULT_WORDS]
+      : COMMON_WORDS,
+  });
+  PREPARED_LEXICONS.set(key, prepared);
+  return prepared;
+}
+function isDictionaryWord(word, dictionaryIdOrMode = DEFAULT_DICTIONARY_ID, mode = "classic") {
   const cleanWord = String(word || "").trim().toUpperCase();
-  return (mode === "dirty" ? BASE_WORD_SETS.dirty : BASE_WORD_SETS.classic).has(
-    cleanWord,
-  );
+  const args = dictionaryArgs(dictionaryIdOrMode, mode);
+  const key = `${args.dictionaryId}:${args.mode}`;
+  if (!EFFECTIVE_WORD_SETS.has(key))
+    EFFECTIVE_WORD_SETS.set(key, new Set(effectiveWords(args.dictionaryId, args.mode)));
+  return EFFECTIVE_WORD_SETS.get(key).has(cleanWord);
 }
 function validateSubmission({
   board,
@@ -65,6 +75,7 @@ function validateSubmission({
   word,
   path,
   mode,
+  dictionaryId = DEFAULT_DICTIONARY_ID,
   minimum,
   found,
 }) {
@@ -83,12 +94,10 @@ function validateSubmission({
             neighbors(indexes[position - 1], size).includes(index)) &&
           indexes.indexOf(index) === position,
       ),
-    lexicon = mode === "dirty"
-      ? BASE_WORD_SETS.dirty
-      : BASE_WORD_SETS.classic,
+    dictionaryWord = isDictionaryWord(cleanWord, dictionaryId, mode),
     valid =
       cleanWord.length >= (Number.isFinite(minimum) ? minimum : config.min) &&
-      lexicon.has(cleanWord) &&
+      dictionaryWord &&
       validPath &&
       !found.has(cleanWord);
   return {
@@ -102,7 +111,7 @@ function validateSubmission({
           ? "path"
           : found.has(cleanWord)
             ? "duplicate"
-            : !lexicon.has(cleanWord)
+            : !dictionaryWord
               ? "dictionary"
               : "unknown",
   };
@@ -111,8 +120,9 @@ module.exports = {
   MODE_CONFIG,
   RANDOM_RUSH_MODES,
   RANDOM_RUSH_EXCLUDED_MODES,
-  COMMON_WORDS,
   ADULT_WORDS,
+  DEFAULT_DICTIONARY_ID,
+  getDictionaryMetadata,
   normalizeWords,
   neighbors,
   hasPath,

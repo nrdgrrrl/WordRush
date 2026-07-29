@@ -521,6 +521,7 @@
             cfg,
             message.mode,
             message.randomRush,
+            message.dictionary,
           );
           sessionDialog(false);
         }
@@ -557,6 +558,7 @@
           message.config,
           message.mode,
           message.randomRush,
+          message.dictionary,
         );
         sessionDialog(false);
         toast("Round started · " + message.players.length + " players");
@@ -606,6 +608,7 @@
           reason: message.reason,
           suddenDeath: message.suddenDeath,
           results: message.results,
+          dictionary: message.dictionary,
         });
         toast(message.cooperative ? "Team round complete" : "Round complete");
       }
@@ -674,7 +677,7 @@
       socket.send(JSON.stringify({ type: "create_display_token" }));
     });
   };
-  window.wordrushStartSessionGame = ({ mode, config, randomRush } = {}) => {
+  window.wordrushStartSessionGame = ({ mode, config, randomRush, dictionaryId } = {}) => {
     if (!sessionCode && !pendingSession && !savedSession()) return false;
     if (!sessionCode || !socket || socket.readyState !== WebSocket.OPEN) {
       pendingSession = true;
@@ -693,6 +696,7 @@
       type: "start_game",
       mode: randomRush ? "random" : mode,
       config,
+      ...(dictionaryId ? { dictionaryId } : {}),
     });
     return true;
   };

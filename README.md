@@ -12,7 +12,8 @@ From this directory run bash serve-lan.sh. The script prints the machine Wi-Fi a
 - Classic, Minimum Word, Sudden Death, Race Mode, Co-op, Dirty Mode, Blitz,
   Long Haul, Letter Storm, Score Attack, Word Chain, and Random Rush
 - Balanced board generation with short, medium, and long word targets
-- Opt-in adult dictionary for Dirty Mode
+- Canadian English Standard dictionary compiled from pinned ESDB data
+- Opt-in adult-word overlay for Dirty Mode
 - Legacy `wordrush-custom` localStorage value is intentionally left dormant and
   does not affect gameplay. Future controlled vocabulary work is tracked in
   [issue #41](https://github.com/nrdgrrrl/WordRush/issues/41).
@@ -33,6 +34,10 @@ or dead input code.
 Run `npm test` for unit/integration coverage or `npm run test:browser` for browser and multiplayer soak coverage. The tracked `.githooks/pre-commit` hook runs both suites before every commit.
 
 The server validates room capacity, board paths, dictionaries, duplicate words, timers, and race completion. The client is not trusted for accepted words or scores.
+
+The packaged `wordrush-ca-standard-v1` artifact is used by both solo and
+multiplayer gameplay. Rebuilding it is an explicit networked build operation;
+runtime and normal tests use only the checked-in artifact.
 
 ## Board generation contract
 
