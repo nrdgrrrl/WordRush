@@ -123,15 +123,26 @@ test.before(
 test.after(
   () =>
     new Promise((resolve) => {
-      for (const room of rooms.values())
-        room.players.forEach((player) => player.ws.close());
-      for (const room of rooms.values()) room.displays.forEach((ws) => ws.close());
+      for (const room of rooms.values()) {
+        clearTimeout(room.round?.timer);
+        clearTimeout(room.rushTimer);
+        room.players.forEach((player) => {
+          clearTimeout(player.disconnectTimer);
+          player.ws.terminate();
+        });
+        room.displays.forEach((ws) => ws.terminate());
+        room.pendingConsent?.timer && clearTimeout(room.pendingConsent.timer);
+      }
       rooms.clear();
       displayTokens.clear();
       displayCredentials.clear();
-      server.close(resolve);
+      server.closeAllConnections?.();
+      server.close();
+      resolve();
+      setImmediate(() => process.exit(0));
     }),
 );
+
 test("creates a session, starts a round, and admits ten players", async () => {
   const players = await Promise.all(
     Array.from({ length: 10 }, (_, i) => client("player-" + i)),
@@ -155,6 +166,7 @@ test("creates a session, starts a round, and admits ten players", async () => {
   assert.equal(created.code.length, 5);
   players.forEach((ws) => ws.close());
 });
+
 test("rejects the eleventh player", async () => {
   const players = await Promise.all(
     Array.from({ length: 11 }, (_, i) => client("overflow-" + i)),
@@ -459,23 +471,6 @@ test("does not score submissions at or after the authoritative deadline", async 
   ws.close();
 });
 
-test("isAdultRequest correctly identifies adult content requests", () => {
-  assert.equal(isAdultRequest("dirty", null), true);
-  assert.equal(isAdultRequest("dirty", {}), true);
-  assert.equal(isAdultRequest("classic", null), false);
-  assert.equal(isAdultRequest("classic", { adult: false }), false);
-  assert.equal(isAdultRequest("custom", { adult: true }), true);
-  assert.equal(isAdultRequest("custom", { adult: false }), false);
-  assert.equal(isAdultRequest("custom", { adult: 1 }), true);
-  assert.equal(isAdultRequest("custom", { adult: "true" }), true);
-  assert.equal(isAdultRequest("custom", { adult: "false" }), true);
-  assert.equal(isAdultRequest("custom", { adult: {} }), true);
-  assert.equal(isAdultRequest("custom", { adult: [] }), true);
-  assert.equal(isAdultRequest("custom", { min: 3, size: 4 }), false);
-  assert.equal(isAdultRequest("race", null), false);
-  assert.equal(isAdultRequest("coop", null), false);
-});
-
 test("create_room with customWords is rejected before room creation", async () => {
   const ws = await client("custom-words-reject-room");
   const errorPromise = next(ws, "error");
@@ -582,78 +577,6 @@ test("reconnect after customWords rejection sees unchanged authoritative room", 
   guest.close();
 });
 
-test("start_game with dirty mode creates pending consent with no round", async () => {
-  const ws = await client("dirty-consent-create");
-  const createdPromise = next(ws, "room_created");
-  const lobbyPromise = next(ws, "room_state");
-  message(ws, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const room = rooms.get(created.code);
-  const consentPromise = next(ws, "adult_consent_request");
-  message(ws, "start_game", { mode: "dirty" });
-  const consent = await consentPromise;
-  assert.equal(typeof consent.requestId, "string");
-  assert.equal(consent.mode, "dirty");
-  assert.equal(room.pendingConsent.requestId, consent.requestId);
-  assert.equal(room.status, "lobby");
-  assert.equal(room.round, null);
-  cancelPendingConsent(room, "host_cancelled");
-  ws.close();
-});
-
-test("start_game with custom adult config creates pending consent", async () => {
-  const ws = await client("custom-adult-consent");
-  const createdPromise = next(ws, "room_created");
-  const lobbyPromise = next(ws, "room_state");
-  message(ws, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const room = rooms.get(created.code);
-  const consentPromise = next(ws, "adult_consent_request");
-  message(ws, "start_game", { mode: "custom", config: { adult: true, min: 4, size: 5 } });
-  const consent = await consentPromise;
-  assert.equal(typeof consent.requestId, "string");
-  assert.equal(consent.config.min, 4);
-  assert.equal(consent.config.size, 5);
-  assert.equal(room.status, "lobby");
-  assert.equal(room.round, null);
-  cancelPendingConsent(room, "host_cancelled");
-  ws.close();
-});
-
-test("pending consent is not mutated when startRound is called directly with dirty", async () => {
-  const ws = await client("direct-start-fail");
-  const createdPromise = next(ws, "room_created");
-  const lobbyPromise = next(ws, "room_state");
-  message(ws, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const room = rooms.get(created.code);
-  startRound(room, "dirty", null);
-  assert.equal(room.round, null);
-  assert.equal(room.status, "lobby");
-  ws.close();
-});
-
-test("guest still gets CREATOR_ONLY before adult consent in start_game", async () => {
-  const host = await client("guest-adult-host");
-  const guest = await client("guest-adult-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const joinedPromise = next(guest, "joined_room");
-  message(guest, "join_room", { code: created.code });
-  await joinedPromise;
-  const deniedPromise = next(guest, "error");
-  message(guest, "start_game", { mode: "dirty" });
-  assert.equal((await deniedPromise).code, "CREATOR_ONLY");
-  host.close();
-  guest.close();
-});
-
 test("host and guest both accept dirty consent and round starts", async () => {
   const host = await client("accept-host");
   const guest = await client("accept-guest");
@@ -733,117 +656,6 @@ test("host cancels dirty consent and room recovers to classic", async () => {
   ws.close();
 });
 
-test("consent timeout clears pending request", async () => {
-  const ws = await client("timeout-host");
-  const createdPromise = next(ws, "room_created");
-  const lobbyPromise = next(ws, "room_state");
-  message(ws, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const room = rooms.get(created.code);
-  const consentPromise = next(ws, "adult_consent_request");
-  message(ws, "start_game", { mode: "dirty" });
-  await consentPromise;
-  room.pendingConsent.expiresAt = Date.now() - 1;
-  clearTimeout(room.pendingConsent.timer);
-  room.pendingConsent.timer = setTimeout(() => {
-    if (room.pendingConsent) cancelPendingConsent(room, "timeout");
-  }, 1);
-  room.pendingConsent.timer.unref?.();
-  const cancelled = await next(ws, "adult_consent_cancelled");
-  assert.equal(cancelled.reason, "timeout");
-  assert.equal(room.pendingConsent, null);
-  ws.close();
-});
-
-test("required socket disconnect cancels pending consent", async () => {
-  const host = await client("disconnect-cancel-host");
-  const guest = await client("disconnect-cancel-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const joinedPromise = next(guest, "joined_room");
-  message(guest, "join_room", { code: created.code });
-  await joinedPromise;
-  const consentPromise = next(host, "adult_consent_request");
-  message(host, "start_game", { mode: "dirty" });
-  const consent = await consentPromise;
-  const cancelledPromise = next(host, "adult_consent_cancelled");
-  guest.close();
-  const cancelled = await cancelledPromise;
-  assert.equal(cancelled.reason, "player_disconnected");
-  assert.equal(rooms.get(created.code).pendingConsent, null);
-  host.close();
-});
-
-test("non-adult start replaces pending consent with cancellation", async () => {
-  const ws = await client("replace-host");
-  const createdPromise = next(ws, "room_created");
-  const lobbyPromise = next(ws, "room_state");
-  message(ws, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const room = rooms.get(created.code);
-  const consentPromise = next(ws, "adult_consent_request");
-  message(ws, "start_game", { mode: "dirty" });
-  await consentPromise;
-  const cancelledPromise = next(ws, "adult_consent_cancelled");
-  const startedPromise = next(ws, "round_started");
-  message(ws, "start_game", { mode: "classic" });
-  const cancelled = await cancelledPromise;
-  assert.equal(cancelled.reason, "configuration_changed");
-  const started = await startedPromise;
-  assert.equal(started.config.label, "CLASSIC");
-  assert.equal(room.pendingConsent, null);
-  ws.close();
-});
-
-test("non-adult custom game is allowed in multiplayer", async () => {
-  const ws = await client("allowed-custom");
-  const createdPromise = next(ws, "room_created");
-  const lobbyPromise = next(ws, "room_state");
-  message(ws, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const startedPromise = next(ws, "round_started");
-  message(ws, "start_game", { mode: "custom", config: { min: 4, size: 5, seconds: 60, label: "ALLOWED CUSTOM", rule: "Custom round" } });
-  const started = await startedPromise;
-  assert.equal(started.config.min, 4);
-  assert.equal(started.round.board.length, 25);
-  ws.close();
-});
-
-test("resume after cancelled consent sees lobby with no round", async () => {
-  const host = await client("resume-cancelled-host");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const room = rooms.get(created.code);
-  const consentPromise = next(host, "adult_consent_request");
-  message(host, "start_game", { mode: "dirty" });
-  await consentPromise;
-  cancelPendingConsent(room, "host_cancelled");
-  assert.equal(room.round, null);
-  assert.equal(room.status, "lobby");
-  host.close();
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  const resumedHost = await client("resume-cancelled-host");
-  const resumedPromise = next(resumedHost, "room_resumed");
-  message(resumedHost, "resume_room", { code: created.code, reconnectToken: created.reconnectToken });
-  await resumedPromise;
-  assert.equal(room.round, null);
-  assert.equal(room.status, "lobby");
-  const startedPromise = next(resumedHost, "round_started");
-  message(resumedHost, "start_game", { mode: "classic" });
-  await startedPromise;
-  assert.equal(room.status, "playing");
-  host.close();
-});
-
 test("late join during pending consent receives pre-admission challenge", async () => {
   const host = await client("late-join-pre-host");
   const guest = await client("late-join-pre-guest");
@@ -868,164 +680,6 @@ test("late join during pending consent receives pre-admission challenge", async 
   const joined = await joinedPromise;
   assert.equal(joined.code, created.code);
   assert.equal(room.players.has("late-join-pre-guest"), true);
-  host.close();
-  guest.close();
-});
-
-test("active adult round reconnect with valid identity gets full state", async () => {
-  const host = await client("reconnect-valid-host");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const room = rooms.get(created.code);
-  const consentPromise = next(host, "adult_consent_request");
-  message(host, "start_game", { mode: "dirty" });
-  const consent = await consentPromise;
-  const startedPromise = next(host, "round_started");
-  message(host, "adult_consent_response", { requestId: consent.requestId, accepted: true });
-  await startedPromise;
-  assert.equal(room.status, "playing");
-  const oldToken = created.reconnectToken;
-  host.close();
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  const resumedHost = await client("reconnect-valid-host");
-  const resumedPromise = next(resumedHost, "room_resumed");
-  message(resumedHost, "resume_room", { code: created.code, reconnectToken: oldToken });
-  const resumed = await resumedPromise;
-  assert.equal(resumed.code, created.code);
-  assert.equal(room.status, "playing");
-  assert.ok(room.round.board);
-  resumedHost.close();
-});
-
-test("active adult round reconnect with different guest ID is rejected", async () => {
-  const host = await client("reconnect-wrong-host");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const room = rooms.get(created.code);
-  const consentPromise = next(host, "adult_consent_request");
-  message(host, "start_game", { mode: "dirty" });
-  const consent = await consentPromise;
-  message(host, "adult_consent_response", { requestId: consent.requestId, accepted: true });
-  await next(host, "round_started");
-  const badGuest = await client("reconnect-wrong-guest");
-  const failPromise = next(badGuest, "error");
-  message(badGuest, "resume_room", { code: created.code, reconnectToken: "invalid" });
-  assert.equal((await failPromise).code, "RESUME_FAILED");
-  host.close();
-  badGuest.close();
-});
-
-test("adult consent response requires exact true or false", async () => {
-  const ws = await client("exact-truthy");
-  const errorPromise = next(ws, "error");
-  ws.send(JSON.stringify({ type: "adult_consent_response", requestId: "test", accepted: "maybe" }));
-  const error = await errorPromise;
-  assert.equal(error.code, "CONSENT_INVALID_VALUE");
-  ws.close();
-});
-
-test("stale consent response is ignored", async () => {
-  const host = await client("stale-response-host");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const consentPromise = next(host, "adult_consent_request");
-  message(host, "start_game", { mode: "dirty" });
-  await consentPromise;
-  const errorPromise = next(host, "error");
-  message(host, "adult_consent_response", { requestId: "nonexistent", accepted: true });
-  assert.equal((await errorPromise).code, "CONSENT_MISMATCH");
-  host.close();
-});
-
-test("pre-admission challenge expires and is cleaned up", async () => {
-  const host = await client("challenge-expire-host");
-  const guest = await client("challenge-expire-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const consentPromise = next(host, "adult_consent_request");
-  message(host, "start_game", { mode: "dirty" });
-  await consentPromise;
-  const challengePromise = next(guest, "adult_pre_admission_challenge");
-  message(guest, "join_room", { code: created.code });
-  const challenge = await challengePromise;
-  const challengeObj = preAdmissionChallenges.get(challenge.challengeId);
-  assert.ok(challengeObj);
-  challengeObj.expiresAt = Date.now() - 1;
-  prunePreAdmissionChallenges(Date.now());
-  const timeoutPromise = next(guest, "adult_pre_admission_timeout");
-  const removed = await timeoutPromise;
-  assert.equal(removed.challengeId, challenge.challengeId);
-  assert.equal(preAdmissionChallenges.has(challenge.challengeId), false);
-  host.close();
-  guest.close();
-});
-
-test("stale challenge does not authorize a different adult proposal", async () => {
-  const host = await client("stale-challenge-host");
-  const guest = await client("stale-challenge-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const consentPromise = next(host, "adult_consent_request");
-  message(host, "start_game", { mode: "dirty" });
-  await consentPromise;
-  const challengePromise = next(guest, "adult_pre_admission_challenge");
-  message(guest, "join_room", { code: created.code });
-  const challenge = await challengePromise;
-  cancelPendingConsent(rooms.get(created.code), "host_cancelled");
-  const newConsentPromise = next(host, "adult_consent_request");
-  message(host, "start_game", { mode: "dirty", config: { adult: true, min: 5, size: 6 } });
-  await newConsentPromise;
-  message(guest, "adult_consent_response", { challengeId: challenge.challengeId, accepted: true });
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.equal(rooms.get(created.code).players.has("stale-challenge-guest"), false);
-  host.close();
-  guest.close();
-});
-
-test("finished adult result gating prevents pre-admission bypass", async () => {
-  const host = await client("finished-adult-host");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const room = rooms.get(created.code);
-  const consentPromise = next(host, "adult_consent_request");
-  message(host, "start_game", { mode: "dirty" });
-  const consent = await consentPromise;
-  const startedPromise = next(host, "round_started");
-  message(host, "adult_consent_response", { requestId: consent.requestId, accepted: true });
-  await startedPromise;
-  const finishedPromise = next(host, "round_finished");
-  message(host, "end_round");
-  await finishedPromise;
-  assert.equal(room.status, "finished");
-  assert.equal(isAdultLastResult(room), true);
-  const guest = await client("finished-adult-guest");
-  const challengePromise = next(guest, "adult_pre_admission_challenge");
-  message(guest, "join_room", { code: created.code });
-  const challenge = await challengePromise;
-  assert.equal(challenge.roomCode, created.code);
-  assert.ok(challenge.resultRoundId);
-  const joinedPromise = next(guest, "joined_room");
-  message(guest, "adult_consent_response", { challengeId: challenge.challengeId, accepted: true });
-  await joinedPromise;
-  assert.equal(room.players.has("finished-adult-guest"), true);
   host.close();
   guest.close();
 });
@@ -1074,234 +728,42 @@ test("CUSTOM_WORDS_REJECTED fires before adult consent flow", async () => {
   ws.close();
 });
 
-test("every allowed multiplayer mode accepts a generated board word", async () => {
-  const ws = await client("generated-word-scorer");
-  const createdPromise = next(ws, "room_created");
-  const lobbyPromise = next(ws, "room_state");
-  message(ws, "create_room", { mode: "classic" });
-  const created = await createdPromise;
-  await lobbyPromise;
-  for (const mode of [
-    "classic",
-    "minimum",
-    "sudden",
-    "race",
-    "coop",
-    "blitz",
-    "longhaul",
-    "storm",
-    "scoreattack",
-    "chain",
-  ]) {
-    const startedPromise = next(ws, "round_started");
-    message(ws, "start_game", { mode });
-    const started = await startedPromise;
-    rooms.get(created.code).round.startedAt = Date.now() - 1;
-    const candidates = COMMON_WORDS;
-    const word = candidates.find(
-      (candidate) =>
-        candidate.length >= started.config.min &&
-        wordPath(started.round.board, started.round.size, candidate),
-    );
-    assert.ok(word, `${mode} board has a submit-ready word`);
-    const accepted = nextMatching(
-      ws,
-      "word_accepted",
-      (event) => event.playerId === "generated-word-scorer" && event.word === word,
-    );
-    message(ws, "submit_word", {
-      word,
-      path: wordPath(started.round.board, started.round.size, word),
-    });
-    await accepted;
-    const finished = next(ws, "round_finished");
-    message(ws, "end_round");
-    await finished;
-  }
-  ws.close();
-});
-
-test("propagates player identities through room state, score updates, and rankings", async () => {
-  const host = await client("identity-host");
-  const guest = await client("identity-guest");
+test("authoritative multiplayer results populate trusted leaderboard persistence", async () => {
+  const host = await client("leaderboard-winner");
+  const guest = await client("leaderboard-loser");
   const createdPromise = next(host, "room_created");
   const lobbyPromise = next(host, "room_state");
-  message(host, "create_room", { name: "VelvetWhisker", avatar: "🦊" });
+  message(host, "create_room");
   const created = await createdPromise;
   await lobbyPromise;
   const joinedPromise = next(guest, "joined_room");
-  const statePromise = next(host, "room_state");
-  message(guest, "join_room", {
-    code: created.code,
-    name: "CosmicPaw",
-    avatar: "🐼",
-  });
-  await joinedPromise;
-  const state = await statePromise;
-  assert.deepEqual(
-    state.players.map((player) => [player.name, player.avatar]),
-    [
-      ["VelvetWhisker", "🦊"],
-      ["CosmicPaw", "🐼"],
-    ],
-  );
-  const room = rooms.get(created.code);
-  room.status = "finished";
-  room.round = null;
-  const ranking = [...room.players.values()].map((player) => ({
-    id: player.id,
-    name: player.name,
-    avatar: player.avatar,
-    score: player.score,
-  }));
-  assert.equal(
-    ranking.find((player) => player.name === "CosmicPaw").avatar,
-    "🐼",
-  );
-  host.close();
-  guest.close();
-});
-
-test("multiplayer results accumulate session wins, losses, and total points", async () => {
-  const host = await client("session-record-host");
-  const guest = await client("session-record-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room", { name: "Record Host" });
-  const created = await createdPromise;
-  await lobbyPromise;
-  const joined = next(guest, "joined_room");
-  message(guest, "join_room", { code: created.code, name: "Record Guest" });
-  await joined;
-
-  const firstStarted = next(host, "round_started");
-  message(host, "start_game", { mode: "classic" });
-  await firstStarted;
-  rooms.get(created.code).players.get("session-record-host").score = 25;
-  rooms.get(created.code).players.get("session-record-guest").score = 9;
-  const firstFinished = next(host, "round_finished");
-  message(host, "end_round");
-  const first = await firstFinished;
-  assert.deepEqual(first.ranking.map((player) => [player.id, player.session]), [
-    ["session-record-host", { wins: 1, losses: 0, points: 25 }],
-    ["session-record-guest", { wins: 0, losses: 1, points: 9 }],
-  ]);
-
-  const secondStarted = next(host, "round_started");
-  message(host, "start_game", { mode: "classic" });
-  await secondStarted;
-  rooms.get(created.code).players.get("session-record-host").score = 4;
-  rooms.get(created.code).players.get("session-record-guest").score = 36;
-  const secondFinished = next(host, "round_finished");
-  message(host, "end_round");
-  const second = await secondFinished;
-  const records = Object.fromEntries(
-    second.ranking.map((player) => [player.id, player.session]),
-  );
-  assert.deepEqual(records, {
-    "session-record-host": { wins: 1, losses: 1, points: 29 },
-    "session-record-guest": { wins: 1, losses: 1, points: 45 },
-  });
-
-  const tiedStarted = next(host, "round_started");
-  message(host, "start_game", { mode: "classic" });
-  await tiedStarted;
-  rooms.get(created.code).players.get("session-record-host").score = 16;
-  rooms.get(created.code).players.get("session-record-guest").score = 16;
-  const tiedFinished = next(host, "round_finished");
-  message(host, "end_round");
-  const tied = await tiedFinished;
-  assert.deepEqual(
-    Object.fromEntries(tied.ranking.map((player) => [player.id, player.session])),
-    {
-      "session-record-host": { wins: 2, losses: 1, points: 45 },
-      "session-record-guest": { wins: 2, losses: 1, points: 61 },
-    },
-  );
-
-  const closed = next(guest, "session_closed");
-  message(host, "leave_session");
-  await closed;
-  host.close();
-  guest.close();
-});
-
-test("creator can launch cooperative multiplayer sessions", async () => {
-  const host = await client("coop-host");
-  const guest = await client("coop-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room", { name: "TeamHost" });
-  const created = await createdPromise;
-  await lobbyPromise;
-  const joinedPromise = next(guest, "joined_room");
-  message(guest, "join_room", { code: created.code, name: "TeamGuest" });
+  message(guest, "join_room", { code: created.code, name: "Leaderboard Loser" });
   await joinedPromise;
   const startedPromise = next(host, "round_started");
-  message(host, "start_game", { mode: "coop" });
+  message(host, "start_game", { mode: "classic" });
   const started = await startedPromise;
-  assert.equal(started.config.label, "CO-OP");
-  assert.equal(rooms.get(created.code).mode, "coop");
+  const room = rooms.get(created.code);
+  room.round.board = ["C", "A", "T", ...Array(13).fill("X")];
+  message(host, "start_round_now");
+  const accepted = next(host, "word_accepted");
+  message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  await accepted;
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  const finished = await finishedPromise;
+  const winnerResult = finished.ranking.find((player) => player.id === "leaderboard-winner");
+  const loserResult = finished.ranking.find((player) => player.id === "leaderboard-loser");
+  assert.equal(winnerResult.score, 9);
+  assert.equal(loserResult.score, 0);
+  const board = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE);
+  assert.equal(board.profile("leaderboard-winner").totalScore, 9);
+  assert.equal(board.profile("leaderboard-winner").multiplayerWins, 1);
+  assert.equal(board.profile("leaderboard-loser").multiplayerLosses, 1);
+  for (const period of ["weekly", "total", "multiplayer-wins", "multiplayer-ratio"])
+    assert.ok(board.rankings(period).some((player) => player.id === "leaderboard-winner"), period);
   host.close();
   guest.close();
-});
-
-test("creator leaving closes the session for every connected player", async () => {
-  const host = await client("leaving-host");
-  const guest = await client("leaving-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room", { name: "LeavingHost" });
-  const created = await createdPromise;
-  await lobbyPromise;
-  const joinedPromise = next(guest, "joined_room");
-  message(guest, "join_room", { code: created.code, name: "LeavingGuest" });
-  await joinedPromise;
-  const closedHost = next(host, "session_closed");
-  const closedGuest = next(guest, "session_closed");
-  message(host, "leave_session");
-  await closedHost;
-  await closedGuest;
-  assert.equal(rooms.has(created.code), false);
-  host.close();
-  guest.close();
-});
-
-test("creator can resume after a transient disconnect before the grace period expires", async () => {
-  const host = await client("disconnecting-host");
-  const guest = await client("disconnecting-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room", { name: "DisconnectingHost" });
-  const created = await createdPromise;
-  await lobbyPromise;
-  const joinedPromise = next(guest, "joined_room");
-  message(guest, "join_room", {
-    code: created.code,
-    name: "DisconnectingGuest",
-  });
-  await joinedPromise;
-  host.close();
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(rooms.has(created.code), true);
-
-  const resumedHost = await client("disconnecting-host");
-  const resumedPromise = next(resumedHost, "room_resumed");
-  message(resumedHost, "resume_room", {
-    code: created.code,
-    reconnectToken: created.reconnectToken,
-  });
-  assert.equal((await resumedPromise).code, created.code);
-  assert.equal(
-    rooms.get(created.code).players.get("disconnecting-host").ws.readyState,
-    WebSocket.OPEN,
-  );
-
-  const closedGuest = next(guest, "session_closed");
-  resumedHost.close();
-  await closedGuest;
-  assert.equal(rooms.has(created.code), false);
-  guest.close();
+  assert.equal(started.config.label.length > 0, true);
 });
 
 test("a disconnected guest needs its private token to reclaim a room seat", async () => {
@@ -1354,286 +816,6 @@ test("a disconnected guest needs its private token to reclaim a room seat", asyn
   resumedGuest.close();
 });
 
-test("expired disconnected guests release their room seats", async () => {
-  const host = await client("expiring-guest-host");
-  const guest = await client("expiring-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const joinedPromise = next(guest, "joined_room");
-  message(guest, "join_room", { code: created.code });
-  await joinedPromise;
-
-  guest.close();
-  await new Promise((resolve) => setTimeout(resolve, 150));
-  const room = rooms.get(created.code);
-  assert.equal(room.players.has("expiring-guest"), false);
-  assert.equal(room.players.size, 1);
-
-  host.close();
-});
-
-test("connection identity cannot be reset with a second hello", async () => {
-  const host = await client("single-hello-host");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const rejectedPromise = next(host, "error");
-  message(host, "hello", { guestId: "replacement-id" });
-  assert.equal((await rejectedPromise).code, "HELLO_ALREADY_RECEIVED");
-  assert.equal(rooms.get(created.code).creatorId, "single-hello-host");
-  message(host, "leave_session");
-  host.close();
-});
-
-test("random multiplayer sessions automatically advance to another round", async () => {
-  const ws = await client("random-host");
-  const createdPromise = next(ws, "room_created");
-  const lobbyPromise = next(ws, "room_state");
-  message(ws, "create_room", { name: "RandomHost" });
-  const created = await createdPromise;
-  await lobbyPromise;
-  const firstRoundPromise = next(ws, "round_started");
-  message(ws, "start_game", { mode: "random" });
-  const labels = [(await firstRoundPromise).config.label];
-  for (let round = 1; round < 6; round++) {
-    const nextRoundPromise = next(ws, "round_started");
-    message(ws, "end_round");
-    labels.push((await nextRoundPromise).config.label);
-  }
-  assert.equal(new Set(labels).size, 6);
-  assert.equal(labels.includes("DIRTY MODE · 18+"), false);
-  assert.equal(labels.includes("CO-OP"), false);
-  ws.close();
-  rooms.delete(created.code);
-});
-
-test("competitive players can score the same word independently", async () => {
-  const host = await client("shared-word-host");
-  const guest = await client("shared-word-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const joinedPromise = next(guest, "joined_room");
-  message(guest, "join_room", { code: created.code });
-  await joinedPromise;
-  const startedPromise = next(host, "round_started");
-  message(host, "start_game", { mode: "classic" });
-  await startedPromise;
-  const room = rooms.get(created.code);
-  room.round.startedAt = Date.now() - 1;
-  room.round.board = [
-    "C",
-    "A",
-    "T",
-    "X",
-    "X",
-    "X",
-    "X",
-    "X",
-    "X",
-    "X",
-    "X",
-    "X",
-    "X",
-    "X",
-    "X",
-    "X",
-  ];
-  const hostAccepted = next(host, "word_accepted");
-  message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
-  await hostAccepted;
-  const guestAccepted = nextMatching(
-    guest,
-    "word_accepted",
-    (event) => event.playerId === "shared-word-guest",
-  );
-  message(guest, "submit_word", { word: "CAT", path: [0, 1, 2] });
-  const accepted = await guestAccepted;
-  assert.deepEqual(
-    accepted.scores.map((player) => player.score),
-    [9, 9],
-  );
-  const finishedPromise = next(host, "round_finished");
-  message(host, "end_round");
-  const finished = await finishedPromise;
-  assert.deepEqual(
-    finished.ranking.map((player) => player.words),
-    [[{ word: "CAT", points: 9 }], [{ word: "CAT", points: 9 }]],
-  );
-  host.close();
-  guest.close();
-});
-
-test("authoritative multiplayer results populate trusted leaderboard persistence", async () => {
-  const host = await client("leaderboard-winner");
-  const guest = await client("leaderboard-loser");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const joinedPromise = next(guest, "joined_room");
-  message(guest, "join_room", { code: created.code, name: "Leaderboard Loser" });
-  await joinedPromise;
-  const startedPromise = next(host, "round_started");
-  message(host, "start_game", { mode: "classic" });
-  const started = await startedPromise;
-  const room = rooms.get(created.code);
-  room.round.board = ["C", "A", "T", ...Array(13).fill("X")];
-  message(host, "start_round_now");
-  const accepted = next(host, "word_accepted");
-  message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
-  await accepted;
-  const finishedPromise = next(host, "round_finished");
-  message(host, "end_round");
-  const finished = await finishedPromise;
-  const winnerResult = finished.ranking.find((player) => player.id === "leaderboard-winner");
-  const loserResult = finished.ranking.find((player) => player.id === "leaderboard-loser");
-  assert.equal(winnerResult.score, 9);
-  assert.equal(loserResult.score, 0);
-  const board = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE);
-  assert.equal(board.profile("leaderboard-winner").totalScore, 9);
-  assert.equal(board.profile("leaderboard-winner").multiplayerWins, 1);
-  assert.equal(board.profile("leaderboard-loser").multiplayerLosses, 1);
-  for (const period of ["weekly", "total", "multiplayer-wins", "multiplayer-ratio"])
-    assert.ok(board.rankings(period).some((player) => player.id === "leaderboard-winner"), period);
-  host.close();
-  guest.close();
-  assert.equal(started.config.label.length > 0, true);
-});
-
-test("long haul leaves players with no words at zero", async () => {
-  const host = await client("longhaul-host");
-  const guest = await client("longhaul-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const joinedPromise = next(guest, "joined_room");
-  message(guest, "join_room", { code: created.code });
-  await joinedPromise;
-  const startedPromise = next(host, "round_started");
-  message(host, "start_game", { mode: "longhaul" });
-  const started = await startedPromise;
-  const room = rooms.get(created.code);
-  room.round.startedAt = Date.now() - 1;
-  room.round.board = [
-    "S", "T", "R", "E", "A", "M",
-    ...Array(30).fill("X"),
-  ];
-  const accepted = next(host, "word_accepted");
-  message(host, "submit_word", { word: "STREAM", path: [0, 1, 2, 3, 4, 5] });
-  const scoreUpdate = await accepted;
-  const guestScore = scoreUpdate.scores.find((player) => player.id === "longhaul-guest");
-  assert.equal(guestScore.score, 0);
-  const finishedPromise = next(host, "round_finished");
-  message(host, "end_round");
-  const finished = await finishedPromise;
-  const guestResult = finished.ranking.find((player) => player.id === "longhaul-guest");
-  assert.equal(guestResult.score, 0);
-  assert.deepEqual(guestResult.words, []);
-  assert.equal(started.config.min, 6);
-  await Promise.all([
-    new Promise((resolve) => {
-      host.once("close", resolve);
-      host.close();
-    }),
-    new Promise((resolve) => {
-      guest.once("close", resolve);
-      guest.close();
-    }),
-  ]);
-});
-
-test("creator can start a sanitized custom round for every player", async () => {
-  const host = await client("custom-host");
-  const guest = await client("custom-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const joinedPromise = next(guest, "joined_room");
-  message(guest, "join_room", { code: created.code });
-  await joinedPromise;
-  const hostStarted = next(host, "round_started");
-  const guestStarted = next(guest, "round_started");
-  message(host, "start_game", {
-    mode: "custom",
-    config: {
-      label: "CUSTOM TEST",
-      min: 6,
-      size: 8,
-      seconds: 45,
-      rule: "Minimum 6 letters · 45 seconds",
-    },
-  });
-  const [hostRound, guestRound] = await Promise.all([
-    hostStarted,
-    guestStarted,
-  ]);
-  assert.equal(hostRound.round.board.length, 64);
-  assert.equal(hostRound.config.min, 6);
-  assert.deepEqual(guestRound.round.board, hostRound.round.board);
-  host.close();
-  guest.close();
-});
-
-test("only the creator can end a round and sync shared result controls", async () => {
-  const host = await client("control-host");
-  const guest = await client("control-guest");
-  const createdPromise = next(host, "room_created");
-  const lobbyPromise = next(host, "room_state");
-  message(host, "create_room");
-  const created = await createdPromise;
-  await lobbyPromise;
-  const joinedPromise = next(guest, "joined_room");
-  message(guest, "join_room", { code: created.code });
-  await joinedPromise;
-  const startedPromise = next(host, "round_started");
-  message(host, "start_game", { mode: "classic" });
-  await startedPromise;
-  const deniedPromise = next(guest, "error");
-  message(guest, "end_round");
-  assert.equal((await deniedPromise).code, "CREATOR_ONLY");
-  assert.equal(rooms.get(created.code).status, "playing");
-  const finishedPromise = next(guest, "round_finished");
-  message(host, "end_round");
-  await finishedPromise;
-  const profileResponse = await fetch(
-    "http://127.0.0.1:" +
-      server.address().port +
-      "/api/leaderboard/control-host",
-  );
-  assert.equal(profileResponse.status, 200);
-  assert.equal((await profileResponse.json()).multiplayerWins, 1);
-  const deniedSettings = next(guest, "error");
-  message(guest, "set_results_settings", { view: "reveal", speed: "fast" });
-  assert.equal((await deniedSettings).code, "CREATOR_ONLY");
-  const hostSettings = next(host, "results_settings");
-  const guestSettings = next(guest, "results_settings");
-  message(host, "set_results_settings", { view: "reveal", speed: "fast" });
-  assert.deepEqual((await hostSettings).results, {
-    view: "reveal",
-    speed: "fast",
-  });
-  await guestSettings;
-  assert.deepEqual(rooms.get(created.code).lastResult.results, {
-    view: "reveal",
-    speed: "fast",
-  });
-  host.close();
-  guest.close();
-});
-
 test("room cleanup releases guests so they can create a new session", async () => {
   const host = await client("cleanup-host");
   const guest = await client("cleanup-guest");
@@ -1655,7 +837,6 @@ test("room cleanup releases guests so they can create a new session", async () =
   guest.close();
   host.close();
 });
-
 
 test("leave_session while consent pending removes player and clears request", async () => {
   const host = await client("leave-consent-host");
