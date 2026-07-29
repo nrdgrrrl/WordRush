@@ -1,7 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { hasPath } = require("../board-core");
-const { solveBoard, createQualityReport } = require("../board-analysis");
+const {
+  prepareAnalysisIndex,
+  analyzeBoard,
+  analyzeBoardCooperatively,
+  solveBoard,
+  createQualityReport,
+} = require("../board-analysis");
 
 test("solveBoard enumerates unique playable words with shared board rules", () => {
   const board = [
@@ -176,4 +182,135 @@ test("quality reports reject solutions for different board, size, or minimum", (
     }),
     /minimum/,
   );
+});
+
+test("synchronous and cooperative analysis agree across yield intervals", async () => {
+  const board = [
+    "A", "B", "C", "D",
+    "E", "F", "G", "H",
+    "I", "J", "K", "L",
+    "M", "N", "O", "P",
+  ];
+  const index = prepareAnalysisIndex([
+    "ABC", "ABCD", "ABCDH", "ABCDHL", "ABCDHLP", "ABCDHLPON",
+  ]);
+  const synchronous = analyzeBoard({
+    board,
+    size: 4,
+    minimum: 3,
+    analysisIndex: index,
+    includeSolution: true,
+    limits: { operationsPerYield: 1 },
+  });
+  for (const operationsPerYield of [1, 7, 100000]) {
+    const cooperative = await analyzeBoardCooperatively({
+      board,
+      size: 4,
+      minimum: 3,
+      analysisIndex: index,
+      includeSolution: true,
+      limits: { operationsPerYield },
+      yieldScheduler: () => Promise.resolve(),
+    });
+    assert.equal(cooperative.ok, true);
+    assert.deepEqual(cooperative.report, synchronous.report);
+    assert.deepEqual(cooperative.solution, synchronous.solution);
+    assert.equal(
+      cooperative.diagnostics.operationCount,
+      synchronous.diagnostics.operationCount,
+    );
+  }
+});
+
+test("analysis limits and cancellation never expose partial results", async () => {
+  const index = prepareAnalysisIndex(["ABC", "ABCD", "ABCDH", "ABCDHL"]);
+  const limited = analyzeBoard({
+    board: [
+      "A", "B", "C", "D",
+      "E", "F", "G", "H",
+      "I", "J", "K", "L",
+      "M", "N", "O", "P",
+    ],
+    size: 4,
+    minimum: 3,
+    analysisIndex: index,
+    includeSolution: true,
+    limits: { maxOperations: 1, operationsPerYield: 1 },
+  });
+  assert.equal(limited.ok, false);
+  assert.equal(limited.error.code, "ANALYSIS_OPERATION_LIMIT");
+  assert.equal("solution" in limited, false);
+  assert.equal("report" in limited, false);
+
+  let schedulerCalls = 0;
+  const cancelled = await analyzeBoardCooperatively({
+    board: ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
+    size: 3,
+    minimum: 3,
+    analysisIndex: prepareAnalysisIndex(["ABC", "ABE", "AEI"]),
+    includeSolution: true,
+    limits: { operationsPerYield: 1 },
+    isCancelled: () => schedulerCalls > 0,
+    yieldScheduler: async () => {
+      schedulerCalls++;
+    },
+  });
+  assert.equal(cancelled.ok, false);
+  assert.equal(cancelled.error.code, "ANALYSIS_CANCELLED");
+  assert.equal("solution" in cancelled, false);
+  assert.equal("report" in cancelled, false);
+  assert.ok(cancelled.diagnostics.yieldCount >= 1);
+});
+
+test("report-only analysis returns all approved metric families without a solution", () => {
+  const result = analyzeBoard({
+    board: ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
+    size: 3,
+    minimum: 3,
+    analysisIndex: prepareAnalysisIndex(["ABC", "ABE", "AEI"]),
+    includeSolution: false,
+  });
+  assert.equal(result.ok, true);
+  assert.equal("solution" in result, false);
+  assert.deepEqual(result.report.coverage.all.tileIndices, [0, 1, 2, 4, 8]);
+  assert.equal(result.report.coverage.all.tilePercentage, 55.55555555555556);
+  assert.equal(result.report.coverage.medium.tileCount, 0);
+  assert.equal(result.report.coverage.long.tileCount, 0);
+  assert.equal(result.report.largestLowValueConnectedRegion.size, 9);
+  assert.equal(result.report.concentration.medium.totalParticipation, 0);
+  assert.equal(result.report.concentration.long.topQuarterParticipationPercentage, 0);
+  assert.equal(result.report.spatialDistribution.all.rows.length, 3);
+  assert.equal(result.report.spatialDistribution.all.columns.length, 3);
+});
+
+test("family coverage, low-value regions, distribution, and concentration are deterministic", () => {
+  const result = analyzeBoard({
+    board: [
+      "A", "B", "C", "D",
+      "E", "F", "G", "H",
+      "I", "J", "K", "L",
+      "M", "N", "O", "P",
+    ],
+    size: 4,
+    minimum: 3,
+    analysisIndex: prepareAnalysisIndex([
+      "ABCFK",
+      "ABCDHLPON",
+    ]),
+    includeSolution: false,
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.report.tileParticipationByLength.medium, [1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]);
+  assert.deepEqual(result.report.tileParticipationByLength.long, [1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1]);
+  assert.equal(result.report.coverage.medium.tilePercentage, 31.25);
+  assert.equal(result.report.coverage.long.tileCount, 9);
+  assert.deepEqual(result.report.largestLowValueConnectedRegion.tileIndices, [4, 6, 8, 9, 12]);
+  assert.deepEqual(result.report.spatialDistribution.medium.rows.map((row) => row.coveredTileCount), [3, 1, 1, 0]);
+  assert.deepEqual(result.report.spatialDistribution.long.columns.map((column) => column.coveredTileCount), [1, 2, 2, 4]);
+  assert.equal(result.report.concentration.medium.totalParticipation, 5);
+  assert.equal(result.report.concentration.medium.topQuarterTileCount, 4);
+  assert.equal(result.report.concentration.medium.topQuarterParticipationPercentage, 80);
+  assert.equal(result.report.concentration.medium.halfParticipationTileCount, 3);
+  assert.equal(result.report.concentration.medium.halfParticipationTilePercentage, 18.75);
+  assert.equal(result.report.concentration.long.totalParticipation, 9);
 });

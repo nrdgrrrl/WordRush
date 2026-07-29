@@ -6,6 +6,7 @@ const {
   ADULT_WORDS,
 } = require("./game-config");
 const boardCore = require("./board-core");
+const { prepareAnalysisIndex } = require("./board-analysis");
 const {
   DEFAULT_DICTIONARY_ID,
   getDictionary,
@@ -14,6 +15,7 @@ const {
 const ADULT_SET = new Set(ADULT_WORDS);
 const normalizeWords = boardCore.normalizeWords;
 const PREPARED_LEXICONS = new Map();
+const PREPARED_ANALYSIS_INDEXES = new Map();
 const EFFECTIVE_WORDS = new Map();
 const EFFECTIVE_WORD_SETS = new Map();
 const {
@@ -60,6 +62,20 @@ function getPreparedLexicon(dictionaryIdOrMode = DEFAULT_DICTIONARY_ID, mode = "
   });
   PREPARED_LEXICONS.set(key, prepared);
   return prepared;
+}
+function getPreparedAnalysisIndex(
+  dictionaryIdOrMode = DEFAULT_DICTIONARY_ID,
+  mode = "classic",
+) {
+  const args = dictionaryArgs(dictionaryIdOrMode, mode);
+  const key = args.dictionaryId + ":" + args.mode;
+  if (PREPARED_ANALYSIS_INDEXES.has(key))
+    return PREPARED_ANALYSIS_INDEXES.get(key);
+  const index = prepareAnalysisIndex(effectiveWords(args.dictionaryId, args.mode), {
+    alreadyNormalizedAndSorted: true,
+  });
+  PREPARED_ANALYSIS_INDEXES.set(key, index);
+  return index;
 }
 function isDictionaryWord(word, dictionaryIdOrMode = DEFAULT_DICTIONARY_ID, mode = "classic") {
   const cleanWord = String(word || "").trim().toUpperCase();
@@ -130,6 +146,7 @@ module.exports = {
   generateBoardCooperatively,
   createLexicon,
   getPreparedLexicon,
+  getPreparedAnalysisIndex,
   isDictionaryWord,
   validateSubmission,
 };

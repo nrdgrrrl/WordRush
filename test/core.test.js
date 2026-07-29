@@ -7,6 +7,7 @@ const {
   ADULT_WORDS,
   generateBoard,
   getPreparedLexicon,
+  getPreparedAnalysisIndex,
   createLexicon,
   isDictionaryWord,
   hasPath,
@@ -124,6 +125,17 @@ test("prepared indexes and sparse lexicons fail explicitly", () => {
   );
   assert.equal(result.diagnostics.attemptCount, 0);
   assert.equal(result.diagnostics.placementOperationCount, 0);
+});
+
+test("production analysis indexes are reused by dictionary and validation mode", () => {
+  const classic = getPreparedAnalysisIndex(DEFAULT_DICTIONARY_ID, "classic");
+  const classicAgain = getPreparedAnalysisIndex(DEFAULT_DICTIONARY_ID, "classic");
+  const dirty = getPreparedAnalysisIndex(DEFAULT_DICTIONARY_ID, "dirty");
+  assert.equal(classic, classicAgain);
+  assert.notEqual(classic, dirty);
+  assert.equal(classic.normalizedCount, 82689);
+  assert.equal(dirty.normalizedCount, 82699);
+  assert.notEqual(classic.fingerprint, dirty.fingerprint);
 });
 test("cooperative generation preserves deterministic results and yields", async () => {
   const prepared = boardCore.prepareLexicon([

@@ -156,6 +156,8 @@ test.afterEach(() => {
   generationTestHooks.lexicon = null;
   generationTestHooks.yieldScheduler = null;
   generationTestHooks.onContract = null;
+  generationTestHooks.onResult = null;
+  generationTestHooks.onCancellation = null;
 });
 
 test("revalidates mutable browser resources while retaining static asset caching", async () => {
@@ -413,6 +415,54 @@ test("solo board generation failure is explicit and never returns a board", asyn
   assert.equal(failure.board, undefined);
   assert.equal(failure.diagnostics.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
   assert.equal(Number.isInteger(failure.diagnostics.seed), true);
+});
+
+test("abandoned solo requests cancel generation without completing a response", async () => {
+  generationTestHooks.limits = { operationsPerYield: 1 };
+  let releaseGeneration;
+  let generationYielded;
+  const yielded = new Promise((resolve) => {
+    generationYielded = resolve;
+  });
+  const result = new Promise((resolve) => {
+    generationTestHooks.onResult = resolve;
+  });
+  const requestCancelled = new Promise((resolve) => {
+    generationTestHooks.onCancellation = resolve;
+  });
+  generationTestHooks.yieldScheduler = () => {
+    generationYielded();
+    return new Promise((resolve) => {
+      releaseGeneration = resolve;
+    });
+  };
+  let responseCompleted = false;
+  const request = http.request({
+    host: "127.0.0.1",
+    port: server.address().port,
+    path: "/api/solo-board",
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const requestClosed = new Promise((resolve) => request.once("close", resolve));
+  request.on("response", (response) => {
+    response.on("data", () => {});
+    response.on("end", () => { responseCompleted = true; });
+  });
+  request.on("error", () => {});
+  request.end(JSON.stringify({
+    mode: "classic",
+    dictionaryId: DEFAULT_DICTIONARY_ID,
+  }));
+  await yielded;
+  request.destroy();
+  await Promise.all([requestClosed, requestCancelled]);
+  releaseGeneration();
+  const cancelled = await result;
+  assert.equal(cancelled.ok, false);
+  assert.equal(cancelled.error.code, "GENERATION_CANCELLED");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(responseCompleted, false);
 });
 
 test("cooperative board generation lets another room process a queued action", async () => {
