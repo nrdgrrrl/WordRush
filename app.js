@@ -617,8 +617,19 @@ function cancelSoloRushContinuation({ stop = true } = {}) {
     s.nextRushMode = null;
   }
 }
-function show(id, { preserveRushContinuation = false } = {}) {
+function show(
+  id,
+  { preserveRushContinuation = false, preserveRoundIntro = false } = {},
+) {
   const currentScreen = document.querySelector(".screen.active")?.id;
+  if (
+    currentScreen === "roundIntroScreen" &&
+    id !== currentScreen &&
+    !preserveRoundIntro
+  ) {
+    cancelRoundIntro();
+    if (!s.onlineRoundKey) abandonActiveRound();
+  }
   if (
     currentScreen === "resultsScreen" &&
     id !== currentScreen &&
@@ -641,14 +652,17 @@ function show(id, { preserveRushContinuation = false } = {}) {
 let roundIntroTimer = 0;
 let roundIntroCountdown = 0;
 let roundIntroFinish = null;
+let roundIntroGeneration = 0;
 function cancelRoundIntro() {
+  roundIntroGeneration++;
   clearTimeout(roundIntroTimer);
   clearInterval(roundIntroCountdown);
   roundIntroTimer = 0;
   roundIntroCountdown = 0;
   roundIntroFinish = null;
 }
-function finishRoundIntro() {
+function finishRoundIntro(generation = roundIntroGeneration) {
+  if (generation !== roundIntroGeneration) return;
   const finish = roundIntroFinish;
   cancelRoundIntro();
   if (finish) finish();
@@ -662,12 +676,14 @@ function showRoundIntro({
   onStart,
 }) {
   cancelRoundIntro();
+  const introGeneration = roundIntroGeneration;
   roundIntroFinish = onStart;
   $("#introMode").textContent = label || "NEXT ROUND";
   $("#introRule").textContent = rule || "Make words. Make noise.";
   $("#introDetail").textContent = detail || "Get ready to trace";
   const deadline = Date.now() + Math.max(0, duration);
   const updateCountdown = () => {
+    if (introGeneration !== roundIntroGeneration) return;
     const remaining = Math.max(0, deadline - Date.now());
     $("#introCountdown").textContent = remaining
       ? String(Math.ceil(remaining / 1000))
@@ -675,7 +691,10 @@ function showRoundIntro({
   };
   updateCountdown();
   roundIntroCountdown = setInterval(updateCountdown, 100);
-  roundIntroTimer = setTimeout(finishRoundIntro, Math.max(0, duration));
+  roundIntroTimer = setTimeout(
+    () => finishRoundIntro(introGeneration),
+    Math.max(0, duration),
+  );
   emit("round-intro", {
     ...analytics,
     label,
@@ -847,7 +866,7 @@ async function start(
       minimum_length: config.min,
     },
     onStart: () => {
-      show("gameScreen");
+      show("gameScreen", { preserveRoundIntro: true });
       emit("round-started", {
         mode,
         multiplayer: false,
@@ -1307,7 +1326,7 @@ window.wordrushOnlineRound = (
       minimum_length: s.config.min,
     },
     onStart: () => {
-      show("gameScreen");
+      show("gameScreen", { preserveRoundIntro: true });
       updateOnlineTimer();
       s.timer = setInterval(updateOnlineTimer, 250);
       emit("round-started", {
