@@ -2,6 +2,7 @@ const {
   MODE_CONFIG,
   RANDOM_RUSH_MODES,
   RANDOM_RUSH_EXCLUDED_MODES,
+  COMMON_WORDS,
   ADULT_WORDS,
 } = require("./game-config");
 const boardCore = require("./board-core");
@@ -53,7 +54,9 @@ function getPreparedLexicon(dictionaryIdOrMode = DEFAULT_DICTIONARY_ID, mode = "
   if (PREPARED_LEXICONS.has(key)) return PREPARED_LEXICONS.get(key);
   const prepared = boardCore.prepareLexicon(effectiveWords(args.dictionaryId, args.mode), {
     adultWords: ADULT_WORDS,
-    preferredWords: args.mode === "dirty" ? ADULT_WORDS : [],
+    preferredWords: args.mode === "dirty"
+      ? [...COMMON_WORDS, ...ADULT_WORDS]
+      : COMMON_WORDS,
   });
   PREPARED_LEXICONS.set(key, prepared);
   return prepared;
@@ -91,10 +94,10 @@ function validateSubmission({
             neighbors(indexes[position - 1], size).includes(index)) &&
           indexes.indexOf(index) === position,
       ),
-    lexicon = new Set(effectiveWords(dictionaryId, mode)),
+    dictionaryWord = isDictionaryWord(cleanWord, dictionaryId, mode),
     valid =
       cleanWord.length >= (Number.isFinite(minimum) ? minimum : config.min) &&
-      lexicon.has(cleanWord) &&
+      dictionaryWord &&
       validPath &&
       !found.has(cleanWord);
   return {
@@ -108,7 +111,7 @@ function validateSubmission({
           ? "path"
           : found.has(cleanWord)
             ? "duplicate"
-            : !lexicon.has(cleanWord)
+            : !dictionaryWord
               ? "dictionary"
               : "unknown",
   };

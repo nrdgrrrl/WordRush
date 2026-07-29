@@ -48,8 +48,8 @@ test("dictionary membership uses the shared server lexicon", () => {
   assert.equal(
     validateSubmission({
       dictionaryId: DEFAULT_DICTIONARY_ID,
-      board: ["C", "A", "T"],
-      size: 3,
+      board: ["C", "A", "T", "X"],
+      size: 2,
       word: "CAT",
       path: [0, 1, 2],
       mode: "classic",

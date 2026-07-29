@@ -7,6 +7,7 @@ const $ = (s) => document.querySelector(s),
   requiresChain = sharedConfig.requiresChain,
   hasScoreTarget = sharedConfig.hasScoreTarget,
   DEFAULT_DICTIONARY_ID = sharedConfig.DEFAULT_DICTIONARY_ID,
+  COMMON_WORDS = sharedConfig.COMMON_WORDS,
   usesAdultLexicon = sharedConfig.usesAdultLexicon,
   isPartyRound = sharedConfig.isPartyRound,
   shouldEndOnRejectedWord = sharedConfig.shouldEndOnRejectedWord;
@@ -339,7 +340,7 @@ function preparedLexicon(
   const effectiveWords = [...words, ...(mode === "dirty" || adultMode ? adult : [])];
   preparedLexiconCache = sharedBoardCore.prepareLexicon(effectiveWords, {
     adultWords: adult,
-    preferredWords: adultMode ? adult : [],
+    preferredWords: adultMode ? [...COMMON_WORDS, ...adult] : COMMON_WORDS,
   });
   return preparedLexiconCache;
 }

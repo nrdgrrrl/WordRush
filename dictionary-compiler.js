@@ -8,6 +8,10 @@ function canonicalJson(value) {
   return Buffer.from(JSON.stringify(value) + "\n", "utf8");
 }
 
+function canonicalizeOverrideText(text) {
+  return String(text || "").replace(/\r\n?/g, "\n");
+}
+
 function deaccent(value) {
   return String(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
 }
@@ -20,7 +24,8 @@ function overrideWords(text) {
 }
 
 function normalizeWord(value, config) {
-  const word = deaccent(value).trim().toUpperCase();
+  const source = config.wordRules.deaccent ? deaccent(value) : String(value);
+  const word = source.trim().toUpperCase();
   const minimum = config.wordRules.minimumLength;
   const maximum = config.wordRules.maximumLength;
   return /^[A-Z]+$/.test(word) && word.length >= minimum && word.length <= maximum
@@ -28,9 +33,41 @@ function normalizeWord(value, config) {
     : null;
 }
 
+function validateConfig(config) {
+  if (!config || typeof config !== "object")
+    throw new TypeError("A dictionary configuration is required");
+  if (typeof config.id !== "string" || !config.id)
+    throw new TypeError("Dictionary id is required");
+  if (typeof config.label !== "string" || !config.label)
+    throw new TypeError("Dictionary label is required");
+  if (!config.source || typeof config.source.name !== "string" || !config.source.name ||
+      typeof config.source.release !== "string" || !config.source.release ||
+      typeof config.source.url !== "string" || !config.source.url ||
+      !/^[a-f0-9]{64}$/.test(config.source.sha256 || ""))
+    throw new TypeError("Dictionary source configuration is invalid");
+  if (!config.esdb || !Number.isInteger(config.esdb.size) || config.esdb.size <= 0 ||
+      !Array.isArray(config.esdb.spellings) || !config.esdb.spellings.length ||
+      config.esdb.spellings.some((spelling) => typeof spelling !== "string" || !spelling) ||
+      !Number.isInteger(config.esdb.variantLevel) || config.esdb.variantLevel < 0 ||
+      !Array.isArray(config.esdb.excludedPos) ||
+      config.esdb.excludedPos.some((part) => typeof part !== "string" || !part) ||
+      typeof config.esdb.excludedCategories !== "boolean")
+    throw new TypeError("ESDB export configuration is invalid");
+  const rules = config.wordRules;
+  if (!rules || rules.alphabet !== "A-Z" ||
+      !Number.isInteger(rules.minimumLength) || rules.minimumLength < 1 ||
+      !Number.isInteger(rules.maximumLength) || rules.maximumLength < rules.minimumLength ||
+      typeof rules.deaccent !== "boolean")
+    throw new TypeError("Dictionary word rules are invalid");
+  if (!config.overrides || typeof config.overrides.include !== "string" ||
+      !config.overrides.include || typeof config.overrides.exclude !== "string" ||
+      !config.overrides.exclude)
+    throw new TypeError("Dictionary override configuration is invalid");
+  return config;
+}
+
 function normalizeExport({ rawExport, config, includeText = "", excludeText = "" }) {
-  if (!config?.wordRules || !Number.isInteger(config.wordRules.minimumLength))
-    throw new TypeError("A valid dictionary configuration is required");
+  validateConfig(config);
   const words = new Set();
   for (const value of String(rawExport || "").split(/\r?\n/)) {
     const word = normalizeWord(value, config);
@@ -48,10 +85,14 @@ function normalizeExport({ rawExport, config, includeText = "", excludeText = ""
 }
 
 function createArtifact({ words, config, sourceSha256, includeText = "", excludeText = "" }) {
+  validateConfig(config);
   const artifactBytes = canonicalJson(words);
   const configurationBytes = canonicalJson({
     config,
-    overrides: { include: includeText, exclude: excludeText },
+    overrides: {
+      include: canonicalizeOverrideText(includeText),
+      exclude: canonicalizeOverrideText(excludeText),
+    },
   });
   const manifest = {
     dictionaryId: config.id,
@@ -72,4 +113,11 @@ function createArtifact({ words, config, sourceSha256, includeText = "", exclude
   return { artifactBytes, configurationBytes, manifest, manifestBytes: canonicalJson(manifest) };
 }
 
-module.exports = { canonicalJson, createArtifact, normalizeExport, sha256 };
+module.exports = {
+  canonicalJson,
+  canonicalizeOverrideText,
+  createArtifact,
+  normalizeExport,
+  sha256,
+  validateConfig,
+};

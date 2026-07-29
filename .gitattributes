@@ -1,0 +1,3 @@
+dictionaries/artifacts/*.json text eol=lf
+dictionaries/config/*.json text eol=lf
+dictionaries/overrides/* text eol=lf

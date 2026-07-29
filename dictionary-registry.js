@@ -1,8 +1,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { canonicalJson, sha256 } = require("./dictionary-compiler");
+const { DEFAULT_DICTIONARY_ID } = require("./game-config");
+const {
+  canonicalJson,
+  canonicalizeOverrideText,
+  sha256,
+} = require("./dictionary-compiler");
 
-const DEFAULT_DICTIONARY_ID = "wordrush-ca-standard-v1";
 const ROOT = __dirname;
 const REGISTRY = Object.freeze({
   [DEFAULT_DICTIONARY_ID]: Object.freeze({
@@ -79,7 +83,10 @@ function validateArtifact({ dictionaryId, config, manifest, artifactBytes, inclu
     manifest.source?.sha256 !== config.source?.sha256 ||
     manifest.configurationSha256 !== sha256(canonicalJson({
       config,
-      overrides: { include: includeText, exclude: excludeText },
+      overrides: {
+        include: canonicalizeOverrideText(includeText),
+        exclude: canonicalizeOverrideText(excludeText),
+      },
     })) ||
     !Array.isArray(words) ||
     manifest.wordCount !== words.length ||

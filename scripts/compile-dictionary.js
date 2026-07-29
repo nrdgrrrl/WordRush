@@ -3,11 +3,17 @@ const os = require("node:os");
 const path = require("node:path");
 const https = require("node:https");
 const { spawnSync } = require("node:child_process");
-const { createArtifact, normalizeExport, sha256 } = require("../dictionary-compiler");
+const {
+  createArtifact,
+  normalizeExport,
+  sha256,
+  validateConfig,
+} = require("../dictionary-compiler");
 
 const root = path.resolve(__dirname, "..");
 const configPath = path.join(root, "dictionaries/config/wordrush-ca-standard-v1.json");
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+validateConfig(config);
 
 function download(url, destination) {
   return new Promise((resolve, reject) => {
@@ -47,13 +53,14 @@ async function main() {
     const [sourceDirectory] = fs.readdirSync(sourceRoot);
     const esdbRoot = path.join(sourceRoot, sourceDirectory);
     run("make", [], esdbRoot);
-    const rawExport = run("./scowl", [
+    const exportArgs = [
       "--db", "scowl.db", "word-list", String(config.esdb.size),
       config.esdb.spellings.join(","), String(config.esdb.variantLevel),
-      "--deaccent",
-      `--wo-poses=${config.esdb.excludedPos.join(",")}`,
-      "--categories=",
-    ], esdbRoot);
+    ];
+    if (config.wordRules.deaccent) exportArgs.push("--deaccent");
+    exportArgs.push(`--wo-poses=${config.esdb.excludedPos.join(",")}`);
+    if (config.esdb.excludedCategories) exportArgs.push("--categories=");
+    const rawExport = run("./scowl", exportArgs, esdbRoot);
     const includeText = fs.readFileSync(path.join(root, config.overrides.include), "utf8");
     const excludeText = fs.readFileSync(path.join(root, config.overrides.exclude), "utf8");
     const words = normalizeExport({ rawExport, config, includeText, excludeText });

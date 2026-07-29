@@ -3,9 +3,11 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const {
+  canonicalizeOverrideText,
   createArtifact,
   normalizeExport,
 } = require("../dictionary-compiler");
+const { ADULT_WORDS } = require("../game-config");
 const {
   DEFAULT_DICTIONARY_ID,
   getDictionary,
@@ -16,8 +18,21 @@ const {
 const fixtureConfig = {
   id: "fixture",
   label: "Fixture",
-  source: { name: "esdb", release: "fixture", url: "fixture", sha256: "source" },
+  source: {
+    name: "esdb",
+    release: "fixture",
+    url: "fixture",
+    sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+  },
+  esdb: {
+    size: 60,
+    spellings: ["C"],
+    variantLevel: 1,
+    excludedPos: ["abbr"],
+    excludedCategories: true,
+  },
   wordRules: { alphabet: "A-Z", minimumLength: 3, maximumLength: 6, deaccent: true },
+  overrides: { include: "include.txt", exclude: "exclude.txt" },
 };
 
 test("dictionary normalization applies final rules and reviewed overrides deterministically", () => {
@@ -32,14 +47,14 @@ test("dictionary normalization applies final rules and reviewed overrides determ
   const first = createArtifact({
     words: normalizeExport(options),
     config: fixtureConfig,
-    sourceSha256: "source",
+    sourceSha256: fixtureConfig.source.sha256,
     includeText: options.includeText,
     excludeText: options.excludeText,
   });
   const second = createArtifact({
     words: normalizeExport(options),
     config: fixtureConfig,
-    sourceSha256: "source",
+    sourceSha256: fixtureConfig.source.sha256,
     includeText: options.includeText,
     excludeText: options.excludeText,
   });
@@ -47,6 +62,22 @@ test("dictionary normalization applies final rules and reviewed overrides determ
   assert.deepEqual(first.manifestBytes, second.manifestBytes);
   assert.equal(first.manifest.wordCount, 3);
   assert.equal(first.manifest.artifactSha256, second.manifest.artifactSha256);
+  const crlf = createArtifact({
+    words: normalizeExport(options),
+    config: fixtureConfig,
+    sourceSha256: fixtureConfig.source.sha256,
+    includeText: options.includeText.replace(/\n/g, "\r\n"),
+    excludeText: options.excludeText.replace(/\n/g, "\r\n"),
+  });
+  assert.equal(crlf.manifest.configurationSha256, first.manifest.configurationSha256);
+  assert.equal(canonicalizeOverrideText("A\r\nB\rC\n"), "A\nB\nC\n");
+  assert.deepEqual(
+    normalizeExport({
+      rawExport: "café",
+      config: { ...fixtureConfig, wordRules: { ...fixtureConfig.wordRules, deaccent: false } },
+    }),
+    [],
+  );
 });
 
 test("registry resolves the default artifact and rejects unknown or invalid artifacts", () => {
@@ -56,7 +87,8 @@ test("registry resolves the default artifact and rejects unknown or invalid arti
   assert.equal(metadata.wordCount, dictionary.words.length);
   assert.ok(dictionary.words.includes("CAT"));
   assert.ok(dictionary.words.includes("COLOUR"));
-  assert.ok(!dictionary.words.includes("SHIT"));
+  for (const word of ADULT_WORDS)
+    assert.ok(!dictionary.words.includes(word), word);
   assert.throws(
     () => getDictionary("not-registered"),
     /UNKNOWN_DICTIONARY_ID:not-registered/,
