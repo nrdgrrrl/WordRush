@@ -9,10 +9,10 @@ test("solveBoard enumerates unique playable words with shared board rules", () =
     "D", "E", "F",
     "G", "H", "I",
   ];
-  const lexicon = new Set([
+  const lexicon = [
     "ABE", "ABE", "ABCF", "ABED", "ABEF", "ABEI", "ADG", "AEI", "CFI",
     "ABA", "ABCD", "AB", "A1", "ZZZ",
-  ]);
+  ];
   const solution = solveBoard({ board, size: 3, minimum: 3, lexicon });
 
   assert.deepEqual(solution.words, [
@@ -126,4 +126,54 @@ test("quality reports honor the explicit minimum without a production lexicon", 
     "7-8": 0,
     "9+": 1,
   });
+});
+
+test("analysis rejects invalid minimum values", () => {
+  for (const minimum of [1, 2, 13, 3.5])
+    assert.throws(
+      () => solveBoard({ board: ["A", "B", "C", "D"], size: 2, minimum, lexicon: ["ABC"] }),
+      /Minimum word length must be an integer from 3 through 12/,
+    );
+});
+
+test("quality reports reject solutions for different board, size, or minimum", () => {
+  const board = [
+    "A", "B", "C",
+    "D", "E", "F",
+    "G", "H", "I",
+  ];
+  const solution = solveBoard({
+    board,
+    size: 3,
+    minimum: 3,
+    lexicon: ["ABE", "AEI"],
+  });
+
+  assert.throws(
+    () => createQualityReport({
+      board: ["A", "B", "C", "D", "E", "F", "G", "H", "H"],
+      size: 3,
+      minimum: 3,
+      solution,
+    }),
+    /board/,
+  );
+  assert.throws(
+    () => createQualityReport({
+      board,
+      size: 3,
+      minimum: 3,
+      solution: { ...solution, size: 4 },
+    }),
+    /size/,
+  );
+  assert.throws(
+    () => createQualityReport({
+      board,
+      size: 3,
+      minimum: 4,
+      solution: solveBoard({ board, size: 3, minimum: 3, lexicon: ["ABE", "AEI"] }),
+    }),
+    /minimum/,
+  );
 });

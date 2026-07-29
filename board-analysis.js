@@ -17,8 +17,8 @@ function validateInputs(board, size, minimum) {
   const cells = boardCells(board);
   if (!Number.isInteger(size) || size < 1 || cells.length !== size * size)
     throw new RangeError("Board size must match the board cell count");
-  if (!Number.isInteger(minimum) || minimum < 1)
-    throw new RangeError("Minimum word length must be a positive integer");
+  if (!Number.isInteger(minimum) || minimum < 3 || minimum > 12)
+    throw new RangeError("Minimum word length must be an integer from 3 through 12");
   if (!cells.every((letter) => typeof letter === "string" && /^[A-Z]$/.test(letter)))
     throw new TypeError("Board cells must be uppercase A-Z letters");
   return cells;
@@ -50,7 +50,9 @@ function sortNumbers(numbers) {
 
 function solveBoard({ board, size, minimum = 3, lexicon }) {
   const cells = validateInputs(board, size, minimum);
-  const words = normalizedLexicon(lexicon);
+  const words = normalizedLexicon(lexicon).filter(
+    (word) => word.length >= minimum && word.length <= cells.length,
+  );
   const root = createTrie(words);
   const wordTiles = new Map();
 
@@ -60,7 +62,7 @@ function solveBoard({ board, size, minimum = 3, lexicon }) {
     root,
     (node, letter) => node.children.get(letter),
     (path, node) => {
-      if (node.word && node.word.length >= minimum) {
+      if (node.word) {
         if (!wordTiles.has(node.word)) wordTiles.set(node.word, new Set());
         const tiles = wordTiles.get(node.word);
         for (const tile of path) tiles.add(tile);
@@ -76,9 +78,24 @@ function solveBoard({ board, size, minimum = 3, lexicon }) {
     playableWords.map((word) => [word, sortNumbers(wordTiles.get(word))]),
   );
   return Object.freeze({
+    boardKey: cells.join(""),
+    size,
+    minimum,
     words: Object.freeze(playableWords),
     wordTileIndices: Object.freeze(wordTileIndices),
   });
+}
+
+function validateSolutionMetadata(solution, cells, size, minimum) {
+  const mismatches = [];
+  if (solution?.boardKey !== cells.join("")) mismatches.push("board");
+  if (solution?.size !== size) mismatches.push("size");
+  if (solution?.minimum !== minimum) mismatches.push("minimum");
+  if (mismatches.length)
+    throw new Error(
+      `Solution metadata does not match report inputs: ${mismatches.join(", ")}`,
+    );
+  return solution;
 }
 
 function boundsForTiles(tileIndices, size) {
@@ -138,7 +155,9 @@ function coverageForWords(words, solution, size) {
 
 function createQualityReport({ board, size, minimum = 3, lexicon, solution }) {
   const cells = validateInputs(board, size, minimum);
-  const solved = solution || solveBoard({ board: cells, size, minimum, lexicon });
+  const solved = solution
+    ? validateSolutionMetadata(solution, cells, size, minimum)
+    : solveBoard({ board: cells, size, minimum, lexicon });
   const tileParticipation = Array(cells.length).fill(0);
   for (const word of solved.words)
     for (const index of solved.wordTileIndices[word]) tileParticipation[index]++;
