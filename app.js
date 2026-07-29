@@ -121,6 +121,8 @@ let soloGenerationRequest = 0;
 let soloSubmissionEpoch = 0;
 let soloSubmissionTail = Promise.resolve();
 let soloSubmissionErrorCount = 0;
+let rushContinuationGeneration = 0;
+let rushContinuationTransition = false;
 function logSoloSubmissionError(error) {
   if (soloSubmissionErrorCount < 3) {
     console.error("WordRush solo submission commit failed", error);
@@ -575,9 +577,15 @@ function end() {
       if (left > 0)
         $("#resultAchievementTitle").textContent = "Next rush in " + left + "s";
     }, 1000);
+    const continuationGeneration = ++rushContinuationGeneration;
     s.rushTimer = setTimeout(() => {
+      if (continuationGeneration !== rushContinuationGeneration) return;
       clearInterval(s.rushCountdown);
+      s.rushCountdown = 0;
+      s.rushTimer = 0;
+      rushContinuationGeneration++;
       if (s.rush) {
+        rushContinuationTransition = true;
         emit("random-rush", { action: "auto_advance" });
         start(consumeNextRushMode(), null, false, true, s.dictionaryId);
       }
@@ -595,7 +603,30 @@ function toast(m, tone = "default") {
     t.classList.remove("show", "toast-duplicate", "toast-wrong");
   }, 1800);
 }
-function show(id) {
+function cancelSoloRushContinuation({ stop = true } = {}) {
+  soloGenerationRequest++;
+  rushContinuationGeneration++;
+  rushContinuationTransition = false;
+  clearTimeout(s.rushTimer);
+  clearInterval(s.rushCountdown);
+  s.rushTimer = 0;
+  s.rushCountdown = 0;
+  $("#stopRushResults").hidden = true;
+  if (stop) {
+    s.rush = false;
+    s.nextRushMode = null;
+  }
+}
+function show(id, { preserveRushContinuation = false } = {}) {
+  const currentScreen = document.querySelector(".screen.active")?.id;
+  if (
+    currentScreen === "resultsScreen" &&
+    id !== currentScreen &&
+    !preserveRushContinuation &&
+    s.rush &&
+    !s.onlineRoundKey
+  )
+    cancelSoloRushContinuation();
   if (id === "homeScreen") soloGenerationRequest++;
   document
     .querySelectorAll(".screen")
@@ -650,7 +681,9 @@ function showRoundIntro({
     label,
     duration_ms: Math.round(Math.max(0, duration)),
   });
-  show("roundIntroScreen");
+  const preserveRushContinuation = rushContinuationTransition;
+  show("roundIntroScreen", { preserveRushContinuation });
+  rushContinuationTransition = false;
 }
 $("#introStart")?.addEventListener("click", () => {
   if (window.wordrushStartRoundNow?.()) return;
@@ -685,16 +718,10 @@ $("#gameBack")?.addEventListener("click", () => {
 });
 function stopRush() {
   emit("random-rush", { action: "stop", mode: s.mode });
-  s.rush = false;
-  s.nextRushMode = null;
+  cancelSoloRushContinuation();
   if (!s.done) abandonActiveRound();
-  else {
-    if (!s.onlineRoundKey) invalidateSoloSubmissionQueue();
-    clearTimeout(s.rushTimer);
-    clearInterval(s.rushCountdown);
-  }
+  else if (!s.onlineRoundKey) invalidateSoloSubmissionQueue();
   $("#stopRush").hidden = true;
-  $("#stopRushResults").hidden = true;
   show("homeScreen");
 }
 async function start(
@@ -1078,10 +1105,8 @@ $("#partyForm").addEventListener("submit", (event) => {
 });
 $("#again").onclick = () => {
   if (s.rush) {
-    clearTimeout(s.rushTimer);
-    clearInterval(s.rushCountdown);
-    s.rushTimer = 0;
-    s.rushCountdown = 0;
+    cancelSoloRushContinuation({ stop: false });
+    rushContinuationTransition = true;
     emit("random-rush", { action: "continue", upcoming_mode: s.nextRushMode });
     return start(consumeNextRushMode(), null, false, true, s.dictionaryId);
   }

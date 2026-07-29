@@ -316,37 +316,119 @@ test("global scoreboard displays an authoritative multiplayer result and all per
   await browser.close();
 });
 
-test("random rush rolls into a different game and can be stopped", async () => {
+test("random rush owns results continuation and stops on navigation", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   await page.evaluate(() => {
     window.wordrushRushDelay = 250;
+    window.__rushEvents = [];
+    for (const name of ["random-rush", "round-intro", "round-started", "screen-change"])
+      document.addEventListener("wordrush:" + name, ({ detail }) =>
+        window.__rushEvents.push({ name, ...detail }),
+      );
   });
+  const rushEvents = () => page.evaluate(() => window.__rushEvents);
+  const countRushAction = async (action) =>
+    (await rushEvents()).filter(
+      (event) => event.name === "random-rush" && event.action === action,
+    ).length;
+  const waitPastRushDelay = async () => {
+    await page.evaluate(() => {
+      window.__rushWaitUntil = performance.now() + 350;
+    });
+    await page.waitForFunction(() => performance.now() >= window.__rushWaitUntil);
+  };
+
   await page.locator("#randomPanel").click();
   await startIntro(page);
-  const modes = [];
-  for (let round = 0; round < 4; round++) {
-    modes.push(await page.locator("#gameMode").textContent());
-    if (round === 3) break;
-    await page.locator("#endGame").click();
-    await page.waitForSelector("#resultsScreen.active");
-    const resultHeading = await page.locator("#resultName").textContent();
-    assert.match(resultHeading, /^Up next: /);
-    const upcoming = resultHeading.replace(/^Up next:\s*/, "");
-    await page.locator("#again").click();
-    await page.waitForSelector("#roundIntroScreen.active");
-    assert.equal(await page.locator("#introMode").textContent(), upcoming);
-    await startIntro(page);
-  }
-  assert.equal(new Set(modes).size, 4);
-  await page.locator("#stopRush").click();
+  await page.locator("#gameBack").click();
+  await page.waitForSelector("#homeScreen.active");
+  const backAutoAdvances = await countRushAction("auto_advance");
+  await waitPastRushDelay();
+  assert.equal(await countRushAction("auto_advance"), backAutoAdvances);
+  assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+  assert.equal(await page.locator("#gameScreen.active").count(), 0);
+
+  await page.locator("#randomPanel").click();
+  await startIntro(page);
+  await page.locator("#endGame").click();
+  await page.waitForSelector("#resultsScreen.active");
+  assert.match(await page.locator("#resultName").textContent(), /^Up next: /);
+  const homeAutoAdvances = await countRushAction("auto_advance");
+  await page.locator('#resultsScreen [data-screen="homeScreen"]').click();
+  await page.waitForSelector("#homeScreen.active");
+  await waitPastRushDelay();
   assert.equal(
     await page
       .locator("#homeScreen")
       .evaluate((node) => node.classList.contains("active")),
     true,
   );
+  assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+  assert.equal(await page.locator("#gameScreen.active").count(), 0);
+  assert.equal(await countRushAction("auto_advance"), homeAutoAdvances);
+  assert.equal(await page.locator("#stopRushResults").isHidden(), true);
+
+  await page.locator("#randomPanel").click();
+  await startIntro(page);
+  await page.locator("#endGame").click();
+  await page.waitForSelector("#resultsScreen.active");
+  const statsAutoAdvances = await countRushAction("auto_advance");
+  await page.locator("#navStats").click();
+  await page.waitForSelector("#statsScreen.active");
+  await waitPastRushDelay();
+  assert.equal(await countRushAction("auto_advance"), statsAutoAdvances);
+  assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+  assert.equal(await page.locator("#gameScreen.active").count(), 0);
+  await page.locator('#statsScreen [data-screen="homeScreen"]').click();
+  await page.waitForSelector("#homeScreen.active");
+
+  await page.locator("#randomPanel").click();
+  await startIntro(page);
+  await page.locator("#endGame").click();
+  await page.waitForSelector("#resultsScreen.active");
+  const autoUpcoming = (await page.locator("#resultName").textContent()).replace(
+    /^Up next:\s*/,
+    "",
+  );
+  const autoAdvancesBeforeStay = await countRushAction("auto_advance");
+  await page.waitForSelector("#roundIntroScreen.active", { timeout: 2000 });
+  assert.equal(await countRushAction("auto_advance"), autoAdvancesBeforeStay + 1);
+  assert.equal(await page.locator("#introMode").textContent(), autoUpcoming);
+  await startIntro(page);
+
+  await page.locator("#endGame").click();
+  await page.waitForSelector("#resultsScreen.active");
+  const continueUpcoming = (await page.locator("#resultName").textContent()).replace(
+    /^Up next:\s*/,
+    "",
+  );
+  const continueActionsBefore = await countRushAction("continue");
+  const autoAdvancesBeforeContinueWait = await countRushAction("auto_advance");
+  await page.locator("#again").click();
+  await page.waitForSelector("#roundIntroScreen.active");
+  assert.equal(await countRushAction("continue"), continueActionsBefore + 1);
+  assert.equal(await page.locator("#introMode").textContent(), continueUpcoming);
+  await startIntro(page);
+  await waitPastRushDelay();
+  assert.equal(await countRushAction("auto_advance"), autoAdvancesBeforeContinueWait);
+
+  await page.locator("#endGame").click();
+  await page.waitForSelector("#resultsScreen.active");
+  const stopAutoAdvances = await countRushAction("auto_advance");
+  await page.locator("#stopRushResults").click();
+  await page.waitForSelector("#homeScreen.active");
+  await waitPastRushDelay();
+  assert.equal(await countRushAction("auto_advance"), stopAutoAdvances);
+  assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+  assert.equal(await page.locator("#gameScreen.active").count(), 0);
+
+  await page.locator('[data-mode="minimum"]').click();
+  await page.waitForSelector("#roundIntroScreen.active");
+  await page.locator("#introStart").click();
+  await page.waitForSelector("#gameScreen.active");
+  assert.equal(await page.locator("#stopRush").isHidden(), true);
   await browser.close();
 });
 
