@@ -870,7 +870,7 @@ test("challenge accepted after pending consent completes matches active round", 
   const created = await createdPromise;
   await lobbyPromise;
   const room = rooms.get(created.code);
-  createPendingConsent(room, "dirty", null);
+  createPendingConsent(room, "dirty", { label: "DIRTY MODE", min: 3, size: 5, seconds: 180, rule: "Adult", target: null, sudden: false, chain: false, adult: true, party: false });
   const requestId = room.pendingConsent.requestId;
   const challengePromise = next(guest, "adult_pre_admission_challenge");
   message(guest, "join_room", { code: created.code });
@@ -977,8 +977,9 @@ test("custom sudden death lifecycle stores canonical config and ends on non-dupl
   await lobbyPromise;
   const room = rooms.get(created.code);
   const customConfig = { label: "Sudden Test", min: 3, size: 4, seconds: 120, rule: "Test", sudden: true };
+  const startedPromise = next(ws, "round_started");
   message(ws, "start_game", { mode: "custom", config: customConfig });
-  const started = await next(ws, "round_started");
+  const started = await startedPromise;
   assert.equal(started.mode, "custom");
   assert.equal(started.config.sudden, true);
   assert.equal(started.config.min, 3);
@@ -991,8 +992,9 @@ test("custom sudden death lifecycle stores canonical config and ends on non-dupl
   room.round.board = ["C", "A", "T", "S", "X", "X", "X", "X", "X", "X", "X", "X", "X", "X", "X", "X"];
   room.round.startedAt = Date.now() - 1;
   room.round.endsAt = Date.now() + 60000;
+  const startNowPromise = next(ws, "round_start_now");
   message(ws, "start_round_now");
-  await next(ws, "round_start_now");
+  await startNowPromise;
   const acceptedPromise = next(ws, "word_accepted");
   message(ws, "submit_word", { word: "CAT", path: [0, 1, 2] });
   await acceptedPromise;
@@ -1009,6 +1011,7 @@ test("custom sudden death lifecycle stores canonical config and ends on non-dupl
   assert.equal(finished.suddenDeath.playerId, "custom-sudden-lifecycle");
   assert.equal(finished.suddenDeath.word, "XYZZY");
   ws.close();
+  await new Promise((resolve) => setTimeout(resolve, 20));
   const reconnected = await client("custom-sudden-lifecycle");
   const resumedPromise = next(reconnected, "room_resumed");
   const statePromise = next(reconnected, "room_state");

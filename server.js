@@ -227,8 +227,8 @@ function recordedScore(player) {
   );
 }
 function createPendingConsent(room, mode, config) {
-  const resolved = config || configForPreset(mode) || { label: "CUSTOM", min: 3, size: 4, seconds: 120, rule: "", target: null, sudden: false, chain: false, adult: true, party: false };
-  const adultConfig = { ...resolved, adult: true };
+  if (!config) return;
+  const adultConfig = { ...config, adult: true };
   const requestId = crypto.randomUUID();
   const expiresAt = Date.now() + CONSENT_TIMEOUT_MS;
   const connectedIds = [...room.players.values()]
@@ -252,7 +252,7 @@ function createPendingConsent(room, mode, config) {
     type: "adult_consent_request",
     requestId,
     mode,
-    config: { adult: true, min: resolved.min, size: resolved.size, seconds: resolved.seconds },
+    config: { adult: true, min: config.min, size: config.size, seconds: config.seconds },
     requiredPlayerIds: connectedIds,
     acceptedPlayerIds: [],
     expiresAt,
@@ -1165,6 +1165,8 @@ function handle(ws, message) {
       return send(ws, { type: "error", code: "CUSTOM_WORDS_REJECTED" });
     }
     if (requested === "random") {
+      if (room.pendingConsent)
+        cancelPendingConsent(room, "configuration_changed");
       room.randomRush = true;
       room.randomModeQueue = [];
       return startRound(room, randomMode(room));

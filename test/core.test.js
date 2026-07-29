@@ -208,6 +208,20 @@ test("canonical config matches expected shape and validates correctly", () => {
   assert.equal(chain.valid, false);
   const contradict = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", sudden: true, target: 500 });
   assert.equal(contradict.valid, false);
+  const strMin = validateCustomConfig({ label: "L", min: "3", size: 4, seconds: 60, rule: "R" });
+  assert.equal(strMin.valid, false);
+  const strSize = validateCustomConfig({ label: "L", min: 3, size: "4", seconds: 60, rule: "R" });
+  assert.equal(strSize.valid, false);
+  const strSeconds = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: "60", rule: "R" });
+  assert.equal(strSeconds.valid, false);
+  const strTarget = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", target: "500" });
+  assert.equal(strTarget.valid, false);
+  const badAdult = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", adult: "true" });
+  assert.equal(badAdult.valid, false);
+  const badSudden = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", sudden: 1 });
+  assert.equal(badSudden.valid, false);
+  const badParty = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", party: "true" });
+  assert.equal(badParty.valid, false);
 });
 test("shouldEndOnRejectedWord matches expected semantics", () => {
   for (const { config, reason, expected } of [

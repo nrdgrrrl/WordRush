@@ -168,23 +168,29 @@
       return { valid: false, error: "CUSTOM_RULE_INVALID" };
     const label = raw.label;
     const rule = raw.rule;
-    const min = Number(raw.min);
-    if (!Number.isInteger(min) || min < 3 || min > 12)
+    if (typeof raw.min !== "number" || !Number.isInteger(raw.min) || raw.min < 3 || raw.min > 12)
       return { valid: false, error: "CUSTOM_MIN_OUT_OF_RANGE" };
-    const size = Number(raw.size);
-    if (!Number.isInteger(size) || size < 4 || size > 8)
+    const min = raw.min;
+    if (typeof raw.size !== "number" || !Number.isInteger(raw.size) || raw.size < 4 || raw.size > 8)
       return { valid: false, error: "CUSTOM_SIZE_OUT_OF_RANGE" };
-    const seconds = Number(raw.seconds);
-    if (!Number.isInteger(seconds) || seconds < 15 || seconds > 600)
+    const size = raw.size;
+    if (typeof raw.seconds !== "number" || !Number.isInteger(raw.seconds) || raw.seconds < 15 || raw.seconds > 600)
       return { valid: false, error: "CUSTOM_SECONDS_OUT_OF_RANGE" };
+    const seconds = raw.seconds;
     if (raw.chain === true)
       return { valid: false, error: "CUSTOM_CHAIN_NOT_SUPPORTED" };
+    if (raw.sudden !== undefined && raw.sudden !== true && raw.sudden !== false)
+      return { valid: false, error: "CUSTOM_FIELD_TYPE_ERROR" };
     const sudden = raw.sudden === true;
     const hasRawTarget = raw.target !== undefined && raw.target !== null;
-    const target = hasRawTarget ? Number(raw.target) : null;
-    if (hasRawTarget && (!Number.isFinite(target) || target < 1 || target > 100000))
+    if (hasRawTarget && (typeof raw.target !== "number" || !Number.isFinite(raw.target) || raw.target < 1 || raw.target > 100000))
       return { valid: false, error: "CUSTOM_TARGET_OUT_OF_RANGE" };
-    const adult = Boolean(raw.adult);
+    const target = hasRawTarget ? raw.target : null;
+    if (raw.adult !== undefined && raw.adult !== true && raw.adult !== false)
+      return { valid: false, error: "CUSTOM_FIELD_TYPE_ERROR" };
+    const adult = raw.adult === true;
+    if (raw.party !== undefined && raw.party !== true && raw.party !== false)
+      return { valid: false, error: "CUSTOM_FIELD_TYPE_ERROR" };
     const party = raw.party === true;
     const templateFlags = [sudden, hasRawTarget, adult, party].filter(Boolean).length;
     if (templateFlags > 1)

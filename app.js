@@ -1062,21 +1062,19 @@ window.wordrushOnlineRound = (round, config, mode, randomRush = false) => {
   s.pendingOnlineTrace = null;
   s.suddenDeathEvent = null;
   s.lastWord = "";
-  const cfg = {
-    label: config?.label || "MULTIPLAYER",
-    min: config?.min || 3,
+  s.config = config ? { ...config } : {
+    label: mode?.toUpperCase() || "MULTIPLAYER",
+    min: 3,
     size: round.size,
-    seconds: config?.seconds ||
-      Math.max(1, Math.ceil((round.endsAt - Date.now()) / 1000)),
-    rule: config?.rule || "Multiplayer round",
-    target: config?.target || null,
-    sudden: Boolean(config?.sudden),
-    chain: Boolean(config?.chain),
-    adult: Boolean(config?.adult),
-    party: config?.label === "PARTY MODE" || config?.party === true,
+    seconds: Math.max(1, Math.ceil((round.endsAt - Date.now()) / 1000)),
+    rule: "Multiplayer round",
+    target: null,
+    sudden: false,
+    chain: false,
+    adult: false,
+    party: false,
   };
-  s.config = cfg;
-  customAdult = cfg.adult;
+  customAdult = usesAdultLexicon(s.config);
   document.body.dataset.mode = s.mode;
   s.n = round.size;
   s.b = round.board;
@@ -1086,10 +1084,10 @@ window.wordrushOnlineRound = (round, config, mode, randomRush = false) => {
   s.done = 0;
   s.startedAt = round.startsAt || Date.now();
   s.endsAt = round.endsAt || Date.now();
-  $("#gameMode").textContent = cfg.label;
+  $("#gameMode").textContent = s.config.label;
   $("#gameTitle").textContent = "Round 01 \u00b7 " + round.size + "\u00d7" + round.size;
-  $("#ruleBanner").textContent = cfg.rule;
-  $("#gameHint").textContent = "Minimum " + cfg.min + " letters";
+  $("#ruleBanner").textContent = s.config.rule;
+  $("#gameHint").textContent = "Minimum " + s.config.min + " letters";
   const updateOnlineTimer = () => {
     s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
     $("#timer").textContent = formatTimer(s.time);
@@ -1097,17 +1095,17 @@ window.wordrushOnlineRound = (round, config, mode, randomRush = false) => {
   clearInterval(s.timer);
   render();
   showRoundIntro({
-    label: cfg.label,
-    rule: cfg.rule,
+    label: s.config.label,
+    rule: s.config.rule,
     detail: "Everyone is in \u00b7 start when you\u2019re ready",
     duration: Math.max(0, (round.introEndsAt || Date.now() + 4000) - Date.now()),
     analytics: {
       mode: s.mode,
       multiplayer: true,
       random_rush: s.onlineRandomRush,
-      party: cfg.party,
+      party: isPartyRound(s.config),
       grid_size: s.n,
-      minimum_length: cfg.min,
+      minimum_length: s.config.min,
     },
     onStart: () => {
       show("gameScreen");
@@ -1117,10 +1115,10 @@ window.wordrushOnlineRound = (round, config, mode, randomRush = false) => {
         mode: s.mode,
         multiplayer: true,
         random_rush: s.onlineRandomRush,
-        party: cfg.party,
+        party: isPartyRound(s.config),
         grid_size: s.n,
-        minimum_length: cfg.min,
-        duration_seconds: cfg.seconds,
+        minimum_length: s.config.min,
+        duration_seconds: s.config.seconds,
       });
     },
   });
