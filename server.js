@@ -76,6 +76,7 @@ const generationTestHooks = {
   limits: null,
   lexicon: null,
   yieldScheduler: null,
+  onContract: null,
 };
 const nodeGenerationScheduler = () =>
   new Promise((resolve) => setImmediate(resolve));
@@ -228,6 +229,76 @@ function requestedConfig(mode, raw) {
     return result.config;
   }
   return configForPreset(mode);
+}
+const SOLO_REQUEST_FIELDS = new Set(["mode", "config", "dictionaryId", "adult"]);
+const CUSTOM_CONFIG_FIELDS = new Set([
+  "label",
+  "min",
+  "size",
+  "seconds",
+  "rule",
+  "target",
+  "sudden",
+  "chain",
+  "adult",
+  "party",
+]);
+function validateSoloBoardRequest(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body))
+    return { valid: false, code: "SOLO_REQUEST_INVALID" };
+  if (Object.keys(body).some((field) => !SOLO_REQUEST_FIELDS.has(field)))
+    return { valid: false, code: "SOLO_REQUEST_FIELD_NOT_ALLOWED" };
+  if (typeof body.mode !== "string")
+    return { valid: false, code: "UNKNOWN_MODE" };
+  const mode = body.mode;
+  let config;
+  if (mode === "custom") {
+    if (
+      !body.config ||
+      typeof body.config !== "object" ||
+      Array.isArray(body.config) ||
+      Object.keys(body.config).some((field) => !CUSTOM_CONFIG_FIELDS.has(field))
+    )
+      return { valid: false, code: "CUSTOM_CONFIG_INVALID" };
+    const result = validateCustomConfig(body.config);
+    if (!result.valid)
+      return {
+        valid: false,
+        code: "CUSTOM_CONFIG_INVALID",
+        detail: result.error,
+      };
+    config = result.config;
+  } else {
+    if (body.config !== undefined && body.config !== null)
+      return { valid: false, code: "PRESET_CONFIG_NOT_ALLOWED" };
+    config = configForPreset(mode);
+    if (!config) return { valid: false, code: "UNKNOWN_MODE" };
+  }
+  if (body.adult !== undefined && typeof body.adult !== "boolean")
+    return { valid: false, code: "ADULT_INTENT_INVALID" };
+  const adult = usesAdultLexicon(config);
+  if (adult && body.adult !== true)
+    return { valid: false, code: "ADULT_INTENT_REQUIRED" };
+  if (!adult && body.adult === true)
+    return { valid: false, code: "ADULT_INTENT_INVALID" };
+  const dictionaryId = body.dictionaryId === undefined
+    ? DEFAULT_DICTIONARY_ID
+    : body.dictionaryId;
+  if (typeof dictionaryId !== "string")
+    return { valid: false, code: "UNKNOWN_DICTIONARY_ID" };
+  let dictionary;
+  try {
+    dictionary = getDictionary(dictionaryId);
+  } catch (error) {
+    return {
+      valid: false,
+      code: error.message.startsWith("UNKNOWN_DICTIONARY_ID")
+        ? "UNKNOWN_DICTIONARY_ID"
+        : "DICTIONARY_ARTIFACT_INVALID",
+      status: error.message.startsWith("UNKNOWN_DICTIONARY_ID") ? 404 : 500,
+    };
+  }
+  return { valid: true, mode, config, dictionary };
 }
 function roomConfig(room) {
   return (
@@ -548,6 +619,59 @@ function generationFailure(room, generation, result) {
   broadcast(room, state(room));
   return false;
 }
+function boardGenerationContract(config, dictionaryId = DEFAULT_DICTIONARY_ID) {
+  const dictionary = getDictionary(dictionaryId);
+  const validationMode = usesAdultLexicon(config) ? "dirty" : "classic";
+  return {
+    size: config.size,
+    minimum: config.min,
+    validationMode,
+    dictionary,
+    prepared:
+      generationTestHooks.lexicon ||
+      getPreparedLexicon(dictionary.id, validationMode),
+  };
+}
+async function generateRoundBoard(contract, options = {}) {
+  const seed = options.seed ?? crypto.randomInt(0x100000000);
+  generationTestHooks.onContract?.({
+    size: contract.size,
+    minimum: contract.minimum,
+    validationMode: contract.validationMode,
+    dictionaryId: contract.dictionary.id,
+    seed,
+  });
+  let result;
+  try {
+    result = await generateBoardCooperatively(
+      contract.size,
+      contract.prepared,
+      {
+        mode: contract.validationMode,
+        min: contract.minimum,
+        seed,
+        limits: generationTestHooks.limits || undefined,
+        yieldScheduler:
+          generationTestHooks.yieldScheduler || nodeGenerationScheduler,
+        isCancelled: options.isCancelled,
+      },
+    );
+  } catch {
+    result = {
+      ok: false,
+      error: { code: "GENERATION_EXCEPTION" },
+      diagnostics: {
+        seed,
+        size: contract.size,
+        mode: contract.validationMode,
+        minimum: contract.minimum,
+        lexiconFingerprint: contract.prepared.fingerprint,
+        normalizedLexiconCount: contract.prepared.normalizedCount,
+      },
+    };
+  }
+  return { result, seed };
+}
 async function startRound(
   room,
   selected = room.mode,
@@ -574,8 +698,9 @@ async function startRound(
     if (!validConsent) return;
   }
   clearRoomTimer(room);
-  const dictionary = getDictionary(dictionaryId);
-  const validationMode = usesAdultLexicon(config) ? "dirty" : "classic";
+  const contract = boardGenerationContract(config, dictionaryId);
+  const dictionary = contract.dictionary;
+  const validationMode = contract.validationMode;
   const generation = {
     token: crypto.randomUUID(),
     consentRequestId,
@@ -584,39 +709,10 @@ async function startRound(
     dictionary: dictionary.metadata,
   };
   room.generation = generation;
-  const prepared = generationTestHooks.lexicon || getPreparedLexicon(dictionary.id, validationMode);
-  let result;
-  try {
-    result = await generateBoardCooperatively(
-      config.size,
-      prepared,
-      {
-        mode: validationMode,
-        min: config.min,
-        seed: generation.seed,
-        limits: generationTestHooks.limits || undefined,
-        yieldScheduler: generationTestHooks.yieldScheduler || nodeGenerationScheduler,
-        isCancelled: () => generation.cancelled,
-      },
-    );
-  } catch {
-    if (generation.cancelled || room.generation !== generation) {
-      if (room.generation === generation) room.generation = null;
-      return false;
-    }
-    return generationFailure(room, generation, {
-      error: { code: "GENERATION_EXCEPTION" },
-      diagnostics: {
-        seed: generation.seed,
-        size: config.size,
-        mode: validationMode,
-        minimum: config.min,
-        dictionary: dictionary.metadata,
-        lexiconFingerprint: prepared.fingerprint,
-        normalizedLexiconCount: prepared.normalizedCount,
-      },
-    });
-  }
+  const { result } = await generateRoundBoard(contract, {
+    seed: generation.seed,
+    isCancelled: () => generation.cancelled,
+  });
   if (generation.cancelled) {
     room.generation = null;
     return false;
@@ -1631,6 +1727,9 @@ module.exports = {
   rooms,
   handle,
   startRound,
+  boardGenerationContract,
+  generateRoundBoard,
+  validateSoloBoardRequest,
   generationTestHooks,
   MAX_PLAYERS,
   displayTokens,
@@ -1700,6 +1799,47 @@ function readJson(req) {
 }
 async function leaderboardRequest(req, res) {
   const url = new URL(req.url, "http://localhost");
+  if (url.pathname === "/api/solo-board" && req.method === "POST") {
+    if (!rateLimit("solo-board:" + clientIp(req), 30))
+      return deny(res, 429, "RATE_LIMITED");
+    const body = await readJson(req);
+    const request = validateSoloBoardRequest(body);
+    if (!request.valid)
+      return deny(res, request.status || 400, request.code);
+    const contract = boardGenerationContract(
+      request.config,
+      request.dictionary.id,
+    );
+    const { result, seed } = await generateRoundBoard(contract);
+    const diagnostics = {
+      ...result.diagnostics,
+      dictionary: request.dictionary.metadata,
+    };
+    if (!result.ok) {
+      res.writeHead(503, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      return res.end(JSON.stringify({
+        error: "BOARD_GENERATION_FAILED",
+        failureCode: result.error?.code || "GENERATION_FAILED",
+        diagnostics,
+      }));
+    }
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    return res.end(JSON.stringify({
+      board: result.board,
+      mode: request.mode,
+      config: request.config,
+      validationMode: contract.validationMode,
+      seed,
+      dictionary: request.dictionary.metadata,
+      diagnostics,
+    }));
+  }
   if (url.pathname === "/api/dictionary" && req.method === "GET") {
     const dictionaryId = url.searchParams.get("dictionaryId") || DEFAULT_DICTIONARY_ID;
     let dictionary;

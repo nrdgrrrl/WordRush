@@ -93,6 +93,13 @@ function client(name) {
     });
   });
 }
+function postSoloBoard(body) {
+  return fetch("http://127.0.0.1:" + server.address().port + "/api/solo-board", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
 function displayClient() {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(
@@ -148,6 +155,7 @@ test.afterEach(() => {
   generationTestHooks.limits = null;
   generationTestHooks.lexicon = null;
   generationTestHooks.yieldScheduler = null;
+  generationTestHooks.onContract = null;
 });
 
 test("revalidates mutable browser resources while retaining static asset caching", async () => {
@@ -271,6 +279,140 @@ test("selected dictionary freezes into round, resume, and result state", async (
   const resultState = await resultStatePromise;
   assert.equal(resultState.lastResult.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
   resultResume.close();
+});
+
+test("solo board endpoint generates validated preset and custom rounds", async () => {
+  const presetResponse = await postSoloBoard({
+    mode: "classic",
+    dictionaryId: DEFAULT_DICTIONARY_ID,
+  });
+  assert.equal(presetResponse.status, 200);
+  assert.equal(presetResponse.headers.get("cache-control"), "no-store");
+  const preset = await presetResponse.json();
+  assert.equal(preset.mode, "classic");
+  assert.equal(preset.validationMode, "classic");
+  assert.equal(preset.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
+  assert.equal(preset.board.length, preset.config.size ** 2);
+  assert.equal(preset.seed, preset.diagnostics.seed);
+  assert.deepEqual(preset.diagnostics.dictionary, preset.dictionary);
+
+  const customResponse = await postSoloBoard({
+    mode: "custom",
+    dictionaryId: DEFAULT_DICTIONARY_ID,
+    adult: true,
+    config: {
+      label: "AFTER DARK",
+      min: 3,
+      size: 4,
+      seconds: 60,
+      rule: "Adults only",
+      adult: true,
+    },
+  });
+  assert.equal(customResponse.status, 200);
+  const custom = await customResponse.json();
+  assert.equal(custom.mode, "custom");
+  assert.equal(custom.validationMode, "dirty");
+  assert.equal(custom.config.adult, true);
+  assert.equal(custom.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
+  assert.equal(custom.board.length, 16);
+});
+
+test("solo board endpoint rejects unsupported input and unknown dictionaries", async () => {
+  const invalidRequests = [
+    { body: { mode: "not-a-mode" }, error: "UNKNOWN_MODE" },
+    {
+      body: {
+        mode: "custom",
+        config: { label: "Bad", min: 2, size: 4, seconds: 60, rule: "Bad" },
+      },
+      error: "CUSTOM_CONFIG_INVALID",
+    },
+    {
+      body: { mode: "classic", seed: 1234 },
+      error: "SOLO_REQUEST_FIELD_NOT_ALLOWED",
+    },
+    {
+      body: { mode: "classic", customWords: ["CAT"] },
+      error: "SOLO_REQUEST_FIELD_NOT_ALLOWED",
+    },
+    {
+      body: { mode: "dirty" },
+      error: "ADULT_INTENT_REQUIRED",
+    },
+  ];
+  for (const entry of invalidRequests) {
+    const response = await postSoloBoard(entry.body);
+    assert.equal(response.status, 400, entry.error);
+    assert.deepEqual(await response.json(), { error: entry.error });
+  }
+  const unknown = await postSoloBoard({
+    mode: "classic",
+    dictionaryId: "unregistered-dictionary",
+  });
+  assert.equal(unknown.status, 404);
+  assert.deepEqual(await unknown.json(), { error: "UNKNOWN_DICTIONARY_ID" });
+});
+
+test("solo and multiplayer rounds use the same server generator contract", async () => {
+  const contracts = [];
+  generationTestHooks.onContract = (contract) => contracts.push(contract);
+  const soloResponse = await postSoloBoard({
+    mode: "classic",
+    dictionaryId: DEFAULT_DICTIONARY_ID,
+  });
+  assert.equal(soloResponse.status, 200);
+
+  const host = await client("shared-generator-host");
+  const createdPromise = next(host, "room_created");
+  message(host, "create_room");
+  await createdPromise;
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", {
+    mode: "classic",
+    dictionaryId: DEFAULT_DICTIONARY_ID,
+  });
+  await startedPromise;
+
+  assert.equal(contracts.length, 2);
+  assert.deepEqual(
+    contracts.map(({ seed, ...contract }) => contract),
+    [
+      {
+        size: 4,
+        minimum: 3,
+        validationMode: "classic",
+        dictionaryId: DEFAULT_DICTIONARY_ID,
+      },
+      {
+        size: 4,
+        minimum: 3,
+        validationMode: "classic",
+        dictionaryId: DEFAULT_DICTIONARY_ID,
+      },
+    ],
+  );
+  host.close();
+});
+
+test("solo board generation failure is explicit and never returns a board", async () => {
+  generationTestHooks.limits = {
+    maxAttempts: 1,
+    maxPlacementOperations: 1,
+    maxBacktracks: 0,
+    operationsPerYield: 1,
+  };
+  const response = await postSoloBoard({
+    mode: "classic",
+    dictionaryId: DEFAULT_DICTIONARY_ID,
+  });
+  assert.equal(response.status, 503);
+  const failure = await response.json();
+  assert.equal(failure.error, "BOARD_GENERATION_FAILED");
+  assert.equal(failure.failureCode, "PLACEMENT_LIMIT");
+  assert.equal(failure.board, undefined);
+  assert.equal(failure.diagnostics.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
+  assert.equal(Number.isInteger(failure.diagnostics.seed), true);
 });
 
 test("cooperative board generation lets another room process a queued action", async () => {

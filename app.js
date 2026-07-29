@@ -7,7 +7,6 @@ const $ = (s) => document.querySelector(s),
   requiresChain = sharedConfig.requiresChain,
   hasScoreTarget = sharedConfig.hasScoreTarget,
   DEFAULT_DICTIONARY_ID = sharedConfig.DEFAULT_DICTIONARY_ID,
-  COMMON_WORDS = sharedConfig.COMMON_WORDS,
   usesAdultLexicon = sharedConfig.usesAdultLexicon,
   isPartyRound = sharedConfig.isPartyRound,
   shouldEndOnRejectedWord = sharedConfig.shouldEndOnRejectedWord;
@@ -61,6 +60,60 @@ async function fetchDictionary(dictionaryId = DEFAULT_DICTIONARY_ID) {
   dictionaryRequestCache.set(dictionaryId, request);
   request.catch(() => dictionaryRequestCache.delete(dictionaryId));
   return request;
+}
+async function requestSoloBoard({ mode, config, adultMode, dictionaryId }) {
+  const request = { mode, dictionaryId };
+  if (mode === "custom") request.config = config;
+  if (adultMode) request.adult = true;
+  const response = await fetch("/api/solo-board", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error("Solo board response was invalid");
+  }
+  if (!response.ok) {
+    const error = new Error(payload?.error || "Solo board request failed");
+    error.code = payload?.error;
+    error.failureCode = payload?.failureCode;
+    throw error;
+  }
+  if (
+    payload?.mode !== mode ||
+    payload?.dictionary?.dictionaryId !== dictionaryId ||
+    !payload.config ||
+    !Number.isInteger(payload.seed) ||
+    !Array.isArray(payload.board) ||
+    payload.board.length !== payload.config.size * payload.config.size ||
+    payload.board.some((letter) => !/^[A-Z]$/.test(letter))
+  )
+    throw new Error("Solo board response was invalid");
+  return payload;
+}
+async function applySoloBoardTestFixture(generated) {
+  let fixtureRequested = false;
+  try {
+    fixtureRequested = Boolean(
+      sessionStorage.getItem("wordrushBrowserBoardFixture"),
+    );
+  } catch {}
+  if (!fixtureRequested) return generated;
+  const fixture = await sharedBoardCore.generateBoardCooperatively(
+    generated.config.size,
+    null,
+    {
+      mode: generated.validationMode,
+      min: generated.config.min,
+      seed: generated.seed,
+    },
+  );
+  return fixture?.ok && fixture.board.length === generated.board.length
+    ? { ...generated, board: fixture.board }
+    : generated;
 }
 async function isServerDictionaryWord(word, dictionaryId, adultMode) {
   const key = `${dictionaryId}:${adultMode ? "dirty" : "classic"}:${word}`;
@@ -351,36 +404,15 @@ updateIdentity();
 updateProfile();
 let lexiconCache = null;
 let lexiconCacheKey = "";
-let preparedLexiconCache = null;
-let preparedLexiconCacheKey = "";
 function lex() {
   const key = s.dictionaryId + ":" + s.mode + ":" + customAdult;
   if (lexiconCache && lexiconCacheKey === key) return lexiconCache;
   lexiconCacheKey = key;
-  preparedLexiconCache = null;
-  preparedLexiconCacheKey = "";
   lexiconCache = new Set([
     ...s.dictionaryWords,
     ...(s.mode === "dirty" || customAdult ? adult : []),
   ]);
   return lexiconCache;
-}
-function preparedLexicon(
-  mode = s.mode,
-  adultMode = customAdult,
-  words = s.dictionaryWords,
-  dictionaryId = s.dictionaryId,
-) {
-  const key = dictionaryId + ":" + mode + ":" + adultMode;
-  if (preparedLexiconCache && preparedLexiconCacheKey === key)
-    return preparedLexiconCache;
-  preparedLexiconCacheKey = key;
-  const effectiveWords = [...words, ...(mode === "dirty" || adultMode ? adult : [])];
-  preparedLexiconCache = sharedBoardCore.prepareLexicon(effectiveWords, {
-    adultWords: adult,
-    preferredWords: adultMode ? [...COMMON_WORDS, ...adult] : COMMON_WORDS,
-  });
-  return preparedLexiconCache;
 }
 function near(i) {
   return sharedBoardCore.neighbors(i, s.n);
@@ -799,30 +831,32 @@ async function start(
   let generated;
   let dictionary;
   try {
-    dictionary = await fetchDictionary(generationInputs.dictionaryId);
-    generated = await make({
-      size: generationInputs.config.size,
-      min: generationInputs.config.min,
-      mode: generationInputs.mode,
-      adultMode: generationInputs.adultMode,
-      dictionaryWords: dictionary.words,
-      dictionaryId: generationInputs.dictionaryId,
-    });
-  } catch {
+    [generated, dictionary] = await Promise.all([
+      requestSoloBoard({
+        mode: generationInputs.mode,
+        config: generationInputs.config,
+        adultMode: generationInputs.adultMode,
+        dictionaryId: generationInputs.dictionaryId,
+      }),
+      fetchDictionary(generationInputs.dictionaryId),
+    ]);
+    generated = await applySoloBoardTestFixture(generated);
+  } catch (error) {
     if (generationRequest !== soloGenerationRequest) return;
-    toast("Board generation failed. Please try again.");
+    toast(
+      error.code === "BOARD_GENERATION_FAILED" &&
+        error.failureCode !== "GENERATION_EXCEPTION"
+        ? "No playable board is available for this configuration."
+        : "Board generation failed. Please try again.",
+    );
     return;
   }
   if (generationRequest !== soloGenerationRequest) return;
-  if (!generated.ok) {
-    toast("No playable board is available for this configuration.");
-    return;
-  }
-  const config = generationInputs.config;
+  const config = generated.config;
   invalidateSoloSubmissionQueue();
   s.config = config;
-  s.dictionaryId = generationInputs.dictionaryId;
-  s.dictionaryMetadata = dictionary.dictionary;
+  s.dictionaryId = generated.dictionary.dictionaryId;
+  s.dictionaryMetadata = generated.dictionary;
   s.dictionaryWords = dictionary.words;
   customAdult = generationInputs.adultMode;
   s.mode = generationInputs.mode;
@@ -1505,21 +1539,6 @@ const saveProfile = () => {
   window.wordrushIdentityChanged?.();
 };
 $("#profileForm")?.addEventListener("submit", saveProfile);
-function boardSeed() {
-  const values = new Uint32Array(1);
-  if (window.crypto?.getRandomValues) {
-    window.crypto.getRandomValues(values);
-    return values[0];
-  }
-  return Date.now() >>> 0;
-}
-function make({ size, min, mode, adultMode, dictionaryWords, dictionaryId } = {}) {
-  return sharedBoardCore.generateBoardCooperatively(size, preparedLexicon(mode, adultMode, dictionaryWords, dictionaryId), {
-    mode: adultMode ? "dirty" : "classic",
-    min,
-    seed: boardSeed(),
-  });
-}
 let selectionClearTimer = null;
 function clearPick(immediate = false) {
   clearTimeout(selectionClearTimer);
