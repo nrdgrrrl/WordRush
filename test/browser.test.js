@@ -40,6 +40,57 @@ async function startIntro(page) {
   await page.evaluate(() => document.querySelector("#introStart")?.click());
   await page.waitForSelector("#gameScreen.active");
 }
+async function traceWord(page, path) {
+  for (const index of path) {
+    const box = await page.locator(".tile").nth(index).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    if (index === path[0]) await page.mouse.down();
+  }
+  await page.mouse.up();
+  await page.evaluate(() => Promise.resolve());
+}
+async function startSoloMode(page, mode) {
+  await page.locator(`[data-mode="${mode}"]`).click();
+  if (mode === "classic") {
+    await page.waitForSelector("#customDialog[open]");
+    await page.locator("#customStart").click();
+  }
+  await page.waitForSelector("#roundIntroScreen.active");
+  await page.locator("#introStart").click();
+  await page.waitForSelector("#gameScreen.active");
+}
+function wordRequestWaiter(pending, waiters, word) {
+  if (pending.has(word)) return Promise.resolve();
+  return new Promise((resolve) => waiters.set(word, resolve));
+}
+async function resolveWord(pending, word, valid) {
+  const route = pending.get(word);
+  assert.ok(route, "deferred word-check request for " + word);
+  pending.delete(word);
+  await route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ valid }),
+  });
+}
+async function resetSoloBrowserPage(page, fixture) {
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.evaluate((nextFixture) => {
+    window.__wordrushTestBoard = nextFixture;
+    window.__soloEvents = [];
+    for (const name of ["word-accepted", "word-rejected"])
+      document.addEventListener("wordrush:" + name, ({ detail }) => {
+        window.__soloEvents.push({
+          type: name,
+          word: detail.word || null,
+          reason: detail.reason || null,
+          preview: document.querySelector("#preview")?.textContent || "",
+          toast: document.querySelector("#toast")?.textContent || "",
+        });
+      });
+  }, fixture);
+}
 function wsClient(name) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
@@ -258,6 +309,180 @@ test("random rush rolls into a different game and can be stopped", async () => {
       .locator("#homeScreen")
       .evaluate((node) => node.classList.contains("active")),
     true,
+  );
+  await browser.close();
+});
+
+test("solo submission commits stay ordered across deferred dictionary responses", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const pending = new Map();
+  const waiters = new Map();
+  const consoleErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  await page.route("**/api/dictionary**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        dictionary: { dictionaryId: "wordrush-ca-standard-v1", version: "browser-test" },
+        words: ["BAD", "CAT", "DOG", "FOX", "MAP", "NOD", "OWL", "PIG", "RAT", "SUN"],
+      }),
+    }),
+  );
+  await page.route("**/api/word-check**", (route) => {
+    const word = new URL(route.request().url()).searchParams.get("word");
+    pending.set(word, route);
+    waiters.get(word)?.();
+    waiters.delete(word);
+  });
+  await page.goto(baseUrl);
+
+  const generalFixture = {
+    size: 4,
+    board: ["C", "A", "T", "X", "D", "O", "G", "X", "X", "X", "X", "X", "X", "X", "X", "X"],
+  };
+  await resetSoloBrowserPage(page, generalFixture);
+  await startSoloMode(page, "classic");
+  const generalRequests = [
+    wordRequestWaiter(pending, waiters, "CAT"),
+    wordRequestWaiter(pending, waiters, "DOG"),
+  ];
+  await traceWord(page, [0, 1, 2]);
+  await traceWord(page, [4, 5, 6]);
+  await Promise.all(generalRequests);
+  assert.deepEqual([...pending.keys()].sort(), ["CAT", "DOG"]);
+  await resolveWord(pending, "DOG", false);
+  assert.equal(await page.locator("#gameScore").textContent(), "0");
+  await resolveWord(pending, "CAT", true);
+  await page.waitForFunction(() => window.__soloEvents.length === 2);
+  assert.deepEqual(
+    await page.evaluate(() => window.__soloEvents.map((event) => event.type)),
+    ["word-accepted", "word-rejected"],
+  );
+  assert.equal(await page.locator("#gameScore").textContent(), "9");
+  assert.match(await page.locator("#toast").textContent(), /Wrong word/);
+
+  const chainFixture = {
+    size: 5,
+    board: ["S", "U", "N", "X", "X", "N", "O", "D", ...Array(17).fill("X")],
+  };
+  pending.clear();
+  await resetSoloBrowserPage(page, chainFixture);
+  await startSoloMode(page, "chain");
+  const chainRequests = [
+    wordRequestWaiter(pending, waiters, "SUN"),
+    wordRequestWaiter(pending, waiters, "NOD"),
+  ];
+  await traceWord(page, [0, 1, 2]);
+  await traceWord(page, [5, 6, 7]);
+  await Promise.all(chainRequests);
+  await resolveWord(pending, "NOD", true);
+  assert.equal(await page.locator("#gameScore").textContent(), "0");
+  await resolveWord(pending, "SUN", true);
+  await page.waitForFunction(() => window.__soloEvents.length === 2);
+  assert.deepEqual(
+    await page.evaluate(() => window.__soloEvents.map((event) => event.word)),
+    ["SUN", "NOD"],
+  );
+  assert.equal(await page.locator("#gameScore").textContent(), "18");
+
+  const suddenFixture = {
+    size: 5,
+    board: ["B", "A", "D", "X", "X", "R", "A", "T", ...Array(17).fill("X")],
+  };
+  pending.clear();
+  await resetSoloBrowserPage(page, suddenFixture);
+  await startSoloMode(page, "sudden");
+  const suddenRequests = [
+    wordRequestWaiter(pending, waiters, "BAD"),
+    wordRequestWaiter(pending, waiters, "RAT"),
+  ];
+  await traceWord(page, [0, 1, 2]);
+  await traceWord(page, [5, 6, 7]);
+  await Promise.all(suddenRequests);
+  await resolveWord(pending, "RAT", true);
+  assert.equal(await page.locator("#gameScore").textContent(), "0");
+  await resolveWord(pending, "BAD", false);
+  await page.waitForFunction(() => window.__soloEvents.length === 1);
+  assert.equal(await page.locator("#gameScore").textContent(), "0");
+  assert.equal(
+    await page.evaluate(() => window.__soloEvents.some((event) => event.type === "word-accepted")),
+    false,
+  );
+  await page.waitForSelector("#resultsScreen.active");
+  assert.match(await page.locator("#suddenDeathCalloutDetail").textContent(), /BAD/);
+
+  const replacementFixture = {
+    size: 4,
+    board: ["F", "O", "X", "X", "M", "A", "P", "X", "X", "X", "X", "X", "X", "X", "X", "X"],
+  };
+  pending.clear();
+  await resetSoloBrowserPage(page, replacementFixture);
+  await startSoloMode(page, "classic");
+  const oldRequest = wordRequestWaiter(pending, waiters, "FOX");
+  await traceWord(page, [0, 1, 2]);
+  await oldRequest;
+  assert.ok(pending.has("FOX"));
+  await page.locator("#gameBack").click();
+  await page.waitForSelector("#homeScreen.active");
+  await page.evaluate(() => {
+    window.__wordrushTestBoard = {
+      size: 4,
+      board: ["X", "X", "X", "X", "M", "A", "P", "X", "X", "X", "X", "X", "X", "X", "X", "X"],
+    };
+  });
+  await startSoloMode(page, "classic");
+  const replacementRequest = wordRequestWaiter(pending, waiters, "MAP");
+  await traceWord(page, [4, 5, 6]);
+  await replacementRequest;
+  await resolveWord(pending, "MAP", true);
+  await page.waitForFunction(() => window.__soloEvents.length === 1);
+  assert.equal(await page.locator("#gameScore").textContent(), "9");
+  await resolveWord(pending, "FOX", false);
+  await page.waitForFunction(() => document.querySelector("#gameScore").textContent === "9");
+  assert.deepEqual(
+    await page.evaluate(() => window.__soloEvents.map((event) => event.word)),
+    ["MAP"],
+  );
+
+  const errorFixture = {
+    size: 4,
+    board: ["O", "W", "L", "X", "P", "I", "G", ...Array(9).fill("X")],
+  };
+  pending.clear();
+  await resetSoloBrowserPage(page, errorFixture);
+  await startSoloMode(page, "classic");
+  const errorRequests = [
+    wordRequestWaiter(pending, waiters, "OWL"),
+    wordRequestWaiter(pending, waiters, "PIG"),
+  ];
+  await traceWord(page, [0, 1, 2]);
+  await traceWord(page, [4, 5, 6]);
+  await Promise.all(errorRequests);
+  await page.evaluate(() => {
+    const original = document.querySelector.bind(document);
+    document.querySelector = (selector) => {
+      if (String(selector).startsWith(".tile")) {
+        document.querySelector = original;
+        throw new Error("intentional browser queue failure");
+      }
+      return original(selector);
+    };
+  });
+  await resolveWord(pending, "OWL", true);
+  await resolveWord(pending, "PIG", true);
+  await page.waitForFunction(() => window.__soloEvents.length === 1);
+  assert.equal(await page.locator("#gameScore").textContent(), "18");
+  assert.equal(
+    await page.evaluate(() => window.__soloEvents[0].word),
+    "PIG",
+  );
+  assert.equal(
+    consoleErrors.filter((message) => message.includes("solo submission commit failed")).length,
+    1,
   );
   await browser.close();
 });
