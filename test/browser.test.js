@@ -90,8 +90,16 @@ async function installBoardFixtureHook(page) {
         boardCore = Object.freeze({
           ...nextBoardCore,
           generateBoardCooperatively: async (size, prepared, options) => {
-            const fixture = window.__wordrushBrowserBoardFixture;
-            if (fixture?.size === size)
+            let fixture = null;
+            try {
+              fixture = JSON.parse(sessionStorage.getItem("wordrushBrowserBoardFixture") || "null");
+            } catch {}
+            if (
+              fixture?.size === size &&
+              Array.isArray(fixture.board) &&
+              fixture.board.length === size * size &&
+              fixture.board.every((letter) => /^[A-Z]$/.test(letter))
+            )
               return { ok: true, board: [...fixture.board] };
             return originalGenerate(size, prepared, options);
           },
@@ -100,16 +108,11 @@ async function installBoardFixtureHook(page) {
     });
   });
 }
-async function setBoardFixture(page, fixture) {
-  await page.evaluate((nextFixture) => {
-    window.__wordrushBrowserBoardFixture = nextFixture;
-  }, fixture);
-}
 async function resetSoloBrowserPage(page, fixture) {
-  await page.addInitScript((nextFixture) => {
-    window.__wordrushBrowserBoardFixture = nextFixture;
+  await page.evaluate((nextFixture) => {
+    sessionStorage.setItem("wordrushBrowserBoardFixture", JSON.stringify(nextFixture));
+    localStorage.clear();
   }, fixture);
-  await page.evaluate(() => localStorage.clear());
   await page.reload();
   await page.evaluate(() => {
     window.__soloEvents = [];
@@ -463,10 +466,6 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   assert.ok(pending.has("FOX"));
   await page.locator("#gameBack").click();
   await page.waitForSelector("#homeScreen.active");
-  await setBoardFixture(page, {
-    size: 4,
-    board: ["X", "X", "X", "X", "M", "A", "P", "X", "X", "X", "X", "X", "X", "X", "X", "X"],
-  });
   await startSoloMode(page, "classic");
   const replacementRequest = wordRequestWaiter(pending, waiters, "MAP");
   await traceWord(page, [4, 5, 6]);
@@ -496,13 +495,13 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   await traceWord(page, [4, 5, 6]);
   await Promise.all(errorRequests);
   await page.evaluate(() => {
-    const original = Date.now;
-    Date.now = () => {
-      if (new Error().stack?.includes("app.js:896")) {
-        Date.now = original;
-        throw new Error("intentional browser deadline-check failure");
+    const original = Set.prototype.has;
+    Set.prototype.has = function (value) {
+      if (value === "OWL") {
+        Set.prototype.has = original;
+        throw new Error("intentional browser duplicate-check failure");
       }
-      return original();
+      return original.call(this, value);
     };
   });
   await resolveWord(pending, "OWL", true);
