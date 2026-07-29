@@ -77,6 +77,8 @@ const generationTestHooks = {
   lexicon: null,
   yieldScheduler: null,
   onContract: null,
+  onResult: null,
+  onCancellation: null,
 };
 const nodeGenerationScheduler = () =>
   new Promise((resolve) => setImmediate(resolve));
@@ -656,10 +658,12 @@ async function generateRoundBoard(contract, options = {}) {
         isCancelled: options.isCancelled,
       },
     );
-  } catch {
+  } catch (error) {
     result = {
       ok: false,
-      error: { code: "GENERATION_EXCEPTION" },
+      error: { code: error.code === "GENERATION_CANCELLED"
+        ? "GENERATION_CANCELLED"
+        : "GENERATION_EXCEPTION" },
       diagnostics: {
         seed,
         size: contract.size,
@@ -670,6 +674,7 @@ async function generateRoundBoard(contract, options = {}) {
       },
     };
   }
+  generationTestHooks.onResult?.(result);
   return { result, seed };
 }
 async function startRound(
@@ -1775,26 +1780,64 @@ function recordAnalyticsConsentChoice(choice) {
   fs.renameSync(temporary, CONSENT_COUNT_FILE);
   return data;
 }
-function readJson(req) {
+function requestCancellation(req, res) {
+  let cancelled = false;
+  const cancel = () => {
+    if (!res.writableEnded && !cancelled) {
+      cancelled = true;
+      generationTestHooks.onCancellation?.();
+    }
+  };
+  req.once("aborted", cancel);
+  res.once("close", cancel);
+  req.socket?.once("close", cancel);
+  return {
+    isCancelled: () => cancelled || req.aborted === true || res.destroyed === true,
+    cleanup: () => {
+      req.off("aborted", cancel);
+      res.off("close", cancel);
+      req.socket?.off("close", cancel);
+    },
+  };
+}
+function readJson(req, isCancelled) {
   return new Promise((resolve) => {
     let body = "";
     let done = false;
-    req.on("data", (chunk) => {
+    const abort = () => {
       if (done) return;
-      body += chunk;
-      if (body.length > 10000) {
-        done = true;
-        resolve(null);
-      }
-    });
-    req.on("end", () => {
+      done = true;
+      cleanup();
+      resolve(null);
+    };
+    const cleanup = () => {
+      req.off("aborted", abort);
+      req.off("error", abort);
+      req.off("end", finish);
+    };
+    const finish = () => {
       if (done) return;
+      done = true;
+      cleanup();
       try {
         resolve(JSON.parse(body || "{}"));
       } catch {
         resolve(null);
       }
+    };
+    if (isCancelled?.()) return resolve(null);
+    req.once("aborted", abort);
+    req.once("error", abort);
+    req.on("data", (chunk) => {
+      if (done) return;
+      body += chunk;
+      if (body.length > 10000) {
+        done = true;
+        cleanup();
+        resolve(null);
+      }
     });
+    req.once("end", finish);
   });
 }
 async function leaderboardRequest(req, res) {
@@ -1802,43 +1845,52 @@ async function leaderboardRequest(req, res) {
   if (url.pathname === "/api/solo-board" && req.method === "POST") {
     if (!rateLimit("solo-board:" + clientIp(req), 30))
       return deny(res, 429, "RATE_LIMITED");
-    const body = await readJson(req);
-    const request = validateSoloBoardRequest(body);
-    if (!request.valid)
-      return deny(res, request.status || 400, request.code);
-    const contract = boardGenerationContract(
-      request.config,
-      request.dictionary.id,
-    );
-    const { result, seed } = await generateRoundBoard(contract);
-    const diagnostics = {
-      ...result.diagnostics,
-      dictionary: request.dictionary.metadata,
-    };
-    if (!result.ok) {
-      res.writeHead(503, {
+    const cancellation = requestCancellation(req, res);
+    try {
+      const body = await readJson(req, cancellation.isCancelled);
+      if (cancellation.isCancelled()) return true;
+      const request = validateSoloBoardRequest(body);
+      if (!request.valid)
+        return deny(res, request.status || 400, request.code);
+      const contract = boardGenerationContract(
+        request.config,
+        request.dictionary.id,
+      );
+      const { result, seed } = await generateRoundBoard(contract, {
+        isCancelled: cancellation.isCancelled,
+      });
+      if (cancellation.isCancelled()) return true;
+      const diagnostics = {
+        ...result.diagnostics,
+        dictionary: request.dictionary.metadata,
+      };
+      if (!result.ok) {
+        res.writeHead(503, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        return res.end(JSON.stringify({
+          error: "BOARD_GENERATION_FAILED",
+          failureCode: result.error?.code || "GENERATION_FAILED",
+          diagnostics,
+        }));
+      }
+      res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       });
       return res.end(JSON.stringify({
-        error: "BOARD_GENERATION_FAILED",
-        failureCode: result.error?.code || "GENERATION_FAILED",
+        board: result.board,
+        mode: request.mode,
+        config: request.config,
+        validationMode: contract.validationMode,
+        seed,
+        dictionary: request.dictionary.metadata,
         diagnostics,
       }));
+    } finally {
+      cancellation.cleanup();
     }
-    res.writeHead(200, {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-    });
-    return res.end(JSON.stringify({
-      board: result.board,
-      mode: request.mode,
-      config: request.config,
-      validationMode: contract.validationMode,
-      seed,
-      dictionary: request.dictionary.metadata,
-      diagnostics,
-    }));
   }
   if (url.pathname === "/api/dictionary" && req.method === "GET") {
     const dictionaryId = url.searchParams.get("dictionaryId") || DEFAULT_DICTIONARY_ID;
