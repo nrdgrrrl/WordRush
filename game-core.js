@@ -31,9 +31,27 @@ const BASE_WORD_SETS = {
   classic: new Set(BASE_WORDS),
   dirty: new Set(BASE_DIRTY_WORDS),
 };
-const { neighbors, hasPath, generateBoard } = boardCore;
+const PREPARED_LEXICONS = {
+  classic: boardCore.prepareLexicon(BASE_WORDS, {
+    adultWords: ADULT_WORDS,
+    preferredWords: COMMON_WORDS,
+  }),
+  dirty: boardCore.prepareLexicon(BASE_DIRTY_WORDS, {
+    adultWords: ADULT_WORDS,
+    preferredWords: COMMON_WORDS,
+  }),
+};
+const {
+  neighbors,
+  hasPath,
+  generateBoard,
+  generateBoardCooperatively,
+} = boardCore;
 function createLexicon(mode) {
   return mode === "dirty" ? BASE_DIRTY_WORDS : BASE_WORDS;
+}
+function getPreparedLexicon(mode) {
+  return mode === "dirty" ? PREPARED_LEXICONS.dirty : PREPARED_LEXICONS.classic;
 }
 function isDictionaryWord(word, mode = "classic") {
   const cleanWord = String(word || "").trim().toUpperCase();
@@ -99,7 +117,9 @@ module.exports = {
   neighbors,
   hasPath,
   generateBoard,
+  generateBoardCooperatively,
   createLexicon,
+  getPreparedLexicon,
   isDictionaryWord,
   validateSubmission,
 };

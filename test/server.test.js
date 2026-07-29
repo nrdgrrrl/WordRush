@@ -24,6 +24,7 @@ const {
   server,
   rooms,
   startRound,
+  generationTestHooks,
   displayTokens,
   displayCredentials,
   rateLimits,
@@ -142,6 +143,11 @@ test.after(
       setImmediate(() => process.exit(0));
     }),
 );
+test.afterEach(() => {
+  generationTestHooks.limits = null;
+  generationTestHooks.lexicon = null;
+  generationTestHooks.yieldScheduler = null;
+});
 
 test("creates a session, starts a round, and admits ten players", async () => {
   const players = await Promise.all(
@@ -165,6 +171,87 @@ test("creates a session, starts a round, and admits ten players", async () => {
   assert.equal(rooms.get(created.code).players.size, 10);
   assert.equal(created.code.length, 5);
   players.forEach((ws) => ws.close());
+});
+
+test("cooperative board generation lets another room process a queued action", async () => {
+  generationTestHooks.limits = { operationsPerYield: 1 };
+  const firstHost = await client("yield-first");
+  const secondHost = await client("yield-second");
+  const firstCreated = next(firstHost, "room_created");
+  const firstLobby = next(firstHost, "room_state");
+  message(firstHost, "create_room");
+  await firstCreated;
+  await firstLobby;
+  const secondCreated = next(secondHost, "room_created");
+  const secondLobby = next(secondHost, "room_state");
+  message(secondHost, "create_room");
+  await secondCreated;
+  await secondLobby;
+  const order = [];
+  const firstStarted = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("first room did not start")), 1500);
+    firstHost.on("message", (raw) => {
+      const data = JSON.parse(raw);
+      if (data.type !== "round_started") return;
+      clearTimeout(timer);
+      order.push("first");
+      resolve(data);
+    });
+  });
+  const secondUpdated = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("second room was blocked")), 1500);
+    secondHost.on("message", (raw) => {
+      const data = JSON.parse(raw);
+      if (
+        data.type !== "room_state" ||
+        !data.players.some((player) => player.name === "queued-update")
+      ) return;
+      clearTimeout(timer);
+      order.push("second");
+      resolve(data);
+    });
+  });
+  message(firstHost, "start_game", { mode: "classic" });
+  message(secondHost, "update_identity", { name: "queued-update", avatar: "🐸" });
+  await Promise.all([firstStarted, secondUpdated]);
+  assert.deepEqual(order.slice(0, 2), ["second", "first"]);
+  firstHost.close();
+  secondHost.close();
+});
+
+test("board generation failure is recoverable and overlapping starts are rejected", async () => {
+  const ws = await client("generation-recovery");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+  generationTestHooks.limits = {
+    maxAttempts: 1,
+    maxPlacementOperations: 1,
+    maxBacktracks: 0,
+    operationsPerYield: 1,
+  };
+  const failedPromise = next(ws, "error");
+  message(ws, "start_game", { mode: "classic" });
+  const failed = await failedPromise;
+  assert.equal(failed.code, "BOARD_GENERATION_FAILED");
+  assert.equal(failed.failureCode, "PLACEMENT_LIMIT");
+  assert.equal(room.status, "lobby");
+  assert.equal(room.round, null);
+  assert.equal(room.generation, null);
+
+  generationTestHooks.limits = { operationsPerYield: 1 };
+  const startedPromise = next(ws, "round_started");
+  const busyPromise = next(ws, "error");
+  message(ws, "start_game", { mode: "classic" });
+  message(ws, "start_game", { mode: "classic" });
+  const busy = await busyPromise;
+  assert.equal(busy.code, "BOARD_GENERATING");
+  await startedPromise;
+  assert.equal(room.status, "playing");
+  ws.close();
 });
 
 test("rejects the eleventh player", async () => {
@@ -605,6 +692,121 @@ test("host and guest both accept dirty consent and round starts", async () => {
   assert.deepEqual(rooms.get(created.code).round.consentedPlayerIds.sort(), ["accept-guest", "accept-host"].sort());
   host.close();
   guest.close();
+});
+
+test("disconnecting consented player cancels an in-flight adult generation", async () => {
+  generationTestHooks.limits = { operationsPerYield: 1 };
+  let generationYielded;
+  const generationYieldedPromise = new Promise((resolve) => {
+    generationYielded = resolve;
+  });
+  let releaseGeneration;
+  const generationGate = new Promise((resolve) => {
+    releaseGeneration = resolve;
+  });
+  generationTestHooks.yieldScheduler = () => {
+    generationYielded();
+    return generationGate;
+  };
+  const host = await client("generation-consent-host");
+  const guest = await client("generation-consent-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+  const consentPromise = next(host, "adult_consent_request");
+  message(host, "start_game", { mode: "dirty" });
+  const consent = await consentPromise;
+  const hostAccepted = next(host, "adult_consent_player_accepted");
+  message(host, "adult_consent_response", { requestId: consent.requestId, accepted: true });
+  await hostAccepted;
+  const guestAccepted = next(guest, "adult_consent_player_accepted");
+  message(guest, "adult_consent_response", { requestId: consent.requestId, accepted: true });
+  await guestAccepted;
+  await generationYieldedPromise;
+  const cancelled = next(host, "adult_consent_cancelled");
+  guest.close();
+  assert.equal((await cancelled).reason, "player_disconnected");
+  const busyPromise = next(host, "error");
+  message(host, "start_game", { mode: "dirty" });
+  assert.equal((await busyPromise).code, "BOARD_GENERATING");
+  releaseGeneration();
+  for (let attempt = 0; attempt < 10 && roomGeneration(created.code); attempt++)
+    await new Promise((resolve) => setImmediate(resolve));
+  const room = rooms.get(created.code);
+  assert.equal(room.status, "lobby");
+  assert.equal(room.round, null);
+  assert.equal(room.generation, null);
+  host.close();
+});
+
+function roomGeneration(code) {
+  return rooms.get(code)?.generation;
+}
+
+test("a consenting guest admitted during Dirty generation can reconnect", async () => {
+  generationTestHooks.limits = { operationsPerYield: 1 };
+  let generationYielded;
+  const generationYieldedPromise = new Promise((resolve) => {
+    generationYielded = resolve;
+  });
+  let releaseGeneration;
+  const generationGate = new Promise((resolve) => {
+    releaseGeneration = resolve;
+  });
+  generationTestHooks.yieldScheduler = () => {
+    generationYielded();
+    return generationGate;
+  };
+  const host = await client("admission-generation-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const consentPromise = next(host, "adult_consent_request");
+  message(host, "start_game", { mode: "dirty" });
+  const consent = await consentPromise;
+  const hostAccepted = next(host, "adult_consent_player_accepted");
+  message(host, "adult_consent_response", { requestId: consent.requestId, accepted: true });
+  await hostAccepted;
+  await generationYieldedPromise;
+
+  const guest = await client("admission-generation-guest");
+  const challengePromise = next(guest, "adult_pre_admission_challenge");
+  message(guest, "join_room", { code: created.code });
+  const challenge = await challengePromise;
+  const preAcceptedPromise = next(guest, "adult_pre_admission_accepted");
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "adult_consent_response", {
+    challengeId: challenge.challengeId,
+    accepted: true,
+  });
+  const joined = await joinedPromise;
+  await preAcceptedPromise;
+
+  const startedPromise = next(host, "round_started");
+  releaseGeneration();
+  await startedPromise;
+  const room = rooms.get(created.code);
+  assert.ok(room.round.consentedPlayerIds.includes("admission-generation-guest"));
+
+  const closed = new Promise((resolve) => guest.once("close", resolve));
+  guest.close();
+  await closed;
+  const reconnected = await client("admission-generation-guest");
+  const resumedPromise = next(reconnected, "room_resumed");
+  message(reconnected, "resume_room", {
+    code: created.code,
+    reconnectToken: joined.reconnectToken,
+  });
+  assert.equal((await resumedPromise).code, created.code);
+  reconnected.close();
+  host.close();
 });
 
 test("guest declines dirty consent and room returns to lobby", async () => {

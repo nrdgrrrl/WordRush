@@ -6,6 +6,7 @@ const {
   RANDOM_RUSH_EXCLUDED_MODES,
   ADULT_WORDS,
   generateBoard,
+  getPreparedLexicon,
   createLexicon,
   isDictionaryWord,
   hasPath,
@@ -16,6 +17,7 @@ const {
   validateCustomConfig,
   shouldEndOnRejectedWord,
 } = require("../game-config");
+const boardCore = require("../board-core");
 test("Random Rush includes every eligible built-in game mode", () => {
   assert.deepEqual(RANDOM_RUSH_EXCLUDED_MODES, ["coop", "dirty"]);
   assert.deepEqual(
@@ -43,18 +45,95 @@ test("dictionary membership uses the shared server lexicon", () => {
   assert.equal(isDictionaryWord("SHIT"), false);
   assert.equal(isDictionaryWord("SHIT", "dirty"), true);
 });
-test("configured boards are full and pathable", () => {
+test("configured boards are bounded, deterministic, and pathable", () => {
   for (const [mode, config] of Object.entries(MODE_CONFIG)) {
-    const board = generateBoard(config.size, createLexicon(mode));
-    assert.equal(board.length, config.size * config.size);
-    assert.ok(board.every((letter) => /^[A-Z]$/.test(letter)));
+    const generationMode = mode === "dirty" ? "dirty" : "classic";
+    const prepared = getPreparedLexicon(generationMode);
+    const first = generateBoard(config.size, prepared, {
+      mode: generationMode,
+      min: config.min,
+      seed: 0x12345678,
+    });
+    const second = generateBoard(config.size, prepared, {
+      mode: generationMode,
+      min: config.min,
+      seed: 0x12345678,
+    });
+    assert.equal(first.ok, true, `${mode} should generate`);
+    assert.equal(second.ok, true, `${mode} should reproduce`);
+    assert.deepEqual(first.board, second.board, mode);
+    assert.deepEqual(
+      { ...first.diagnostics, elapsedMs: 0 },
+      { ...second.diagnostics, elapsedMs: 0 },
+      mode,
+    );
+    assert.equal(first.board.length, config.size * config.size);
+    assert.ok(first.board.every((letter) => /^[A-Z]$/.test(letter)));
     assert.ok(
-      createLexicon(mode).some(
+      createLexicon(generationMode).some(
         (word) =>
-          word.length >= config.min && hasPath(board, config.size, word),
+          word.length >= config.min && hasPath(first.board, config.size, word),
       ),
     );
+    assert.ok(first.diagnostics.attemptCount <= 32, mode);
+    assert.ok(first.diagnostics.placementOperationCount <= 250000, mode);
+    assert.ok(first.diagnostics.backtrackCount <= 125000, mode);
   }
+});
+test("prepared indexes and sparse lexicons fail explicitly", () => {
+  const prepared = boardCore.prepareLexicon([
+    " dog ",
+    "DOG",
+    "SHIT",
+    "AB",
+  ]);
+  assert.equal(prepared.normalizedCount, 2);
+  assert.equal(prepared.candidateCounts(4, "classic", 3).minimum, 1);
+  assert.equal(prepared.candidateCounts(4, "classic", 3).adult, 1);
+  const sparse = boardCore.prepareLexicon(["AB", "A1"]);
+  const result = generateBoard(4, sparse, {
+    mode: "classic",
+    min: 3,
+    seed: 1,
+  });
+  const repeat = generateBoard(4, sparse, {
+    mode: "classic",
+    min: 3,
+    seed: 1,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "NO_MINIMUM_CANDIDATE");
+  assert.equal(repeat.error.code, result.error.code);
+  assert.deepEqual(
+    { ...result.diagnostics, elapsedMs: 0 },
+    { ...repeat.diagnostics, elapsedMs: 0 },
+  );
+  assert.equal(result.diagnostics.attemptCount, 0);
+  assert.equal(result.diagnostics.placementOperationCount, 0);
+});
+test("cooperative generation preserves deterministic results and yields", async () => {
+  const prepared = boardCore.prepareLexicon([
+    "CAT", "DOG", "STAR", "STARE", "STONE", "STREAM", "PLANET",
+    "PLANT", "HEART", "HOUSE", "TRACE", "BRAIN", "WORDS", "RUSH",
+  ]);
+  const synchronous = generateBoard(8, prepared, {
+    mode: "classic",
+    min: 3,
+    seed: 99,
+    limits: { operationsPerYield: 1 },
+  });
+  const cooperative = await boardCore.generateBoardCooperatively(8, prepared, {
+    mode: "classic",
+    min: 3,
+    seed: 99,
+    limits: { operationsPerYield: 1 },
+    yieldScheduler: () => Promise.resolve(),
+  });
+  assert.deepEqual(
+    { ...synchronous, diagnostics: { ...synchronous.diagnostics, elapsedMs: 0 } },
+    { ...cooperative, diagnostics: { ...cooperative.diagnostics, elapsedMs: 0 } },
+  );
+  assert.ok(cooperative.diagnostics.yieldCount > 0);
 });
 test("submissions require contiguous non-repeating paths", () => {
   const board = [
@@ -148,7 +227,13 @@ test("dirty words are opt-in and custom-only words are rejected", () => {
 });
 test("dirty boards strongly favor playable adult words", () => {
   for (const size of [4, 5, 6, 7, 8]) {
-    const board = generateBoard(size, createLexicon("dirty"));
+    const result = generateBoard(size, getPreparedLexicon("dirty"), {
+      mode: "dirty",
+      min: 3,
+      seed: size,
+    });
+    assert.equal(result.ok, true, `dirty ${size}x${size}`);
+    const board = result.board;
     const playableAdultWords = ADULT_WORDS.filter(
       (word) => word.length <= size * size && hasPath(board, size, word),
     );
@@ -157,6 +242,42 @@ test("dirty boards strongly favor playable adult words", () => {
       `expected at least 5 dirty words on ${size}\u00d7${size}, found ${playableAdultWords.length}`,
     );
   }
+});
+
+test("Dirty template fallback honors the prepared lexicon contract", () => {
+  const normal = [
+    "CAT", "DOG", "STAR", "STARE", "STONE", "STREAM", "PLANET", "PLANT",
+    "HEART", "HOUSE", "TRACE", "BRAIN", "WORDS", "RUSH",
+  ];
+  const adult = [
+    "ASS", "BITCH", "COCK", "CUNT", "DICK", "FUCK", "SHIT", "TIT", "SHTICK", "PENIS",
+  ];
+  const prepared = boardCore.prepareLexicon([...normal, ...adult], { adultWords: adult });
+  const result = generateBoard(4, prepared, {
+    mode: "dirty",
+    min: 3,
+    seed: 1,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.diagnostics.generationStrategy, "dirty-template");
+  const counts = prepared.candidateCounts(4, "dirty", 3);
+  assert.ok(
+    adult.filter((word) => hasPath(result.board, 4, word)).length >=
+      Math.min(5, counts.adult),
+  );
+  assert.ok(
+    adult.concat(normal).some(
+      (word) => word.length >= 3 && hasPath(result.board, 4, word),
+    ),
+  );
+  for (const family of ["3", "4", "5", "6plus"])
+    if (counts[family])
+      assert.ok(
+        [...adult, ...normal].some((word) =>
+          (family === "6plus" ? word.length >= 6 : word.length === Number(family)) &&
+          hasPath(result.board, 4, word),
+        ),
+      );
 });
 test("canonical config matches expected shape and validates correctly", () => {
   for (const [mode, expected] of Object.entries({
