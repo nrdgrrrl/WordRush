@@ -172,6 +172,16 @@ for _ in $(seq 1 15); do
 done
 printf '%s\n' "$headers" | grep -Eq '^HTTP/[0-9.]+ 200'
 echo "Public HTTPS app: ok"
+check_public_cache_headers() {
+  local request_path response_headers
+  for request_path in / /app.js /game-config.js /board-core.js /styles.css /manifest.webmanifest /receiver/receiver.js; do
+    response_headers="$(curl -fsSI --max-time 15 "${url%/}${request_path}" || true)"
+    printf '%s\n' "$response_headers" | grep -Eq '^HTTP/[0-9.]+ 200'
+    printf '%s\n' "$response_headers" | grep -Eiq '^Cache-Control:.*no-cache'
+    echo "Public cache policy ${request_path}: no-cache"
+  done
+}
+check_public_cache_headers
 echo "Deployed hashes:"
 cd "$app"
 sha256sum .wordrush-release index.html styles.css app.js server.js
