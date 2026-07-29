@@ -223,23 +223,38 @@
     return candidates;
   }
 
-  function hasPath(board, size, word) {
-    for (let start = 0; start < board.length; start++) {
-      if (board[start] !== word[0]) continue;
-      const used = new Set([start]);
-      function walk(index, depth) {
-        if (depth === word.length) return true;
-        for (const next of neighbors(index, size))
-          if (!used.has(next) && board[next] === word[depth]) {
-            used.add(next);
-            if (walk(next, depth + 1)) return true;
-            used.delete(next);
-          }
-        return false;
+  function walkBoardPaths(board, size, initialState, advance, visit) {
+    function walk(index, state, used, path) {
+      if (visit(path, state)) return true;
+      for (const next of neighbors(index, size)) {
+        if (used.has(next)) continue;
+        const nextState = advance(state, board[next], next, path);
+        if (nextState === undefined) continue;
+        used.add(next);
+        path.push(next);
+        if (walk(next, nextState, used, path)) return true;
+        path.pop();
+        used.delete(next);
       }
-      if (walk(start, 1)) return true;
+      return false;
+    }
+
+    for (let start = 0; start < board.length; start++) {
+      const state = advance(initialState, board[start], start, []);
+      if (state === undefined) continue;
+      if (walk(start, state, new Set([start]), [start])) return true;
     }
     return false;
+  }
+
+  function hasPath(board, size, word) {
+    return walkBoardPaths(
+      board,
+      size,
+      0,
+      (depth, letter) => letter === word[depth] ? depth + 1 : undefined,
+      (path, depth) => path.length === word.length && depth === word.length,
+    );
   }
 
   class GenerationLimitError extends Error {
@@ -567,6 +582,7 @@
     prepareLexicon,
     createSeededRandom,
     neighbors,
+    walkBoardPaths,
     hasPath,
     generateBoard,
     generateBoardCooperatively,
