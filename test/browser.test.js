@@ -319,6 +319,7 @@ test("global scoreboard displays an authoritative multiplayer result and all per
 test("random rush owns results continuation and stops on navigation", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.clock.install();
   await page.goto(baseUrl);
   await page.evaluate(() => {
     window.wordrushRushDelay = 250;
@@ -333,12 +334,68 @@ test("random rush owns results continuation and stops on navigation", async () =
     (await rushEvents()).filter(
       (event) => event.name === "random-rush" && event.action === action,
     ).length;
+  const countEvents = async (name) =>
+    (await rushEvents()).filter((event) => event.name === name).length;
   const waitPastRushDelay = async () => {
     await page.evaluate(() => {
       window.__rushWaitUntil = performance.now() + 350;
     });
     await page.waitForFunction(() => performance.now() >= window.__rushWaitUntil);
   };
+
+  await page.locator('button[data-mode="minimum"]').click();
+  await page.waitForSelector("#roundIntroScreen.active");
+  const startsBeforeLeave = await countEvents("round-started");
+  await page.locator('nav [data-screen="achievementsScreen"]').click();
+  await page.waitForSelector("#achievementsScreen.active");
+  await page.clock.fastForward(4100);
+  assert.equal(await page.locator("#achievementsScreen.active").count(), 1);
+  assert.equal(await page.locator("#gameScreen.active").count(), 0);
+  assert.equal(await countEvents("round-started"), startsBeforeLeave);
+
+  await page.locator('header [data-screen="homeScreen"]').click();
+  await page.waitForSelector("#homeScreen.active");
+  const introsBeforeReplacement = await countEvents("round-intro");
+  await page.locator('button[data-mode="minimum"]').click();
+  await page.waitForFunction(
+    (count) =>
+      window.__rushEvents.filter((event) => event.name === "round-intro").length ===
+      count,
+    introsBeforeReplacement + 1,
+  );
+  await page.clock.fastForward(1000);
+  await page.evaluate(() =>
+    document.querySelector('button[data-mode="race"]').click(),
+  );
+  await page.waitForFunction(
+    (count) =>
+      window.__rushEvents.filter((event) => event.name === "round-intro").length ===
+      count,
+    introsBeforeReplacement + 2,
+  );
+  const startsBeforeAutomatic = await countEvents("round-started");
+  await page.clock.fastForward(3100);
+  assert.equal(await page.locator("#roundIntroScreen.active").count(), 1);
+  assert.equal(await countEvents("round-started"), startsBeforeAutomatic);
+  await page.clock.fastForward(1000);
+  await page.waitForSelector("#gameScreen.active");
+  assert.equal(await countEvents("round-started"), startsBeforeAutomatic + 1);
+  await page.clock.fastForward(4100);
+  assert.equal(await countEvents("round-started"), startsBeforeAutomatic + 1);
+
+  await page.locator("#gameBack").click();
+  await page.waitForSelector("#homeScreen.active");
+  await page.locator('button[data-mode="minimum"]').click();
+  await page.waitForSelector("#roundIntroScreen.active");
+  const startsBeforeStartNow = await countEvents("round-started");
+  await page.locator("#introStart").click();
+  await page.evaluate(() => document.querySelector("#introStart").click());
+  await page.waitForSelector("#gameScreen.active");
+  assert.equal(await countEvents("round-started"), startsBeforeStartNow + 1);
+  await page.clock.fastForward(4100);
+  assert.equal(await countEvents("round-started"), startsBeforeStartNow + 1);
+  await page.locator("#gameBack").click();
+  await page.waitForSelector("#homeScreen.active");
 
   await page.locator("#randomPanel").click();
   await startIntro(page);
@@ -424,7 +481,7 @@ test("random rush owns results continuation and stops on navigation", async () =
   assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
   assert.equal(await page.locator("#gameScreen.active").count(), 0);
 
-  await page.locator('[data-mode="minimum"]').click();
+  await page.locator('button[data-mode="minimum"]').click();
   await page.waitForSelector("#roundIntroScreen.active");
   await page.locator("#introStart").click();
   await page.waitForSelector("#gameScreen.active");
@@ -915,6 +972,30 @@ test("host ending a round and closing an active session synchronizes every playe
       () => document.querySelectorAll("#lobbyPlayers .live-player").length === 2,
     ),
   ]);
+  const resetRoundActivationProbe = (page) =>
+    page.evaluate(() => {
+      window.__roundStartedEvents = 0;
+      window.__roundTimerIntervals = 0;
+      if (window.__roundActivationProbeInstalled) return;
+      window.__roundActivationProbeInstalled = true;
+      document.addEventListener("wordrush:round-started", () =>
+        window.__roundStartedEvents++,
+      );
+      const setInterval = window.setInterval.bind(window);
+      window.setInterval = (callback, delay, ...args) => {
+        if (delay === 250) window.__roundTimerIntervals++;
+        return setInterval(callback, delay, ...args);
+      };
+    });
+  const roundActivation = (page) =>
+    page.evaluate(() => ({
+      starts: window.__roundStartedEvents,
+      intervals: window.__roundTimerIntervals,
+    }));
+  await Promise.all([
+    resetRoundActivationProbe(host),
+    resetRoundActivationProbe(guest),
+  ]);
 
   await host.locator("#sessionType").selectOption("classic");
   await host.locator("#sessionStart").click();
@@ -922,17 +1003,62 @@ test("host ending a round and closing an active session synchronizes every playe
     startIntro(host),
     startIntro(guest),
   ]);
+  assert.deepEqual(await roundActivation(host), { starts: 1, intervals: 1 });
+  assert.deepEqual(await roundActivation(guest), { starts: 1, intervals: 1 });
   await host.locator("#endGame").click();
   await Promise.all([
     host.waitForSelector("#resultsScreen.active"),
     guest.waitForSelector("#resultsScreen.active"),
   ]);
 
+  await Promise.all([
+    resetRoundActivationProbe(host),
+    resetRoundActivationProbe(guest),
+  ]);
   await host.locator("#again").click();
   await Promise.all([
-    startIntro(host),
-    startIntro(guest),
+    host.waitForSelector("#roundIntroScreen.active"),
+    guest.waitForSelector("#roundIntroScreen.active"),
   ]);
+  await guest.evaluate(() => {
+    window.__roundStartNowMessages = 0;
+    const startNow = window.wordrushRoundStartNow;
+    window.wordrushRoundStartNow = (...args) => {
+      window.__roundStartNowMessages++;
+      window.__lastRoundStartNowTiming = args[0];
+      return startNow(...args);
+    };
+  });
+  await guest.locator('header [data-screen="homeScreen"]').click();
+  await guest.waitForSelector("#homeScreen.active");
+  await guest.locator("#resumeMultiplayer").click();
+  await guest.waitForSelector("#roundIntroScreen.active");
+  assert.equal(await guest.locator("#gameScreen.active").count(), 0);
+  assert.deepEqual(await roundActivation(guest), { starts: 0, intervals: 0 });
+  await guest.locator('header [data-screen="homeScreen"]').click();
+  await guest.waitForSelector("#homeScreen.active");
+  await host.locator("#introStart").click();
+  await Promise.all([
+    host.waitForSelector("#gameScreen.active"),
+    guest.waitForFunction(() => window.__roundStartNowMessages === 1),
+  ]);
+  assert.equal(await guest.locator("#homeScreen.active").count(), 1);
+  assert.equal(await guest.locator("#gameScreen.active").count(), 0);
+  assert.deepEqual(await roundActivation(host), { starts: 1, intervals: 1 });
+  assert.deepEqual(await roundActivation(guest), { starts: 1, intervals: 1 });
+  await guest.locator("#resumeMultiplayer").click();
+  await guest.waitForSelector("#gameScreen.active");
+  const resumedTimer = await guest.locator("#timer").textContent();
+  await guest.waitForFunction(
+    (before) => document.querySelector("#timer").textContent !== before,
+    resumedTimer,
+  );
+  await guest.evaluate(() => {
+    window.wordrushReturnToOnlineRound();
+    window.wordrushRoundStartNow(window.__lastRoundStartNowTiming);
+    window.wordrushRoundStartNow(window.__lastRoundStartNowTiming);
+  });
+  assert.deepEqual(await roundActivation(guest), { starts: 1, intervals: 1 });
   await host.locator("#gameBack").click();
   host.once("dialog", (dialog) => dialog.accept());
   await host.locator("#exitMultiplayer").click();
