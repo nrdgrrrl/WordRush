@@ -111,12 +111,47 @@ const s = {
   pendingOnlineTrace: null,
   lastWord: "",
   suddenDeathEvent: null,
+  acceptingSoloSubmissions: false,
   config: null,
   dictionaryId: DEFAULT_DICTIONARY_ID,
   dictionaryMetadata: null,
   dictionaryWords: [],
 };
 let soloGenerationRequest = 0;
+let soloSubmissionEpoch = 0;
+let soloSubmissionTail = Promise.resolve();
+let soloSubmissionErrorCount = 0;
+function logSoloSubmissionError(error) {
+  if (soloSubmissionErrorCount < 3) {
+    console.error("WordRush solo submission commit failed", error);
+  } else if (soloSubmissionErrorCount === 3) {
+    console.error("WordRush solo submission commit failures suppressed");
+  }
+  soloSubmissionErrorCount++;
+}
+function invalidateSoloSubmissionQueue() {
+  soloSubmissionEpoch++;
+  soloSubmissionTail = Promise.resolve();
+  s.acceptingSoloSubmissions = false;
+  return soloSubmissionEpoch;
+}
+function isCurrentSoloSubmission(epoch, startedAt, endsAt) {
+  return (
+    s.acceptingSoloSubmissions &&
+    !s.done &&
+    !s.onlineRoundKey &&
+    soloSubmissionEpoch === epoch &&
+    s.startedAt === startedAt &&
+    s.endsAt === endsAt
+  );
+}
+function enqueueSoloSubmission(commit) {
+  const task = soloSubmissionTail.then(commit);
+  soloSubmissionTail = task.catch((error) => {
+    logSoloSubmissionError(error);
+  });
+  return soloSubmissionTail;
+}
 const avatarOptions = [
     "🐈",
     "🦊",
@@ -471,6 +506,7 @@ function end() {
     return;
   }
   if (s.done) return;
+  if (!s.onlineRoundKey) invalidateSoloSubmissionQueue();
   s.done = 1;
   clearInterval(s.timer);
   if (s.rush && !s.nextRushMode) {
@@ -622,6 +658,7 @@ $("#introStart")?.addEventListener("click", () => {
 });
 function abandonActiveRound() {
   soloGenerationRequest++;
+  if (!s.onlineRoundKey) invalidateSoloSubmissionQueue();
   clearInterval(s.timer);
   clearTimeout(s.rushTimer);
   clearInterval(s.rushCountdown);
@@ -652,6 +689,7 @@ function stopRush() {
   s.nextRushMode = null;
   if (!s.done) abandonActiveRound();
   else {
+    if (!s.onlineRoundKey) invalidateSoloSubmissionQueue();
     clearTimeout(s.rushTimer);
     clearInterval(s.rushCountdown);
   }
@@ -731,6 +769,7 @@ async function start(
     return;
   }
   const config = generationInputs.config;
+  invalidateSoloSubmissionQueue();
   s.config = config;
   s.dictionaryId = generationInputs.dictionaryId;
   s.dictionaryMetadata = dictionary.dictionary;
@@ -757,6 +796,7 @@ async function start(
   s.startedAt = Date.now();
   s.endsAt = s.startedAt + s.time * 1000;
   s.b = generated.board;
+  s.acceptingSoloSubmissions = true;
   $("#gameMode").textContent = config.label;
   $("#gameTitle").textContent = "Round 01 · " + s.n + "×" + s.n;
   $("#ruleBanner").textContent = config.rule;
@@ -827,98 +867,123 @@ async function submit() {
     clearPick();
     return;
   }
-  let config = s.config,
-    validPath = pickedPathIsValid(trace, w),
-    duplicate = s.found.has(w),
-    roundStartedAt = s.startedAt;
-  clearPick();
-  const inDictionary =
-    w.length >= config.min && validPath && !duplicate
-      ? await isServerDictionaryWord(w, s.dictionaryId, customAdult)
-      : false;
-  if (
-    s.done ||
-    s.startedAt !== roundStartedAt ||
-    (s.endsAt && Date.now() >= s.endsAt)
-  )
+  if (!s.acceptingSoloSubmissions) {
+    clearPick();
     return;
-  const chainBreak =
-    requiresChain(config) && s.lastWord && w[0] !== s.lastWord.at(-1);
-  const ok = w.length >= config.min && validPath && inDictionary && !chainBreak;
-  if (ok && !s.found.has(w)) {
-    const points = w.length * w.length;
-    s.found.add(w);
-    s.lastWord = w;
-    s.score += points;
-    recordAcceptedWord(w);
-    updateProfile();
-    $("#gameScore").textContent = s.score;
-    $("#preview").textContent = w + " +" + points;
-    $("#preview").classList.add("found");
-    pulseAcceptedWord(trace);
-    emit("word-accepted", {
-      word: w,
-      points,
-      mode: s.mode,
-      multiplayer: false,
-      randomRush: s.rush,
-    });
-    if (hasScoreTarget(config) && s.score >= config.target)
-      end();
-  } else if (duplicate || s.found.has(w)) {
-    pulseDuplicateWord(trace);
-    profile.incorrect++;
-    updateProfile();
-    toast("Already found — try a new word", "duplicate");
-    emit("word-rejected", {
-      mode: s.mode,
-      reason: "duplicate",
-      word_length: w.length,
-      multiplayer: false,
-      random_rush: s.rush,
-    });
-  } else {
-    const rejectReason = w.length < config.min
-      ? "minimum"
-      : chainBreak
-        ? "chain"
-        : !validPath
-          ? "path"
-          : "dictionary";
-    pulseIncorrectWord(trace);
-    profile.incorrect++;
-    updateProfile();
-    toast(
-      rejectReason === "minimum"
-        ? "Wrong word · need " + config.min + " letters"
-        : rejectReason === "chain"
-          ? "Wrong word · chain starts with " + s.lastWord.at(-1)
-        : rejectReason === "path"
-          ? "Wrong word · tiles must connect"
-          : "Wrong word · not in dictionary",
-      "wrong",
-    );
-    emit("word-rejected", {
-      mode: s.mode,
-      reason: rejectReason,
-      word_length: w.length,
-      multiplayer: false,
-      random_rush: s.rush,
-    });
-    if (shouldEndOnRejectedWord(config, rejectReason)) {
-      s.suddenDeathEvent = {
-        playerName: profile.name,
-        playerAvatar: profile.avatar,
-        word: w,
-      };
-      triggerSuddenDeathExplosion(s.suddenDeathEvent);
-      setTimeout(end, 300);
-    }
   }
-  setTimeout(() => {
-    $("#preview").classList.remove("found");
-    $("#preview").textContent = "Trace a word";
-  }, 900);
+  const config = Object.freeze({
+      min: s.config.min,
+      target: s.config.target,
+      chain: s.config.chain,
+      sudden: s.config.sudden,
+      mode: s.mode,
+      randomRush: s.rush,
+    }),
+    validPath = pickedPathIsValid(trace, w),
+    roundEpoch = soloSubmissionEpoch,
+    roundStartedAt = s.startedAt,
+    roundEndsAt = s.endsAt,
+    dictionaryId = s.dictionaryId,
+    adultMode = customAdult;
+  clearPick();
+  const dictionaryRequest =
+    w.length >= config.min && validPath
+      ? isServerDictionaryWord(w, dictionaryId, adultMode)
+      : Promise.resolve(false);
+  void enqueueSoloSubmission(async () => {
+    const inDictionary = await dictionaryRequest;
+    if (!isCurrentSoloSubmission(roundEpoch, roundStartedAt, roundEndsAt)) return;
+    if (roundEndsAt && Date.now() >= roundEndsAt) {
+      end();
+      return;
+    }
+    const duplicate = s.found.has(w);
+    const chainBreak =
+      requiresChain(config) && s.lastWord && w[0] !== s.lastWord.at(-1);
+    const ok = w.length >= config.min && validPath && inDictionary && !chainBreak;
+    if (ok && !duplicate) {
+      const points = w.length * w.length;
+      s.found.add(w);
+      s.lastWord = w;
+      s.score += points;
+      recordAcceptedWord(w);
+      updateProfile();
+      $("#gameScore").textContent = s.score;
+      $("#preview").textContent = w + " +" + points;
+      $("#preview").classList.add("found");
+      pulseAcceptedWord(trace);
+      emit("word-accepted", {
+        word: w,
+        points,
+        mode: config.mode,
+        multiplayer: false,
+        randomRush: config.randomRush,
+      });
+      if (hasScoreTarget(config) && s.score >= config.target) end();
+    } else if (duplicate) {
+      pulseDuplicateWord(trace);
+      profile.incorrect++;
+      updateProfile();
+      toast("Already found — try a new word", "duplicate");
+      emit("word-rejected", {
+        mode: config.mode,
+        reason: "duplicate",
+        word_length: w.length,
+        multiplayer: false,
+        random_rush: config.randomRush,
+      });
+    } else {
+      const rejectReason = w.length < config.min
+        ? "minimum"
+        : chainBreak
+          ? "chain"
+          : !validPath
+            ? "path"
+            : "dictionary";
+      pulseIncorrectWord(trace);
+      profile.incorrect++;
+      updateProfile();
+      toast(
+        rejectReason === "minimum"
+          ? "Wrong word · need " + config.min + " letters"
+          : rejectReason === "chain"
+            ? "Wrong word · chain starts with " + s.lastWord.at(-1)
+          : rejectReason === "path"
+            ? "Wrong word · tiles must connect"
+            : "Wrong word · not in dictionary",
+        "wrong",
+      );
+      emit("word-rejected", {
+        mode: config.mode,
+        reason: rejectReason,
+        word_length: w.length,
+        multiplayer: false,
+        random_rush: config.randomRush,
+      });
+      if (shouldEndOnRejectedWord(config, rejectReason)) {
+        s.suddenDeathEvent = {
+          playerName: profile.name,
+          playerAvatar: profile.avatar,
+          word: w,
+        };
+        const fatalEpoch = invalidateSoloSubmissionQueue();
+        triggerSuddenDeathExplosion(s.suddenDeathEvent);
+        setTimeout(() => {
+          if (
+            soloSubmissionEpoch !== fatalEpoch ||
+            s.done ||
+            s.startedAt !== roundStartedAt
+          )
+            return;
+          end();
+        }, 300);
+      }
+    }
+    setTimeout(() => {
+      $("#preview").classList.remove("found");
+      $("#preview").textContent = "Trace a word";
+    }, 900);
+  });
 }
 function smoothPath(points) {
   if (!points.length) return "";
