@@ -503,12 +503,22 @@
         else
           window.dispatchEvent(new CustomEvent("wordrush:room-change"));
         if (message.round && message.status === "playing") {
+          const cfg = message.config ||
+            (window.WordrushConfig?.configForPreset?.(message.mode)) || {
+              label: message.mode.toUpperCase(),
+              min: 3,
+              size: message.round.size,
+              seconds: Math.max(1, Math.ceil((message.round.endsAt - Date.now()) / 1000)),
+              rule: "Multiplayer round",
+              target: null,
+              sudden: false,
+              chain: false,
+              adult: false,
+              party: false,
+            };
           window.wordrushOnlineRound?.(
             message.round,
-            message.config || {
-              label: message.mode.toUpperCase(),
-              rule: "Multiplayer round",
-            },
+            cfg,
             message.mode,
             message.randomRush,
           );

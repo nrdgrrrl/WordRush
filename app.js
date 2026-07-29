@@ -1,22 +1,14 @@
 const $ = (s) => document.querySelector(s),
   sharedConfig = window.WordrushConfig,
   sharedBoardCore = window.WordrushBoardCore,
-  MODE = Object.fromEntries(
-    Object.entries(sharedConfig.MODE_CONFIG)
-      .filter(([mode]) => mode !== "coop")
-      .map(([mode, config]) => [
-        mode,
-        [
-          config.label,
-          config.min,
-          config.size,
-          config.seconds,
-          config.rule,
-          config.target || null,
-          Boolean(config.chain),
-        ],
-      ]),
-  );
+  configForPreset = sharedConfig.configForPreset,
+  validateCustomConfig = sharedConfig.validateCustomConfig,
+  isSuddenDeath = sharedConfig.isSuddenDeath,
+  requiresChain = sharedConfig.requiresChain,
+  hasScoreTarget = sharedConfig.hasScoreTarget,
+  usesAdultLexicon = sharedConfig.usesAdultLexicon,
+  isPartyRound = sharedConfig.isPartyRound,
+  shouldEndOnRejectedWord = sharedConfig.shouldEndOnRejectedWord;
 let customAdult = false;
 function emit(name, detail = {}) {
   document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
@@ -91,10 +83,9 @@ const s = {
   onlineRoundKey: null,
   onlineRandomRush: false,
   pendingOnlineTrace: null,
-  party: false,
-  suddenDeath: null,
-  chain: false,
   lastWord: "",
+  suddenDeathEvent: null,
+  config: null,
 };
 const avatarOptions = [
     "🐈",
@@ -442,8 +433,8 @@ function end() {
   $("#finalScore").textContent = s.score;
   $("#resultWordCount").textContent = s.found.size;
   renderResults();
-  renderSuddenDeath(s.suddenDeath);
-  if (s.suddenDeath) triggerSuddenDeathExplosion(s.suddenDeath);
+  renderSuddenDeath(s.suddenDeathEvent);
+  if (s.suddenDeathEvent) triggerSuddenDeathExplosion(s.suddenDeathEvent);
   $("#resultAchievement").hidden = !s.found.size;
   $("#resultAchievementTitle").textContent = s.found.size
     ? "Round complete"
@@ -459,12 +450,12 @@ function end() {
   if (s.score > 0) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
   recordPlayDay();
   updateProfile();
-  $("#again").textContent = s.rush
+    $("#again").textContent = s.rush
     ? "Continue Random Rush →"
-    : s.party
+    : isPartyRound(s.config)
       ? "Continue party mode →"
       : "Play again →";
-  $("#exitParty").hidden = !s.party;
+  $("#exitParty").hidden = !isPartyRound(s.config);
   show("resultsScreen");
   emit("round-complete", {
     ranking: [
@@ -482,7 +473,7 @@ function end() {
     cooperative: false,
     mode: s.mode,
     randomRush: s.rush,
-    suddenDeath: s.suddenDeath,
+    suddenDeath: s.suddenDeathEvent,
   });
   if (s.rush) {
     const rushDelay = window.wordrushRushDelay || 20000;
@@ -614,54 +605,49 @@ function stopRush() {
   $("#stopRushResults").hidden = true;
   show("homeScreen");
 }
-async function start(mode, override = null, adultMode = false, rush = false) {
+async function start(mode, rawConfig = null, adultMode = false, rush = false) {
   if (
     window.wordrushStartSessionGame?.({
       mode,
-      config: override
-        ? {
-            label: override[0],
-            min: override[1],
-            size: override[2],
-            seconds: override[3],
-            rule: override[4],
-            target: override[5]?.target || null,
-            adult: adultMode,
-            sudden: Boolean(override[5]?.sudden),
-          }
-        : null,
+      config: rawConfig || null,
       randomRush: rush,
     })
   )
     return;
-  if (
-    (mode === "dirty" || adultMode) &&
-    !confirm("Dirty Mode contains adult language. Continue?")
-  )
+  const preset = configForPreset(mode);
+  if (preset) {
+    if (usesAdultLexicon(preset) && !confirm("Dirty Mode contains adult language. Continue?"))
+      return;
+    s.config = { ...preset };
+    customAdult = usesAdultLexicon(preset);
+  } else if (mode === "custom") {
+    const raw = { ...(rawConfig || {}), adult: adultMode || Boolean(rawConfig?.adult) };
+    if (usesAdultLexicon(raw) && !confirm("Dirty Mode contains adult language. Continue?"))
+      return;
+    const result = validateCustomConfig(raw);
+    if (!result.valid) {
+      toast(result.error || "Invalid custom configuration");
+      return;
+    }
+    s.config = result.config;
+    customAdult = usesAdultLexicon(result.config);
+  } else {
     return;
-  let m = override || MODE[mode];
+  }
   if (rush && !s.rush) {
     randomModeQueue = [];
     s.nextRushMode = null;
   }
-  customAdult = adultMode || mode === "dirty";
-  s.customConfig = override;
-  s.rush = rush;
-  clearTimeout(s.rushTimer);
-  clearInterval(s.rushCountdown);
-  s.target =
-    override?.[5]?.target || (typeof m[5] === "number" ? m[5] : null);
-  s.chain = Boolean(
-    override?.[5]?.chain ?? (typeof m[6] === "boolean" ? m[6] : false),
-  );
   s.mode = mode;
-  s.party = Boolean(override?.[0] === "PARTY MODE");
+  s.rush = rush;
+  s.suddenDeathEvent = null;
   s.onlineRoundKey = null;
   s.pendingOnlineTrace = null;
-  s.suddenDeath = null;
+  clearTimeout(s.rushTimer);
+  clearInterval(s.rushCountdown);
   document.body.dataset.mode = mode;
-  s.n = m[2];
-  s.time = m[3];
+  s.n = s.config.size;
+  s.time = s.config.seconds;
   s.score = 0;
   s.found.clear();
   s.lastWord = "";
@@ -671,10 +657,10 @@ async function start(mode, override = null, adultMode = false, rush = false) {
   s.startedAt = Date.now();
   s.endsAt = s.startedAt + s.time * 1000;
   s.b = make();
-  $("#gameMode").textContent = m[0];
+  $("#gameMode").textContent = s.config.label;
   $("#gameTitle").textContent = "Round 01 · " + s.n + "×" + s.n;
-  $("#ruleBanner").textContent = m[4];
-  $("#gameHint").textContent = "Minimum " + m[1] + " letters";
+  $("#ruleBanner").textContent = s.config.rule;
+  $("#gameHint").textContent = "Minimum " + s.config.min + " letters";
   $("#gameScore").textContent = 0;
   $("#timer").textContent = formatTimer(s.time);
   $("#stopRush").hidden = !s.rush;
@@ -682,16 +668,16 @@ async function start(mode, override = null, adultMode = false, rush = false) {
   $("#stopRushResults").hidden = true;
   render();
   showRoundIntro({
-    label: m[0],
-    rule: m[4],
+    label: s.config.label,
+    rule: s.config.rule,
     detail: s.rush ? "Random Rush · next challenge loading" : "Your board is ready",
     analytics: {
       mode,
       multiplayer: false,
       random_rush: s.rush,
-      party: s.party,
+      party: isPartyRound(s.config),
       grid_size: s.n,
-      minimum_length: m[1],
+      minimum_length: s.config.min,
     },
     onStart: () => {
       show("gameScreen");
@@ -699,10 +685,10 @@ async function start(mode, override = null, adultMode = false, rush = false) {
         mode,
         multiplayer: false,
         random_rush: s.rush,
-        party: s.party,
+        party: isPartyRound(s.config),
         grid_size: s.n,
-        minimum_length: m[1],
-        duration_seconds: m[3],
+        minimum_length: s.config.min,
+        duration_seconds: s.config.seconds,
       });
       clearInterval(s.timer);
       s.timer = setInterval(() => {
@@ -741,13 +727,13 @@ async function submit() {
     clearPick();
     return;
   }
-  let m = s.customConfig || MODE[s.mode],
+  let config = s.config,
     validPath = pickedPathIsValid(trace, w),
     duplicate = s.found.has(w),
     roundStartedAt = s.startedAt;
   clearPick();
   const inDictionary =
-    w.length >= m[1] && validPath && !duplicate
+    w.length >= config.min && validPath && !duplicate
       ? await isServerDictionaryWord(w, customAdult)
       : false;
   if (
@@ -757,8 +743,8 @@ async function submit() {
   )
     return;
   const chainBreak =
-    s.chain && s.lastWord && w[0] !== s.lastWord.at(-1);
-  const ok = w.length >= m[1] && validPath && inDictionary && !chainBreak;
+    requiresChain(config) && s.lastWord && w[0] !== s.lastWord.at(-1);
+  const ok = w.length >= config.min && validPath && inDictionary && !chainBreak;
   if (ok && !s.found.has(w)) {
     const points = w.length * w.length;
     s.found.add(w);
@@ -777,7 +763,7 @@ async function submit() {
       multiplayer: false,
       randomRush: s.rush,
     });
-    if ((s.mode === "race" || s.target) && s.score >= (s.target || 500))
+    if (hasScoreTarget(config) && s.score >= config.target)
       end();
   } else if (duplicate || s.found.has(w)) {
     pulseDuplicateWord(trace);
@@ -792,39 +778,40 @@ async function submit() {
       random_rush: s.rush,
     });
   } else {
+    const rejectReason = w.length < config.min
+      ? "minimum"
+      : chainBreak
+        ? "chain"
+        : !validPath
+          ? "path"
+          : "dictionary";
     pulseIncorrectWord(trace);
     profile.incorrect++;
     updateProfile();
     toast(
-      w.length < m[1]
-        ? "Wrong word · need " + m[1] + " letters"
-        : chainBreak
+      rejectReason === "minimum"
+        ? "Wrong word · need " + config.min + " letters"
+        : rejectReason === "chain"
           ? "Wrong word · chain starts with " + s.lastWord.at(-1)
-        : !validPath
+        : rejectReason === "path"
           ? "Wrong word · tiles must connect"
           : "Wrong word · not in dictionary",
       "wrong",
     );
     emit("word-rejected", {
       mode: s.mode,
-      reason: w.length < m[1]
-        ? "minimum"
-        : chainBreak
-          ? "chain"
-          : !validPath
-            ? "path"
-            : "dictionary",
+      reason: rejectReason,
       word_length: w.length,
       multiplayer: false,
       random_rush: s.rush,
     });
-    if (s.mode === "sudden") {
-      s.suddenDeath = {
+    if (shouldEndOnRejectedWord(config, rejectReason)) {
+      s.suddenDeathEvent = {
         playerName: profile.name,
         playerAvatar: profile.avatar,
         word: w,
       };
-      triggerSuddenDeathExplosion(s.suddenDeath);
+      triggerSuddenDeathExplosion(s.suddenDeathEvent);
       setTimeout(end, 300);
     }
   }
@@ -915,8 +902,14 @@ document.querySelectorAll("[data-party-min]").forEach((button) => button.onclick
 document.querySelectorAll("[data-party-time]").forEach((button) => button.onclick = () => { partyConfig.seconds = +button.dataset.partyTime; syncPartyOptions(); });
 $("#partyForm").addEventListener("submit", (event) => {
   if (event.submitter?.value !== "start") return;
-  const config = ["PARTY MODE", partyConfig.min, partyConfig.size, partyConfig.seconds, `Party round · minimum ${partyConfig.min} letters`, { party: true }];
-  start("custom", config);
+  start("custom", {
+    label: "PARTY MODE",
+    min: partyConfig.min,
+    size: partyConfig.size,
+    seconds: partyConfig.seconds,
+    rule: "Party round \u00b7 minimum " + partyConfig.min + " letters",
+    party: true,
+  });
 });
 $("#again").onclick = () => {
   if (s.rush) {
@@ -927,10 +920,10 @@ $("#again").onclick = () => {
     emit("random-rush", { action: "continue", upcoming_mode: s.nextRushMode });
     return start(consumeNextRushMode(), null, false, true);
   }
-  if (s.party) return openParty();
-  start(s.mode, s.customConfig, customAdult);
+  if (isPartyRound(s.config)) return openParty();
+  start(s.mode, s.config, usesAdultLexicon(s.config));
 };
-$("#exitParty").onclick = () => { s.party = false; $("#exitParty").hidden = true; $("#again").textContent = "Play again →"; show("homeScreen"); };
+$("#exitParty").onclick = () => { s.config = null; $("#exitParty").hidden = true; $("#again").textContent = "Play again →"; show("homeScreen"); };
 $("#endGame").onclick = end;
 document
   .querySelectorAll("[data-mode]")
@@ -1000,26 +993,25 @@ $("#customForm")?.addEventListener("submit", (event) => {
     minimum: "WORD STRETCH",
     sudden: "SUDDEN DEATH",
     race: "RACE MODE",
-    dirty: "DIRTY MODE · 18+",
+    dirty: "DIRTY MODE \u00b7 18+",
   };
   const rule = type === "race"
     ? "First to 500 points"
     : type === "sudden"
-      ? "One invalid word ends the round · minimum " + min
-      : "Minimum " + min + " letters · " + seconds + " seconds";
+      ? "One invalid word ends the round \u00b7 minimum " + min
+      : "Minimum " + min + " letters \u00b7 " + seconds + " seconds";
   start(
     "custom",
-    [
-      labels[type],
+    {
+      label: labels[type],
       min,
       size,
       seconds,
       rule,
-      {
-        target: type === "race" ? 500 : null,
-        sudden: type === "sudden",
-      },
-    ],
+      target: type === "race" ? 500 : null,
+      sudden: type === "sudden",
+      adult: type === "dirty",
+    },
     type === "dirty",
   );
 });
@@ -1065,31 +1057,24 @@ window.wordrushOnlineRound = (round, config, mode, randomRush = false) => {
   const roundKey = round.id || round.endsAt + ":" + round.board.join("");
   if (s.onlineRoundKey === roundKey && !s.done) return;
   s.onlineRoundKey = roundKey;
-  const match = Object.entries(MODE).find(
-    ([, value]) => value[0] === config?.label,
-  );
-  s.mode = mode || match?.[0] || "classic";
+  s.mode = mode || "classic";
   s.onlineRandomRush = Boolean(randomRush);
-  s.party = config?.label === "PARTY MODE";
-  s.target = config?.target || (s.mode === "race" ? 500 : null);
-  s.chain = Boolean(config?.chain);
   s.pendingOnlineTrace = null;
-  s.suddenDeath = null;
+  s.suddenDeathEvent = null;
   s.lastWord = "";
-  customAdult = Boolean(config?.adult);
-  s.customConfig = [
-    config?.label || "MULTIPLAYER",
-    config?.min || 3,
-    round.size,
-    config?.seconds ||
-      Math.max(1, Math.ceil((round.endsAt - Date.now()) / 1000)),
-    config?.rule || "Multiplayer round",
-    {
-      target: config?.target || null,
-      sudden: Boolean(config?.sudden),
-      chain: Boolean(config?.chain),
-    },
-  ];
+  s.config = config ? { ...config } : {
+    label: mode?.toUpperCase() || "MULTIPLAYER",
+    min: 3,
+    size: round.size,
+    seconds: Math.max(1, Math.ceil((round.endsAt - Date.now()) / 1000)),
+    rule: "Multiplayer round",
+    target: null,
+    sudden: false,
+    chain: false,
+    adult: false,
+    party: false,
+  };
+  customAdult = usesAdultLexicon(s.config);
   document.body.dataset.mode = s.mode;
   s.n = round.size;
   s.b = round.board;
@@ -1099,10 +1084,10 @@ window.wordrushOnlineRound = (round, config, mode, randomRush = false) => {
   s.done = 0;
   s.startedAt = round.startsAt || Date.now();
   s.endsAt = round.endsAt || Date.now();
-  $("#gameMode").textContent = config?.label || "MULTIPLAYER";
-  $("#gameTitle").textContent = "Round 01 · " + round.size + "×" + round.size;
-  $("#ruleBanner").textContent = config?.rule || "";
-  $("#gameHint").textContent = "Minimum " + (config?.min || 3) + " letters";
+  $("#gameMode").textContent = s.config.label;
+  $("#gameTitle").textContent = "Round 01 \u00b7 " + round.size + "\u00d7" + round.size;
+  $("#ruleBanner").textContent = s.config.rule;
+  $("#gameHint").textContent = "Minimum " + s.config.min + " letters";
   const updateOnlineTimer = () => {
     s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
     $("#timer").textContent = formatTimer(s.time);
@@ -1110,17 +1095,17 @@ window.wordrushOnlineRound = (round, config, mode, randomRush = false) => {
   clearInterval(s.timer);
   render();
   showRoundIntro({
-    label: config?.label || "MULTIPLAYER",
-    rule: config?.rule || "Multiplayer round",
-    detail: "Everyone is in · start when you’re ready",
+    label: s.config.label,
+    rule: s.config.rule,
+    detail: "Everyone is in \u00b7 start when you\u2019re ready",
     duration: Math.max(0, (round.introEndsAt || Date.now() + 4000) - Date.now()),
     analytics: {
       mode: s.mode,
       multiplayer: true,
       random_rush: s.onlineRandomRush,
-      party: s.party,
+      party: isPartyRound(s.config),
       grid_size: s.n,
-      minimum_length: config?.min || 3,
+      minimum_length: s.config.min,
     },
     onStart: () => {
       show("gameScreen");
@@ -1130,10 +1115,10 @@ window.wordrushOnlineRound = (round, config, mode, randomRush = false) => {
         mode: s.mode,
         multiplayer: true,
         random_rush: s.onlineRandomRush,
-        party: s.party,
+        party: isPartyRound(s.config),
         grid_size: s.n,
-        minimum_length: config?.min || 3,
-        duration_seconds: config?.seconds || 0,
+        minimum_length: s.config.min,
+        duration_seconds: s.config.seconds,
       });
     },
   });
@@ -1168,8 +1153,8 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   const ownPlayer = normalizedRanking.find((player) => player.id === guestId);
   const mine = ownPlayer?.score ?? s.score;
   const ownWords = ownPlayer?.words || [];
-  const suddenDeath = result.reason === "invalid_word" ? result.suddenDeath : null;
-  s.suddenDeath = suddenDeath || null;
+    const suddenDeath = result.reason === "invalid_word" ? result.suddenDeath : null;
+  s.suddenDeathEvent = suddenDeath || null;
   s.score = mine;
   s.found.clear();
   ownWords.forEach((item) => s.found.add(item.word));
@@ -1275,7 +1260,7 @@ const saveProfile = () => {
 $("#profileForm")?.addEventListener("submit", saveProfile);
 function make() {
   return sharedBoardCore.generateBoard(s.n, [...lex()], {
-    preferredWords: s.mode === "dirty" || customAdult ? adult : common,
+    preferredWords: customAdult ? adult : common,
   });
 }
 let selectionClearTimer = null;
