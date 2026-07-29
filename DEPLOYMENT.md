@@ -29,6 +29,24 @@ connected to the room.
   refuses to start if it is missing or invalid. Runtime does not download or
   rebuild ESDB and does not depend on a host dictionary package.
 
+## Browser cache policy
+
+HTML entry points, root JavaScript and CSS, `manifest.webmanifest`, receiver
+resources, and the unversioned `/dictionary.json` compatibility alias are
+served with `Cache-Control: no-cache`. These stable URLs are mutable release
+inputs: requiring revalidation prevents a browser from combining a newly
+deployed HTML or server release with a stale protocol-bearing client resource.
+The versioned `/api/dictionary?dictionaryId=...` endpoint remains normally
+cacheable because its selected dictionary ID is part of the request contract.
+
+Images and other static files beneath `/assets/`, along with `robots.txt` and
+`sitemap.xml`, retain their normal cacheable policies. Deployment and rollback
+restore a complete release set through the staged archive, bounded activation,
+and rollback archive. After activation, `deploy/deploy-production` verifies
+these cache headers through the public Apache HTTPS endpoint. Rollback does not
+require manually clearing browser caches because protocol-bearing resources
+revalidate at their stable URLs.
+
 The public leaderboard trust model is authoritative multiplayer only. Browser
 solo scores are never persisted; the legacy score endpoint returns
 `410 UNVERIFIED_SCORE`. Before the first release that uses the trusted schema,

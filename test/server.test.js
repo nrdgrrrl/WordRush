@@ -150,6 +150,59 @@ test.afterEach(() => {
   generationTestHooks.yieldScheduler = null;
 });
 
+test("revalidates mutable browser resources while retaining static asset caching", async () => {
+  const origin = "http://127.0.0.1:" + server.address().port;
+  const noCachePaths = [
+    "/",
+    "/index.html",
+    "/game-config.js",
+    "/board-core.js",
+    "/styles.css",
+    "/manifest.webmanifest",
+    "/receiver/",
+    "/receiver/index.html",
+    "/receiver/receiver.js",
+    "/receiver/receiver.css",
+    "/dictionary.json",
+  ];
+  for (const requestPath of noCachePaths) {
+    const response = await fetch(origin + requestPath);
+    assert.equal(response.status, 200, requestPath);
+    assert.equal(response.headers.get("cache-control"), "no-cache", requestPath);
+  }
+
+  for (const requestPath of ["/assets/cat-rush.png", "/robots.txt"]) {
+    const response = await fetch(origin + requestPath);
+    assert.equal(response.status, 200, requestPath);
+    assert.equal(
+      response.headers.get("cache-control"),
+      "public, max-age=3600" +
+        (requestPath === "/assets/cat-rush.png"
+          ? ", stale-while-revalidate=86400"
+          : ""),
+      requestPath,
+    );
+  }
+});
+
+test("a stale cached-client request still receives the current mutable script", async () => {
+  const endpoint = "http://127.0.0.1:" + server.address().port + "/app.js";
+  const first = await fetch(endpoint);
+  const currentBody = await first.text();
+  assert.equal(first.headers.get("cache-control"), "no-cache");
+
+  const revalidated = await fetch(endpoint, {
+    headers: {
+      "Cache-Control": "max-age=3600",
+      "If-None-Match": '"old-release"',
+      "If-Modified-Since": "Wed, 01 Jan 2020 00:00:00 GMT",
+    },
+  });
+  assert.equal(revalidated.status, 200);
+  assert.equal(revalidated.headers.get("cache-control"), "no-cache");
+  assert.equal(await revalidated.text(), currentBody);
+});
+
 test("creates a session, starts a round, and admits ten players", async () => {
   const players = await Promise.all(
     Array.from({ length: 10 }, (_, i) => client("player-" + i)),

@@ -125,6 +125,19 @@ function deny(res, status, code) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   res.end(JSON.stringify({ error: code }));
 }
+function staticCacheControl(requested) {
+  if (
+    requested === "/dictionary.json" ||
+    requested.startsWith("/receiver/") ||
+    requested === "/manifest.webmanifest" ||
+    (path.dirname(requested) === "/" &&
+      [".css", ".html", ".js"].includes(path.extname(requested)))
+  )
+    return "no-cache";
+  if (requested === "/robots.txt" || requested === "/sitemap.xml")
+    return "public, max-age=3600";
+  return "public, max-age=3600, stale-while-revalidate=86400";
+}
 function securityHeaders(res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "same-origin");
@@ -1470,7 +1483,7 @@ const server = http.createServer((req, res) => {
   if (pathname === "/dictionary.json") {
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "public, max-age=86400",
+      "Cache-Control": staticCacheControl(pathname),
     });
     return res.end(JSON.stringify(getDictionary().words));
   }
@@ -1534,12 +1547,7 @@ const server = http.createServer((req, res) => {
       (types[ext] || "application/octet-stream") +
       (types[ext]?.startsWith("text/") ? "; charset=utf-8" : ""),
     "X-Content-Type-Options": "nosniff",
-    "Cache-Control":
-      requested === "/index.html"
-        ? "no-cache"
-        : requested === "/robots.txt" || requested === "/sitemap.xml"
-          ? "public, max-age=3600"
-          : "public, max-age=3600, stale-while-revalidate=86400",
+    "Cache-Control": staticCacheControl(requested),
   });
   fs.createReadStream(file).pipe(res);
 });
