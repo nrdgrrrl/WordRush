@@ -7,6 +7,7 @@ const http = require("node:http");
 const WebSocket = require("ws");
 const { COMMON_WORDS, ADULT_WORDS } = require("../game-config");
 const { neighbors } = require("../game-core");
+const { DEFAULT_DICTIONARY_ID } = require("../dictionary-registry");
 const { Leaderboard } = require("../leaderboard");
 process.env.RANDOM_RUSH_DELAY = "50";
 process.env.WORDRUSH_ROOM_RECONNECT_GRACE_MS = "100";
@@ -171,6 +172,52 @@ test("creates a session, starts a round, and admits ten players", async () => {
   assert.equal(rooms.get(created.code).players.size, 10);
   assert.equal(created.code.length, 5);
   players.forEach((ws) => ws.close());
+});
+
+test("selected dictionary freezes into round, resume, and result state", async () => {
+  const host = await client("dictionary-freeze-host");
+  const createdPromise = next(host, "room_created");
+  message(host, "create_room", { name: "dictionary-freeze-host" });
+  const created = await createdPromise;
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", {
+    mode: "classic",
+    dictionaryId: DEFAULT_DICTIONARY_ID,
+  });
+  const started = await startedPromise;
+  assert.equal(started.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
+  assert.equal(started.round.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
+  assert.equal(rooms.get(created.code).round.dictionaryId, DEFAULT_DICTIONARY_ID);
+
+  const reconnectToken = created.reconnectToken;
+  host.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const resumed = await client("dictionary-freeze-host");
+  const resumedStatePromise = next(resumed, "room_state");
+  message(resumed, "resume_room", {
+    code: created.code,
+    reconnectToken,
+  });
+  const resumedState = await resumedStatePromise;
+  assert.equal(resumedState.round.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
+
+  const finishedPromise = next(resumed, "round_finished");
+  message(resumed, "end_round");
+  const finished = await finishedPromise;
+  assert.equal(finished.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
+
+  const resultToken = rooms.get(created.code).players.get("dictionary-freeze-host").reconnectToken;
+  resumed.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const resultResume = await client("dictionary-freeze-host");
+  const resultStatePromise = next(resultResume, "room_state");
+  message(resultResume, "resume_room", {
+    code: created.code,
+    reconnectToken: resultToken,
+  });
+  const resultState = await resultStatePromise;
+  assert.equal(resultState.lastResult.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
+  resultResume.close();
 });
 
 test("cooperative board generation lets another room process a queued action", async () => {

@@ -18,6 +18,7 @@ const {
   shouldEndOnRejectedWord,
 } = require("../game-config");
 const boardCore = require("../board-core");
+const { DEFAULT_DICTIONARY_ID } = require("../dictionary-registry");
 test("Random Rush includes every eligible built-in game mode", () => {
   assert.deepEqual(RANDOM_RUSH_EXCLUDED_MODES, ["coop", "dirty"]);
   assert.deepEqual(
@@ -44,6 +45,19 @@ test("dictionary membership uses the shared server lexicon", () => {
   assert.equal(isDictionaryWord("WORDRUSHISNOTAWORD"), false);
   assert.equal(isDictionaryWord("SHIT"), false);
   assert.equal(isDictionaryWord("SHIT", "dirty"), true);
+  assert.equal(
+    validateSubmission({
+      dictionaryId: DEFAULT_DICTIONARY_ID,
+      board: ["C", "A", "T"],
+      size: 3,
+      word: "CAT",
+      path: [0, 1, 2],
+      mode: "classic",
+      minimum: 3,
+      found: new Set(),
+    }).valid,
+    true,
+  );
 });
 test("configured boards are bounded, deterministic, and pathable", () => {
   for (const [mode, config] of Object.entries(MODE_CONFIG)) {

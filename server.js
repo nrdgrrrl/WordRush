@@ -9,12 +9,16 @@ const http = require("node:http"),
   { WebSocketServer } = require("ws");
 const {
   MODE_CONFIG,
-  createLexicon,
   getPreparedLexicon,
   generateBoardCooperatively,
   isDictionaryWord,
   validateSubmission,
 } = require("./game-core");
+const {
+  DEFAULT_DICTIONARY_ID,
+  getDictionary,
+  getDictionaryMetadata,
+} = require("./dictionary-registry");
 const {
   configForPreset,
   validateCustomConfig,
@@ -78,14 +82,7 @@ const nodeGenerationScheduler = () =>
 
 if (process.env.NODE_ENV === "production" && !LAN_MODE && !configuredOrigins.length)
   throw new Error("WORDRUSH_ALLOWED_ORIGINS is required in production");
-if (
-  process.env.NODE_ENV === "production" &&
-  !LAN_MODE &&
-  !["/usr/share/dict/american-english", "/usr/share/dict/words"].some(fs.existsSync)
-)
-  throw new Error(
-    "A system word list is required in production (install wamerican)",
-  );
+getDictionary();
 
 function clientIp(req, trustProxy = IS_LOOPBACK) {
   // Apache is trusted only when Node is bound to loopback. Configure it to pass
@@ -227,13 +224,16 @@ function roomConfig(room) {
     MODE_CONFIG.classic
   );
 }
+function roomDictionaryMetadata(room) {
+  return getDictionaryMetadata(room.round?.dictionaryId || room.dictionaryId || DEFAULT_DICTIONARY_ID);
+}
 function recordedScore(player) {
   return (player.words || []).reduce(
     (total, item) => total + Math.max(0, Number(item.points) || 0),
     0,
   );
 }
-function createPendingConsent(room, mode, config) {
+function createPendingConsent(room, mode, config, dictionaryId = room.dictionaryId || DEFAULT_DICTIONARY_ID) {
   if (!config) return;
   const adultConfig = { ...config, adult: true };
   const requestId = crypto.randomUUID();
@@ -246,6 +246,7 @@ function createPendingConsent(room, mode, config) {
     requestId,
     mode,
     config: adultConfig,
+    dictionaryId,
     requiredPlayerIds: connectedIds,
     acceptedPlayerIds: [],
     expiresAt,
@@ -308,6 +309,7 @@ async function completeAdultConsent(room, requestId) {
     pending.config,
     acceptedIds,
     storedRequestId,
+    pending.dictionaryId,
   );
   if (!started && room.pendingConsent === pending)
     cancelPendingConsent(room, "generation_failed");
@@ -379,6 +381,7 @@ function state(room) {
     code: room.code,
     creatorId: room.creatorId,
     randomRush: room.randomRush,
+    dictionary: roomDictionaryMetadata(room),
     mode: room.mode,
     status: room.status,
     results: room.results,
@@ -404,6 +407,7 @@ function state(room) {
           startsAt: room.round.startedAt,
           introEndsAt: room.round.introEndsAt,
           endsAt: room.round.endsAt,
+          dictionary: room.round.dictionary,
         }
       : null,
   };
@@ -412,6 +416,7 @@ function displayState(room) {
   return {
     code: room.code,
     mode: room.mode,
+    dictionary: roomDictionaryMetadata(room),
     status: room.status,
     results: room.results,
     config: roomConfig(room),
@@ -434,6 +439,7 @@ function displayState(room) {
           startsAt: room.round.startedAt,
           introEndsAt: room.round.introEndsAt,
           endsAt: room.round.endsAt,
+          dictionary: room.round.dictionary,
         }
       : null,
   };
@@ -517,11 +523,14 @@ function generationFailure(room, generation, result) {
   room.generation = null;
   const failureCode = result?.error?.code || "GENERATION_FAILED";
   const creator = room.players.get(room.creatorId);
+  const diagnostics = result?.diagnostics
+    ? { ...result.diagnostics, dictionary: generation.dictionary }
+    : null;
   send(creator?.ws, {
     type: "error",
     code: "BOARD_GENERATION_FAILED",
     failureCode,
-    diagnostics: result?.diagnostics || null,
+    diagnostics,
   });
   broadcast(room, state(room));
   return false;
@@ -532,6 +541,7 @@ async function startRound(
   configArg = null,
   roundConsentedPlayerIds = null,
   consentRequestId = null,
+  dictionaryId = room.dictionaryId || DEFAULT_DICTIONARY_ID,
 ) {
   if (room.generation) return false;
   let config = configArg;
@@ -551,15 +561,17 @@ async function startRound(
     if (!validConsent) return;
   }
   clearRoomTimer(room);
+  const dictionary = getDictionary(dictionaryId);
   const validationMode = usesAdultLexicon(config) ? "dirty" : "classic";
   const generation = {
     token: crypto.randomUUID(),
     consentRequestId,
     seed: crypto.randomInt(0x100000000),
     cancelled: false,
+    dictionary: dictionary.metadata,
   };
   room.generation = generation;
-  const prepared = generationTestHooks.lexicon || getPreparedLexicon(validationMode);
+  const prepared = generationTestHooks.lexicon || getPreparedLexicon(dictionary.id, validationMode);
   let result;
   try {
     result = await generateBoardCooperatively(
@@ -586,6 +598,7 @@ async function startRound(
         size: config.size,
         mode: validationMode,
         minimum: config.min,
+        dictionary: dictionary.metadata,
         lexiconFingerprint: prepared.fingerprint,
         normalizedLexiconCount: prepared.normalizedCount,
       },
@@ -620,6 +633,7 @@ async function startRound(
   }
   room.mode = selected;
   room.config = config;
+  room.dictionaryId = dictionary.id;
   const introEndsAt = Date.now() + ROUND_INTRO_MS;
   const startedAt = introEndsAt;
   room.round = {
@@ -633,6 +647,8 @@ async function startRound(
     endsAt: startedAt + config.seconds * 1000,
     timer: null,
     config,
+    dictionaryId: dictionary.id,
+    dictionary: dictionary.metadata,
     validationMode,
     adultConsentRequestId: consentRequestId,
     consentedPlayerIds,
@@ -683,6 +699,7 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
     results: room.results,
     reason,
     suddenDeath,
+    dictionary: room.round.dictionary,
     ranking: rankedPlayers.map((p) => ({
         id: p.id,
         name: p.name,
@@ -940,6 +957,7 @@ async function handle(ws, message) {
     const room = {
       code: code(),
       mode: "classic",
+      dictionaryId: DEFAULT_DICTIONARY_ID,
       creatorId: null,
       randomRush: false,
       randomModeQueue: [],
@@ -1266,6 +1284,18 @@ async function handle(ws, message) {
     if (room.status === "playing")
       return send(ws, { type: "error", code: "ROUND_PLAYING" });
     const requested = String(message.mode || "classic");
+    const requestedDictionaryId = message.dictionaryId || room.dictionaryId || DEFAULT_DICTIONARY_ID;
+    try {
+      getDictionary(requestedDictionaryId);
+    } catch (error) {
+      return send(ws, {
+        type: "error",
+        code: error.message.startsWith("UNKNOWN_DICTIONARY_ID")
+          ? "UNKNOWN_DICTIONARY_ID"
+          : "DICTIONARY_ARTIFACT_INVALID",
+        dictionaryId: requestedDictionaryId,
+      });
+    }
     if ("customWords" in message) {
       return send(ws, { type: "error", code: "CUSTOM_WORDS_REJECTED" });
     }
@@ -1274,7 +1304,7 @@ async function handle(ws, message) {
         cancelPendingConsent(room, "configuration_changed");
       room.randomRush = true;
       room.randomModeQueue = [];
-      return startRound(room, randomMode(room));
+      return startRound(room, randomMode(room), null, null, null, requestedDictionaryId);
     }
     let config;
     if (requested === "custom") {
@@ -1291,14 +1321,14 @@ async function handle(ws, message) {
     if (usesAdultLexicon(config)) {
       if (room.pendingConsent)
         cancelPendingConsent(room, "configuration_changed");
-      createPendingConsent(room, requested, config);
+      createPendingConsent(room, requested, config, requestedDictionaryId);
       return;
     }
     if (room.pendingConsent)
       cancelPendingConsent(room, "configuration_changed");
     room.randomRush = false;
     room.randomModeQueue = [];
-    return startRound(room, requested, config);
+    return startRound(room, requested, config, null, null, requestedDictionaryId);
   }
   if (type === "start_round_now") {
     if (client.id !== room.creatorId)
@@ -1356,6 +1386,7 @@ async function handle(ws, message) {
       board: room.round.board,
       size: room.round.size,
       mode: room.round.validationMode,
+      dictionaryId: room.round.dictionaryId,
       minimum: roomConfig(room).min,
       found: room.mode === "coop" ? room.round.found : player.found,
     });
@@ -1441,7 +1472,7 @@ const server = http.createServer((req, res) => {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "public, max-age=86400",
     });
-    return res.end(JSON.stringify(createLexicon("classic")));
+    return res.end(JSON.stringify(getDictionary().words));
   }
   let requested = pathname;
   if (requested === "/") requested = "/index.html";
@@ -1661,6 +1692,21 @@ function readJson(req) {
 }
 async function leaderboardRequest(req, res) {
   const url = new URL(req.url, "http://localhost");
+  if (url.pathname === "/api/dictionary" && req.method === "GET") {
+    const dictionaryId = url.searchParams.get("dictionaryId") || DEFAULT_DICTIONARY_ID;
+    let dictionary;
+    try {
+      dictionary = getDictionary(dictionaryId);
+    } catch (error) {
+      const unknown = error.message.startsWith("UNKNOWN_DICTIONARY_ID");
+      return deny(res, unknown ? 404 : 500, unknown ? "UNKNOWN_DICTIONARY_ID" : "DICTIONARY_ARTIFACT_INVALID");
+    }
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "public, max-age=86400",
+    });
+    return res.end(JSON.stringify({ dictionary: dictionary.metadata, words: dictionary.words }));
+  }
   if (url.pathname === "/api/word-check" && req.method === "GET") {
     const word = String(url.searchParams.get("word") || "")
       .trim()
@@ -1673,11 +1719,19 @@ async function leaderboardRequest(req, res) {
       return res.end(JSON.stringify({ error: "INVALID_WORD" }));
     }
     const mode = url.searchParams.get("adult") === "1" ? "dirty" : "classic";
+    const dictionaryId = url.searchParams.get("dictionaryId") || DEFAULT_DICTIONARY_ID;
+    let valid;
+    try {
+      valid = isDictionaryWord(word, dictionaryId, mode);
+    } catch (error) {
+      const unknown = error.message.startsWith("UNKNOWN_DICTIONARY_ID");
+      return deny(res, unknown ? 404 : 500, unknown ? "UNKNOWN_DICTIONARY_ID" : "DICTIONARY_ARTIFACT_INVALID");
+    }
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "private, max-age=86400",
     });
-    return res.end(JSON.stringify({ valid: isDictionaryWord(word, mode) }));
+    return res.end(JSON.stringify({ valid }));
   }
   if (url.pathname === "/api/cast-config" && req.method === "GET") {
     res.writeHead(200, {

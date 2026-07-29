@@ -24,10 +24,10 @@ connected to the room.
 - The source templates are `deploy/wordrush.service` and
   `deploy/wordrush.party.conf`. The dedicated LAN command is
   `bash serve-lan.sh`; it is intentionally not a public deployment mode.
-- Install `wamerican` on the host. Wordrush uses `/usr/share/dict/words` as the
-  authoritative normal-word dictionary; production intentionally refuses to
-  start without it so the browser and multiplayer server cannot silently use
-  different vocabularies.
+- The release tree includes the verified compiled `wordrush-ca-standard-v1`
+  artifact and manifest. The service validates that artifact at startup and
+  refuses to start if it is missing or invalid. Runtime does not download or
+  rebuild ESDB and does not depend on a host dictionary package.
 
 The public leaderboard trust model is authoritative multiplayer only. Browser
 solo scores are never persisted; the legacy score endpoint returns

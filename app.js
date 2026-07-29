@@ -6,6 +6,7 @@ const $ = (s) => document.querySelector(s),
   isSuddenDeath = sharedConfig.isSuddenDeath,
   requiresChain = sharedConfig.requiresChain,
   hasScoreTarget = sharedConfig.hasScoreTarget,
+  DEFAULT_DICTIONARY_ID = sharedConfig.DEFAULT_DICTIONARY_ID,
   usesAdultLexicon = sharedConfig.usesAdultLexicon,
   isPartyRound = sharedConfig.isPartyRound,
   shouldEndOnRejectedWord = sharedConfig.shouldEndOnRejectedWord;
@@ -35,15 +36,39 @@ function consumeNextRushMode() {
   s.nextRushMode = null;
   return mode;
 }
-const common = sharedConfig.COMMON_WORDS,
-  adult = sharedConfig.ADULT_WORDS;
+const adult = sharedConfig.ADULT_WORDS;
 const wordCheckCache = new Map();
-async function isServerDictionaryWord(word, adultMode) {
-  const key = (adultMode ? "dirty:" : "classic:") + word;
+const dictionaryRequestCache = new Map();
+async function fetchDictionary(dictionaryId = DEFAULT_DICTIONARY_ID) {
+  if (dictionaryRequestCache.has(dictionaryId))
+    return dictionaryRequestCache.get(dictionaryId);
+  const request = fetch(
+    "/api/dictionary?dictionaryId=" + encodeURIComponent(dictionaryId),
+  )
+    .then((response) => {
+      if (!response.ok) throw new Error("Dictionary load failed");
+      return response.json();
+    })
+    .then((payload) => {
+      if (
+        payload?.dictionary?.dictionaryId !== dictionaryId ||
+        !Array.isArray(payload.words)
+      )
+        throw new Error("Dictionary response was invalid");
+      return payload;
+    });
+  dictionaryRequestCache.set(dictionaryId, request);
+  request.catch(() => dictionaryRequestCache.delete(dictionaryId));
+  return request;
+}
+async function isServerDictionaryWord(word, dictionaryId, adultMode) {
+  const key = `${dictionaryId}:${adultMode ? "dirty" : "classic"}:${word}`;
   if (wordCheckCache.has(key)) return wordCheckCache.get(key);
   const check = fetch(
-    "/api/word-check?word=" +
+      "/api/word-check?word=" +
       encodeURIComponent(word) +
+      "&dictionaryId=" +
+      encodeURIComponent(dictionaryId) +
       "&adult=" +
       (adultMode ? "1" : "0"),
   )
@@ -54,7 +79,7 @@ async function isServerDictionaryWord(word, adultMode) {
     .then((result) => result.valid === true)
     .catch(() => {
       wordCheckCache.delete(key);
-      return lex().has(word);
+      return lex().has(String(word || "").toUpperCase());
     });
   wordCheckCache.set(key, check);
   return check;
@@ -86,6 +111,9 @@ const s = {
   lastWord: "",
   suddenDeathEvent: null,
   config: null,
+  dictionaryId: DEFAULT_DICTIONARY_ID,
+  dictionaryMetadata: null,
+  dictionaryWords: [],
 };
 let soloGenerationRequest = 0;
 const avatarOptions = [
@@ -287,26 +315,31 @@ let lexiconCacheKey = "";
 let preparedLexiconCache = null;
 let preparedLexiconCacheKey = "";
 function lex() {
-  const key = s.mode + ":" + customAdult;
+  const key = s.dictionaryId + ":" + s.mode + ":" + customAdult;
   if (lexiconCache && lexiconCacheKey === key) return lexiconCache;
   lexiconCacheKey = key;
   preparedLexiconCache = null;
   preparedLexiconCacheKey = "";
   lexiconCache = new Set([
-    ...common,
+    ...s.dictionaryWords,
     ...(s.mode === "dirty" || customAdult ? adult : []),
   ]);
   return lexiconCache;
 }
-function preparedLexicon(mode = s.mode, adultMode = customAdult) {
-  const key = mode + ":" + adultMode;
+function preparedLexicon(
+  mode = s.mode,
+  adultMode = customAdult,
+  words = s.dictionaryWords,
+  dictionaryId = s.dictionaryId,
+) {
+  const key = dictionaryId + ":" + mode + ":" + adultMode;
   if (preparedLexiconCache && preparedLexiconCacheKey === key)
     return preparedLexiconCache;
   preparedLexiconCacheKey = key;
-  const words = [...common, ...(mode === "dirty" || adultMode ? adult : [])];
-  preparedLexiconCache = sharedBoardCore.prepareLexicon(words, {
+  const effectiveWords = [...words, ...(mode === "dirty" || adultMode ? adult : [])];
+  preparedLexiconCache = sharedBoardCore.prepareLexicon(effectiveWords, {
     adultWords: adult,
-    preferredWords: adultMode ? adult : common,
+    preferredWords: adultMode ? adult : [],
   });
   return preparedLexiconCache;
 }
@@ -330,7 +363,7 @@ function renderResults(ranking) {
         words: [...s.found].map((word) => ({ word, points: word.length ** 2 })),
       }];
   const nextRushLabel = s.rush && s.nextRushMode
-    ? MODE[s.nextRushMode]?.[0]
+    ? configForPreset(s.nextRushMode)?.label
     : "";
   $("#resultName").textContent = nextRushLabel
     ? "Up next: " + nextRushLabel
@@ -491,6 +524,7 @@ function end() {
     mode: s.mode,
     randomRush: s.rush,
     suddenDeath: s.suddenDeathEvent,
+    dictionary: s.dictionaryMetadata,
   });
   if (s.rush) {
     const rushDelay = window.wordrushRushDelay || 20000;
@@ -508,7 +542,7 @@ function end() {
       clearInterval(s.rushCountdown);
       if (s.rush) {
         emit("random-rush", { action: "auto_advance" });
-        start(consumeNextRushMode(), null, false, true);
+        start(consumeNextRushMode(), null, false, true, s.dictionaryId);
       }
     }, rushDelay);
   }
@@ -624,13 +658,20 @@ function stopRush() {
   $("#stopRushResults").hidden = true;
   show("homeScreen");
 }
-async function start(mode, rawConfig = null, adultMode = false, rush = false) {
+async function start(
+  mode,
+  rawConfig = null,
+  adultMode = false,
+  rush = false,
+  dictionaryId = DEFAULT_DICTIONARY_ID,
+) {
   const generationRequest = ++soloGenerationRequest;
   if (
     window.wordrushStartSessionGame?.({
       mode,
       config: rawConfig || null,
       randomRush: rush,
+      dictionaryId,
     })
   )
     return;
@@ -661,17 +702,22 @@ async function start(mode, rawConfig = null, adultMode = false, rush = false) {
     config: Object.freeze(nextConfig),
     adultMode: nextCustomAdult,
     rush,
+    dictionaryId,
   });
   const wasRush = s.rush;
   clearTimeout(s.rushTimer);
   clearInterval(s.rushCountdown);
   let generated;
+  let dictionary;
   try {
+    dictionary = await fetchDictionary(generationInputs.dictionaryId);
     generated = await make({
       size: generationInputs.config.size,
       min: generationInputs.config.min,
       mode: generationInputs.mode,
       adultMode: generationInputs.adultMode,
+      dictionaryWords: dictionary.words,
+      dictionaryId: generationInputs.dictionaryId,
     });
   } catch {
     if (generationRequest !== soloGenerationRequest) return;
@@ -685,6 +731,9 @@ async function start(mode, rawConfig = null, adultMode = false, rush = false) {
   }
   const config = generationInputs.config;
   s.config = config;
+  s.dictionaryId = generationInputs.dictionaryId;
+  s.dictionaryMetadata = dictionary.dictionary;
+  s.dictionaryWords = dictionary.words;
   customAdult = generationInputs.adultMode;
   s.mode = generationInputs.mode;
   s.rush = generationInputs.rush;
@@ -784,7 +833,7 @@ async function submit() {
   clearPick();
   const inDictionary =
     w.length >= config.min && validPath && !duplicate
-      ? await isServerDictionaryWord(w, customAdult)
+      ? await isServerDictionaryWord(w, s.dictionaryId, customAdult)
       : false;
   if (
     s.done ||
@@ -968,10 +1017,10 @@ $("#again").onclick = () => {
     s.rushTimer = 0;
     s.rushCountdown = 0;
     emit("random-rush", { action: "continue", upcoming_mode: s.nextRushMode });
-    return start(consumeNextRushMode(), null, false, true);
+    return start(consumeNextRushMode(), null, false, true, s.dictionaryId);
   }
   if (isPartyRound(s.config)) return openParty();
-  start(s.mode, s.config, usesAdultLexicon(s.config));
+  start(s.mode, s.config, usesAdultLexicon(s.config), false, s.dictionaryId);
 };
 $("#exitParty").onclick = () => { s.config = null; $("#exitParty").hidden = true; $("#again").textContent = "Play again →"; show("homeScreen"); };
 $("#endGame").onclick = end;
@@ -1103,11 +1152,20 @@ window.wordrushRecordOnlineIncorrect = (reason, word = "") => {
     random_rush: s.onlineRandomRush,
   });
 };
-window.wordrushOnlineRound = (round, config, mode, randomRush = false) => {
+window.wordrushOnlineRound = (
+  round,
+  config,
+  mode,
+  randomRush = false,
+  dictionaryMetadata = null,
+) => {
   const roundKey = round.id || round.endsAt + ":" + round.board.join("");
   if (s.onlineRoundKey === roundKey && !s.done) return;
   s.onlineRoundKey = roundKey;
   s.mode = mode || "classic";
+  s.dictionaryId = round.dictionary?.dictionaryId || dictionaryMetadata?.dictionaryId || DEFAULT_DICTIONARY_ID;
+  s.dictionaryMetadata = round.dictionary || dictionaryMetadata;
+  s.dictionaryWords = [];
   s.onlineRandomRush = Boolean(randomRush);
   s.pendingOnlineTrace = null;
   s.suddenDeathEvent = null;
@@ -1205,6 +1263,8 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   const ownWords = ownPlayer?.words || [];
     const suddenDeath = result.reason === "invalid_word" ? result.suddenDeath : null;
   s.suddenDeathEvent = suddenDeath || null;
+  s.dictionaryMetadata = result.dictionary || s.dictionaryMetadata;
+  s.dictionaryId = s.dictionaryMetadata?.dictionaryId || s.dictionaryId;
   s.score = mine;
   s.found.clear();
   ownWords.forEach((item) => s.found.add(item.word));
@@ -1272,6 +1332,7 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
     mode: s.mode,
     randomRush: Boolean(result.randomRush || s.onlineRandomRush),
     result,
+    dictionary: s.dictionaryMetadata,
   });
 };
 
@@ -1316,8 +1377,8 @@ function boardSeed() {
   }
   return Date.now() >>> 0;
 }
-function make({ size, min, mode, adultMode } = {}) {
-  return sharedBoardCore.generateBoardCooperatively(size, preparedLexicon(mode, adultMode), {
+function make({ size, min, mode, adultMode, dictionaryWords, dictionaryId } = {}) {
+  return sharedBoardCore.generateBoardCooperatively(size, preparedLexicon(mode, adultMode, dictionaryWords, dictionaryId), {
     mode: adultMode ? "dirty" : "classic",
     min,
     seed: boardSeed(),
