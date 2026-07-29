@@ -107,6 +107,7 @@ const s = {
   nextRushMode: null,
   roundWordTimes: [],
   onlineRoundKey: null,
+  onlineIntroEndsAt: 0,
   onlineRandomRush: false,
   pendingOnlineTrace: null,
   lastWord: "",
@@ -653,6 +654,7 @@ let roundIntroTimer = 0;
 let roundIntroCountdown = 0;
 let roundIntroFinish = null;
 let roundIntroGeneration = 0;
+let activeOnlineRoundKey = null;
 function cancelRoundIntro() {
   roundIntroGeneration++;
   clearTimeout(roundIntroTimer);
@@ -716,7 +718,9 @@ function abandonActiveRound() {
   clearInterval(s.rushCountdown);
   cancelRoundIntro();
   s.done = 1;
+  activeOnlineRoundKey = null;
   s.onlineRoundKey = null;
+  s.onlineIntroEndsAt = 0;
   s.pendingOnlineTrace = null;
   clearPick(true);
   clearTrace();
@@ -729,7 +733,7 @@ window.wordrushAbandonOnlineRound = () => {
   show("homeScreen");
 };
 window.wordrushReturnToOnlineRound = () => {
-  if (s.onlineRoundKey && !s.done) show("gameScreen");
+  if (s.onlineRoundKey && !s.done) resumeOnlineRound();
 };
 $("#gameBack")?.addEventListener("click", () => {
   if (!window.wordrushSessionCode || !s.onlineRoundKey) abandonActiveRound();
@@ -1262,6 +1266,53 @@ window.wordrushRecordOnlineIncorrect = (reason, word = "") => {
     random_rush: s.onlineRandomRush,
   });
 };
+function onlineRoundAnalytics() {
+  return {
+    mode: s.mode,
+    multiplayer: true,
+    random_rush: s.onlineRandomRush,
+    party: isPartyRound(s.config),
+    grid_size: s.n,
+    minimum_length: s.config.min,
+  };
+}
+function updateOnlineTimer() {
+  s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
+  $("#timer").textContent = formatTimer(s.time);
+}
+function activateOnlineRound({ navigate = false } = {}) {
+  if (!s.onlineRoundKey || s.done) return false;
+  if (navigate) show("gameScreen", { preserveRoundIntro: true });
+  updateOnlineTimer();
+  if (activeOnlineRoundKey === s.onlineRoundKey) return true;
+  activeOnlineRoundKey = s.onlineRoundKey;
+  clearInterval(s.timer);
+  s.timer = setInterval(updateOnlineTimer, 250);
+  emit("round-started", {
+    ...onlineRoundAnalytics(),
+    duration_seconds: s.config.seconds,
+  });
+  return true;
+}
+function showOnlineRoundIntro(duration) {
+  showRoundIntro({
+    label: s.config.label,
+    rule: s.config.rule,
+    detail: "Everyone is in \u00b7 start when you\u2019re ready",
+    duration,
+    analytics: onlineRoundAnalytics(),
+    onStart: () => activateOnlineRound({ navigate: true }),
+  });
+}
+function resumeOnlineRound() {
+  const remainingIntro = Math.max(0, s.onlineIntroEndsAt - Date.now());
+  if (activeOnlineRoundKey === s.onlineRoundKey || !remainingIntro) {
+    cancelRoundIntro();
+    return activateOnlineRound({ navigate: true });
+  }
+  showOnlineRoundIntro(remainingIntro);
+  return true;
+}
 window.wordrushOnlineRound = (
   round,
   config,
@@ -1271,7 +1322,9 @@ window.wordrushOnlineRound = (
 ) => {
   const roundKey = round.id || round.endsAt + ":" + round.board.join("");
   if (s.onlineRoundKey === roundKey && !s.done) return;
+  activeOnlineRoundKey = null;
   s.onlineRoundKey = roundKey;
+  s.onlineIntroEndsAt = round.introEndsAt || Date.now() + 4000;
   s.mode = mode || "classic";
   s.dictionaryId = round.dictionary?.dictionaryId || dictionaryMetadata?.dictionaryId || DEFAULT_DICTIONARY_ID;
   s.dictionaryMetadata = round.dictionary || dictionaryMetadata;
@@ -1306,43 +1359,13 @@ window.wordrushOnlineRound = (
   $("#gameTitle").textContent = "Round 01 \u00b7 " + round.size + "\u00d7" + round.size;
   $("#ruleBanner").textContent = s.config.rule;
   $("#gameHint").textContent = "Minimum " + s.config.min + " letters";
-  const updateOnlineTimer = () => {
-    s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
-    $("#timer").textContent = formatTimer(s.time);
-  };
   clearInterval(s.timer);
   render();
-  showRoundIntro({
-    label: s.config.label,
-    rule: s.config.rule,
-    detail: "Everyone is in \u00b7 start when you\u2019re ready",
-    duration: Math.max(0, (round.introEndsAt || Date.now() + 4000) - Date.now()),
-    analytics: {
-      mode: s.mode,
-      multiplayer: true,
-      random_rush: s.onlineRandomRush,
-      party: isPartyRound(s.config),
-      grid_size: s.n,
-      minimum_length: s.config.min,
-    },
-    onStart: () => {
-      show("gameScreen", { preserveRoundIntro: true });
-      updateOnlineTimer();
-      s.timer = setInterval(updateOnlineTimer, 250);
-      emit("round-started", {
-        mode: s.mode,
-        multiplayer: true,
-        random_rush: s.onlineRandomRush,
-        party: isPartyRound(s.config),
-        grid_size: s.n,
-        minimum_length: s.config.min,
-        duration_seconds: s.config.seconds,
-      });
-    },
-  });
+  showOnlineRoundIntro(Math.max(0, s.onlineIntroEndsAt - Date.now()));
 };
 window.wordrushRoundStartNow = (timing = {}) => {
   if (!s.onlineRoundKey || s.done) return;
+  s.onlineIntroEndsAt = timing.startsAt || Date.now();
   if (timing.startsAt) s.startedAt = timing.startsAt;
   if (timing.endsAt) {
     s.endsAt = timing.endsAt;
@@ -1350,12 +1373,15 @@ window.wordrushRoundStartNow = (timing = {}) => {
       Math.max(0, Math.ceil((timing.endsAt - Date.now()) / 1000)),
     );
   }
-  finishRoundIntro();
+  if (roundIntroFinish) finishRoundIntro();
+  else activateOnlineRound();
 };
 window.wordrushOnlineFinish = (ranking, result = {}) => {
   if (s.done) return;
   cancelRoundIntro();
   s.done = 1;
+  activeOnlineRoundKey = null;
+  s.onlineIntroEndsAt = 0;
   clearInterval(s.timer);
   const guestId = window.wordrushGuestId;
   const normalizedRanking = (ranking || []).map((player) => ({

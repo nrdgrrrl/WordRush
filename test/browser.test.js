@@ -972,6 +972,30 @@ test("host ending a round and closing an active session synchronizes every playe
       () => document.querySelectorAll("#lobbyPlayers .live-player").length === 2,
     ),
   ]);
+  const resetRoundActivationProbe = (page) =>
+    page.evaluate(() => {
+      window.__roundStartedEvents = 0;
+      window.__roundTimerIntervals = 0;
+      if (window.__roundActivationProbeInstalled) return;
+      window.__roundActivationProbeInstalled = true;
+      document.addEventListener("wordrush:round-started", () =>
+        window.__roundStartedEvents++,
+      );
+      const setInterval = window.setInterval.bind(window);
+      window.setInterval = (callback, delay, ...args) => {
+        if (delay === 250) window.__roundTimerIntervals++;
+        return setInterval(callback, delay, ...args);
+      };
+    });
+  const roundActivation = (page) =>
+    page.evaluate(() => ({
+      starts: window.__roundStartedEvents,
+      intervals: window.__roundTimerIntervals,
+    }));
+  await Promise.all([
+    resetRoundActivationProbe(host),
+    resetRoundActivationProbe(guest),
+  ]);
 
   await host.locator("#sessionType").selectOption("classic");
   await host.locator("#sessionStart").click();
@@ -979,12 +1003,18 @@ test("host ending a round and closing an active session synchronizes every playe
     startIntro(host),
     startIntro(guest),
   ]);
+  assert.deepEqual(await roundActivation(host), { starts: 1, intervals: 1 });
+  assert.deepEqual(await roundActivation(guest), { starts: 1, intervals: 1 });
   await host.locator("#endGame").click();
   await Promise.all([
     host.waitForSelector("#resultsScreen.active"),
     guest.waitForSelector("#resultsScreen.active"),
   ]);
 
+  await Promise.all([
+    resetRoundActivationProbe(host),
+    resetRoundActivationProbe(guest),
+  ]);
   await host.locator("#again").click();
   await Promise.all([
     host.waitForSelector("#roundIntroScreen.active"),
@@ -995,9 +1025,16 @@ test("host ending a round and closing an active session synchronizes every playe
     const startNow = window.wordrushRoundStartNow;
     window.wordrushRoundStartNow = (...args) => {
       window.__roundStartNowMessages++;
+      window.__lastRoundStartNowTiming = args[0];
       return startNow(...args);
     };
   });
+  await guest.locator('header [data-screen="homeScreen"]').click();
+  await guest.waitForSelector("#homeScreen.active");
+  await guest.locator("#resumeMultiplayer").click();
+  await guest.waitForSelector("#roundIntroScreen.active");
+  assert.equal(await guest.locator("#gameScreen.active").count(), 0);
+  assert.deepEqual(await roundActivation(guest), { starts: 0, intervals: 0 });
   await guest.locator('header [data-screen="homeScreen"]').click();
   await guest.waitForSelector("#homeScreen.active");
   await host.locator("#introStart").click();
@@ -1007,8 +1044,21 @@ test("host ending a round and closing an active session synchronizes every playe
   ]);
   assert.equal(await guest.locator("#homeScreen.active").count(), 1);
   assert.equal(await guest.locator("#gameScreen.active").count(), 0);
+  assert.deepEqual(await roundActivation(host), { starts: 1, intervals: 1 });
+  assert.deepEqual(await roundActivation(guest), { starts: 1, intervals: 1 });
   await guest.locator("#resumeMultiplayer").click();
   await guest.waitForSelector("#gameScreen.active");
+  const resumedTimer = await guest.locator("#timer").textContent();
+  await guest.waitForFunction(
+    (before) => document.querySelector("#timer").textContent !== before,
+    resumedTimer,
+  );
+  await guest.evaluate(() => {
+    window.wordrushReturnToOnlineRound();
+    window.wordrushRoundStartNow(window.__lastRoundStartNowTiming);
+    window.wordrushRoundStartNow(window.__lastRoundStartNowTiming);
+  });
+  assert.deepEqual(await roundActivation(guest), { starts: 1, intervals: 1 });
   await host.locator("#gameBack").click();
   host.once("dialog", (dialog) => dialog.accept());
   await host.locator("#exitMultiplayer").click();
