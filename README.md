@@ -33,3 +33,13 @@ or dead input code.
 Run `npm test` for unit/integration coverage or `npm run test:browser` for browser and multiplayer soak coverage. The tracked `.githooks/pre-commit` hook runs both suites before every commit.
 
 The server validates room capacity, board paths, dictionaries, duplicate words, timers, and race completion. The client is not trusted for accepted words or scores.
+
+## Board generation contract
+
+Boards are generated from a prepared, canonical lexicon with an explicit mode,
+minimum word length, and seed. Successful boards contain a pathable target from
+each available 3-, 4-, 5-, and 6-plus-letter family plus at least one word that
+meets the round minimum. Dirty Mode also preserves its provisional five-playable
+adult-word coverage when five eligible adult words exist. Sparse or exhausted
+generation fails with bounded, reproduction-safe diagnostics; it never returns
+an unplayable fallback board.

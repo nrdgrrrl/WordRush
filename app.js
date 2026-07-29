@@ -283,15 +283,30 @@ updateIdentity();
 updateProfile();
 let lexiconCache = null;
 let lexiconCacheKey = "";
+let preparedLexiconCache = null;
+let preparedLexiconCacheKey = "";
 function lex() {
   const key = s.mode + ":" + customAdult;
   if (lexiconCache && lexiconCacheKey === key) return lexiconCache;
   lexiconCacheKey = key;
+  preparedLexiconCache = null;
+  preparedLexiconCacheKey = "";
   lexiconCache = new Set([
     ...common,
     ...(s.mode === "dirty" || customAdult ? adult : []),
   ]);
   return lexiconCache;
+}
+function preparedLexicon() {
+  const key = s.mode + ":" + customAdult;
+  if (preparedLexiconCache && preparedLexiconCacheKey === key)
+    return preparedLexiconCache;
+  preparedLexiconCacheKey = key;
+  preparedLexiconCache = sharedBoardCore.prepareLexicon([...lex()], {
+    adultWords: adult,
+    preferredWords: customAdult ? adult : common,
+  });
+  return preparedLexiconCache;
 }
 function near(i) {
   return sharedBoardCore.neighbors(i, s.n);
@@ -656,7 +671,18 @@ async function start(mode, rawConfig = null, adultMode = false, rush = false) {
   s.done = 0;
   s.startedAt = Date.now();
   s.endsAt = s.startedAt + s.time * 1000;
-  s.b = make();
+  let generated;
+  try {
+    generated = await make();
+  } catch {
+    toast("Board generation failed. Please try again.");
+    return;
+  }
+  if (!generated.ok) {
+    toast("No playable board is available for this configuration.");
+    return;
+  }
+  s.b = generated.board;
   $("#gameMode").textContent = s.config.label;
   $("#gameTitle").textContent = "Round 01 · " + s.n + "×" + s.n;
   $("#ruleBanner").textContent = s.config.rule;
@@ -1258,9 +1284,19 @@ const saveProfile = () => {
   window.wordrushIdentityChanged?.();
 };
 $("#profileForm")?.addEventListener("submit", saveProfile);
+function boardSeed() {
+  const values = new Uint32Array(1);
+  if (window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(values);
+    return values[0];
+  }
+  return Date.now() >>> 0;
+}
 function make() {
-  return sharedBoardCore.generateBoard(s.n, [...lex()], {
-    preferredWords: customAdult ? adult : common,
+  return sharedBoardCore.generateBoardCooperatively(s.n, preparedLexicon(), {
+    mode: customAdult ? "dirty" : "classic",
+    min: s.config.min,
+    seed: boardSeed(),
   });
 }
 let selectionClearTimer = null;

@@ -9,9 +9,9 @@ const http = require("node:http"),
   { WebSocketServer } = require("ws");
 const {
   MODE_CONFIG,
-  COMMON_WORDS,
   createLexicon,
-  generateBoard,
+  getPreparedLexicon,
+  generateBoardCooperatively,
   isDictionaryWord,
   validateSubmission,
 } = require("./game-core");
@@ -68,6 +68,13 @@ const configuredHosts = (process.env.WORDRUSH_ALLOWED_HOSTS || "")
   .split(",")
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
+const generationTestHooks = {
+  limits: null,
+  lexicon: null,
+  yieldScheduler: null,
+};
+const nodeGenerationScheduler = () =>
+  new Promise((resolve) => setImmediate(resolve));
 
 if (process.env.NODE_ENV === "production" && !LAN_MODE && !configuredOrigins.length)
   throw new Error("WORDRUSH_ALLOWED_ORIGINS is required in production");
@@ -261,6 +268,11 @@ function createPendingConsent(room, mode, config) {
 function cancelPendingConsent(room, reason) {
   const pending = room.pendingConsent;
   if (!pending) return;
+  if (
+    pending.generating &&
+    room.generation?.consentRequestId === pending.requestId
+  )
+    room.generation = null;
   clearTimeout(pending.timer);
   room.pendingConsent = null;
   broadcast(room, {
@@ -269,7 +281,7 @@ function cancelPendingConsent(room, reason) {
     reason,
   });
 }
-function completeAdultConsent(room, requestId) {
+async function completeAdultConsent(room, requestId) {
   const pending = room.pendingConsent;
   if (
     !pending ||
@@ -282,17 +294,24 @@ function completeAdultConsent(room, requestId) {
     return false;
   for (const id of pending.requiredPlayerIds) {
     if (!pending.acceptedPlayerIds.includes(id)) return false;
-    if (room.pendingConsent !== pending) return false;
+    if (room.pendingConsent !== pending || pending.generating) return false;
     const player = room.players.get(id);
     if (!player || player.ws?.readyState !== 1) return false;
   }
   const acceptedIds = [...pending.acceptedPlayerIds];
   const storedRequestId = pending.requestId;
+  pending.generating = true;
   clearTimeout(pending.timer);
-  room.pendingConsent = null;
-  startRound(room, pending.mode, pending.config, acceptedIds);
-  if (room.round) room.round.adultConsentRequestId = storedRequestId;
-  return true;
+  const started = await startRound(
+    room,
+    pending.mode,
+    pending.config,
+    acceptedIds,
+    storedRequestId,
+  );
+  if (!started && room.pendingConsent === pending)
+    cancelPendingConsent(room, "generation_failed");
+  return started;
 }
 function createPreAdmissionChallenge(room, client, ws, options = {}) {
   const challengeId = crypto.randomUUID();
@@ -432,6 +451,7 @@ function clearRoomTimer(room) {
 }
 function closeRoom(room, reason) {
   clearRoomTimer(room);
+  room.generation = null;
   if (room.pendingConsent) cancelPendingConsent(room, "room_closed");
   for (const [id, challenge] of preAdmissionChallenges) {
     if (challenge.roomCode === room.code) {
@@ -491,7 +511,28 @@ function randomMode(room) {
     room.randomModeQueue = shuffledModes(room.mode);
   return room.randomModeQueue.shift();
 }
-function startRound(room, selected = room.mode, configArg = null, roundConsentedPlayerIds = null) {
+function generationFailure(room, generation, result) {
+  if (room.generation !== generation) return false;
+  room.generation = null;
+  const failureCode = result?.error?.code || "GENERATION_FAILED";
+  const creator = room.players.get(room.creatorId);
+  send(creator?.ws, {
+    type: "error",
+    code: "BOARD_GENERATION_FAILED",
+    failureCode,
+    diagnostics: result?.diagnostics || null,
+  });
+  broadcast(room, state(room));
+  return false;
+}
+async function startRound(
+  room,
+  selected = room.mode,
+  configArg = null,
+  roundConsentedPlayerIds = null,
+  consentRequestId = null,
+) {
+  if (room.generation) return false;
   let config = configArg;
   if (!config) {
     const preset = configForPreset(selected);
@@ -509,21 +550,64 @@ function startRound(room, selected = room.mode, configArg = null, roundConsented
     if (!validConsent) return;
   }
   clearRoomTimer(room);
-  room.mode = selected;
-  const validationMode = usesAdultLexicon(config) ? "dirty" : room.mode,
-    board = generateBoard(
+  const validationMode = usesAdultLexicon(config) ? "dirty" : "classic";
+  const generation = {
+    token: crypto.randomUUID(),
+    consentRequestId,
+    seed: crypto.randomInt(0x100000000),
+  };
+  room.generation = generation;
+  const prepared = generationTestHooks.lexicon || getPreparedLexicon(validationMode);
+  let result;
+  try {
+    result = await generateBoardCooperatively(
       config.size,
-      createLexicon(validationMode),
-      // Keep multiplayer boards discoverable from the shared browser vocabulary
-      // even when a server happens to have a larger system dictionary installed.
-      { preferredWords: COMMON_WORDS },
+      prepared,
+      {
+        mode: validationMode,
+        min: config.min,
+        seed: generation.seed,
+        limits: generationTestHooks.limits || undefined,
+        yieldScheduler: generationTestHooks.yieldScheduler || nodeGenerationScheduler,
+      },
     );
+  } catch {
+    return generationFailure(room, generation, {
+      error: { code: "GENERATION_EXCEPTION" },
+      diagnostics: {
+        seed: generation.seed,
+        size: config.size,
+        mode: validationMode,
+        minimum: config.min,
+        lexiconFingerprint: prepared.fingerprint,
+        normalizedLexiconCount: prepared.normalizedCount,
+      },
+    });
+  }
+  if (room.generation !== generation) return false;
+  if (
+    usesAdultLexicon(config) &&
+    (!Array.isArray(roundConsentedPlayerIds) ||
+      !roundConsentedPlayerIds.every((id) => room.players.get(id)?.ws?.readyState === 1))
+  )
+    return generationFailure(room, generation, {
+      ok: false,
+      error: { code: "CONSENT_INVALIDATED" },
+      diagnostics: result?.diagnostics,
+    });
+  if (!result.ok) return generationFailure(room, generation, result);
+  room.generation = null;
+  if (consentRequestId && room.pendingConsent?.requestId === consentRequestId) {
+    clearTimeout(room.pendingConsent.timer);
+    room.pendingConsent = null;
+  }
+  room.mode = selected;
   room.config = config;
   const introEndsAt = Date.now() + ROUND_INTRO_MS;
   const startedAt = introEndsAt;
   room.round = {
     id: crypto.randomUUID(),
-    board: board,
+    board: result.board,
     size: config.size,
     found: new Set(),
     lastWord: "",
@@ -533,6 +617,7 @@ function startRound(room, selected = room.mode, configArg = null, roundConsented
     timer: null,
     config,
     validationMode,
+    adultConsentRequestId: consentRequestId,
     consentedPlayerIds: roundConsentedPlayerIds
       ? [...roundConsentedPlayerIds]
       : [...room.players.keys()],
@@ -552,6 +637,7 @@ function startRound(room, selected = room.mode, configArg = null, roundConsented
   );
   room.round.timer.unref?.();
   broadcast(room, { ...state(room), type: "round_started", config });
+  return true;
 }
 function finishRound(room, reason = "complete", suddenDeath = null) {
   if (!room.round || room.status !== "playing") return;
@@ -625,8 +711,8 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
   broadcast(room, { type: "round_finished", ...result });
   if (room.randomRush) {
     room.rushTimer = setTimeout(() => {
-      if (room.randomRush && room.status === "finished")
-        startRound(room, randomMode(room));
+      if (room.randomRush && room.status === "finished" && !room.generation)
+        void startRound(room, randomMode(room));
     }, RANDOM_RUSH_DELAY);
     room.rushTimer.unref?.();
   }
@@ -738,7 +824,7 @@ function leave(ws) {
   schedulePlayerExpiry(room, player, ws);
   broadcast(room, state(room));
 }
-function handle(ws, message) {
+async function handle(ws, message) {
   const type = message?.type;
   if (ws.connectionRole === "display") {
     if (type === "display_keepalive" && displays.has(ws)) {
@@ -847,6 +933,7 @@ function handle(ws, message) {
       displays: new Set(),
       status: "lobby",
       round: null,
+      generation: null,
       config: MODE_CONFIG.classic,
       results: { view: "static", speed: "medium" },
       lastResult: null,
@@ -1023,7 +1110,7 @@ function handle(ws, message) {
           targetRoom.pendingConsent.requiredPlayerIds.push(challengeClient.id);
         if (!targetRoom.pendingConsent.acceptedPlayerIds.includes(challengeClient.id))
           targetRoom.pendingConsent.acceptedPlayerIds.push(challengeClient.id);
-        completeAdultConsent(targetRoom, challenge.targetRequestId);
+        await completeAdultConsent(targetRoom, challenge.targetRequestId);
         return;
       }
       if (sameActiveRound || sameActiveRoundById) {
@@ -1102,7 +1189,7 @@ function handle(ws, message) {
       acceptedPlayerIds: pending.acceptedPlayerIds,
       requiredPlayerIds: pending.requiredPlayerIds,
     });
-    completeAdultConsent(responseRoom, pending.requestId);
+    await completeAdultConsent(responseRoom, pending.requestId);
     return;
   }
   if (type === "adult_consent_cancel") {
@@ -1158,6 +1245,8 @@ function handle(ws, message) {
   if (type === "start_game") {
     if (client.id !== room.creatorId)
       return send(ws, { type: "error", code: "CREATOR_ONLY" });
+    if (room.generation)
+      return send(ws, { type: "error", code: "BOARD_GENERATING" });
     if (room.status === "playing")
       return send(ws, { type: "error", code: "ROUND_PLAYING" });
     const requested = String(message.mode || "classic");
@@ -1427,7 +1516,9 @@ wss.on("connection", (ws, req) => {
     if (ws.messageWindow.count > MAX_WS_MESSAGES_PER_WINDOW)
       return ws.close(1008, "message rate limit exceeded");
     try {
-      handle(ws, JSON.parse(raw));
+      Promise.resolve(handle(ws, JSON.parse(raw))).catch(() =>
+        send(ws, { type: "error", code: "MESSAGE_HANDLER_FAILED" }),
+      );
     } catch {
       send(ws, { type: "error", code: "BAD_MESSAGE" });
     }
@@ -1485,6 +1576,7 @@ module.exports = {
   rooms,
   handle,
   startRound,
+  generationTestHooks,
   MAX_PLAYERS,
   displayTokens,
   displayCredentials,
