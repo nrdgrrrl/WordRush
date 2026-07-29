@@ -206,6 +206,12 @@ test("canonical config matches expected shape and validates correctly", () => {
   assert.equal(targetLow.valid, false);
   const chain = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", chain: true });
   assert.equal(chain.valid, false);
+  const chainStr = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", chain: "true" });
+  assert.equal(chainStr.valid, false);
+  const chainNum = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", chain: 1 });
+  assert.equal(chainNum.valid, false);
+  const chainNull = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", chain: null });
+  assert.equal(chainNull.valid, false);
   const contradict = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", sudden: true, target: 500 });
   assert.equal(contradict.valid, false);
   const strMin = validateCustomConfig({ label: "L", min: "3", size: 4, seconds: 60, rule: "R" });

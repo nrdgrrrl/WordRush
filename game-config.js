@@ -177,6 +177,8 @@
     if (typeof raw.seconds !== "number" || !Number.isInteger(raw.seconds) || raw.seconds < 15 || raw.seconds > 600)
       return { valid: false, error: "CUSTOM_SECONDS_OUT_OF_RANGE" };
     const seconds = raw.seconds;
+    if (raw.chain !== undefined && raw.chain !== true && raw.chain !== false)
+      return { valid: false, error: "CUSTOM_FIELD_TYPE_ERROR" };
     if (raw.chain === true)
       return { valid: false, error: "CUSTOM_CHAIN_NOT_SUPPORTED" };
     if (raw.sudden !== undefined && raw.sudden !== true && raw.sudden !== false)

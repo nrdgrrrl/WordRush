@@ -653,6 +653,21 @@ test("host cancels dirty consent and room recovers to classic", async () => {
   message(ws, "start_game", { mode: "classic" });
   await startedPromise;
   assert.equal(room.status, "playing");
+  const finishedPromise = next(ws, "round_finished");
+  message(ws, "end_round");
+  await finishedPromise;
+  const consent2Promise = next(ws, "adult_consent_request");
+  message(ws, "start_game", { mode: "dirty" });
+  const consent2 = await consent2Promise;
+  assert.ok(room.pendingConsent);
+  const rrCancelledPromise = next(ws, "adult_consent_cancelled");
+  const rrStartedPromise = next(ws, "round_started");
+  message(ws, "start_game", { mode: "random" });
+  const rrCancelled = await rrCancelledPromise;
+  assert.equal(rrCancelled.reason, "configuration_changed");
+  assert.equal(room.pendingConsent, null);
+  const rrStarted = await rrStartedPromise;
+  assert.notEqual(rrStarted.mode, "dirty");
   ws.close();
 });
 
