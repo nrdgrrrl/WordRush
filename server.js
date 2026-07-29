@@ -15,6 +15,16 @@ const {
   isDictionaryWord,
   validateSubmission,
 } = require("./game-core");
+const {
+  configForPreset,
+  validateCustomConfig,
+  isSuddenDeath,
+  requiresChain,
+  hasScoreTarget,
+  usesAdultLexicon,
+  isPartyRound,
+  shouldEndOnRejectedWord,
+} = require("./game-config");
 const PORT = Number(process.env.PORT || 8000),
   HOST = process.env.HOST || "127.0.0.1",
   MAX_PLAYERS = 10,
@@ -181,11 +191,12 @@ function boundedNumber(value, fallback, minimum, maximum) {
     ? Math.max(minimum, Math.min(maximum, parsed))
     : fallback;
 }
-function isAdultRequest(mode, rawConfig) {
-  return mode === "dirty" || Boolean(rawConfig?.adult);
+function isAdultRequest(mode, config) {
+  if (mode === "dirty") return true;
+  return usesAdultLexicon(config);
 }
 function isAdultRoom(room) {
-  return room.mode === "dirty" || room.config?.adult === true;
+  return usesAdultLexicon(roomConfig(room));
 }
 function isAdultLastResult(room) {
   return room.status === "finished" && room.lastResult && isAdultRoom(room);
@@ -194,18 +205,12 @@ function roomExposesAdultContent(room) {
   return Boolean(room.pendingConsent) || isAdultRoom(room) || isAdultLastResult(room);
 }
 function requestedConfig(mode, raw) {
-  if (mode !== "custom") return MODE_CONFIG[mode] || MODE_CONFIG.classic;
-  return {
-    label: cleanText(raw?.label, "CUSTOM", 32),
-    min: boundedNumber(raw?.min, 3, 3, 12),
-    size: boundedNumber(raw?.size, 4, 4, 8),
-    seconds: boundedNumber(raw?.seconds, 120, 15, 600),
-    rule: cleanText(raw?.rule, "Custom multiplayer round", 100),
-    target: raw?.target ? boundedNumber(raw.target, 500, 1, 100000) : null,
-    adult: Boolean(raw?.adult),
-    sudden: Boolean(raw?.sudden),
-    chain: Boolean(raw?.chain),
-  };
+  if (mode === "custom") {
+    const result = validateCustomConfig(raw);
+    if (!result.valid) return null;
+    return result.config;
+  }
+  return configForPreset(mode);
 }
 function roomConfig(room) {
   return (
@@ -221,8 +226,9 @@ function recordedScore(player) {
     0,
   );
 }
-function createPendingConsent(room, mode, rawConfig) {
-  const config = requestedConfig(mode === "dirty" ? "dirty" : mode, { adult: true, ...rawConfig });
+function createPendingConsent(room, mode, config) {
+  const resolved = config || configForPreset(mode) || { label: "CUSTOM", min: 3, size: 4, seconds: 120, rule: "", target: null, sudden: false, chain: false, adult: true, party: false };
+  const adultConfig = { ...resolved, adult: true };
   const requestId = crypto.randomUUID();
   const expiresAt = Date.now() + CONSENT_TIMEOUT_MS;
   const connectedIds = [...room.players.values()]
@@ -232,7 +238,7 @@ function createPendingConsent(room, mode, rawConfig) {
   room.pendingConsent = {
     requestId,
     mode,
-    config,
+    config: adultConfig,
     requiredPlayerIds: connectedIds,
     acceptedPlayerIds: [],
     expiresAt,
@@ -246,7 +252,7 @@ function createPendingConsent(room, mode, rawConfig) {
     type: "adult_consent_request",
     requestId,
     mode,
-    config: { adult: true, min: config.min, size: config.size, seconds: config.seconds },
+    config: { adult: true, min: resolved.min, size: resolved.size, seconds: resolved.seconds },
     requiredPlayerIds: connectedIds,
     acceptedPlayerIds: [],
     expiresAt,
@@ -485,10 +491,14 @@ function randomMode(room) {
     room.randomModeQueue = shuffledModes(room.mode);
   return room.randomModeQueue.shift();
 }
-function startRound(room, selected = room.mode, rawConfig = null, roundConsentedPlayerIds = null) {
-  const rawMode =
-    selected === "custom" || MODE_CONFIG[selected] ? selected : "classic";
-  if (isAdultRequest(rawMode, rawConfig)) {
+function startRound(room, selected = room.mode, configArg = null, roundConsentedPlayerIds = null) {
+  let config = configArg;
+  if (!config) {
+    const preset = configForPreset(selected);
+    if (!preset) return;
+    config = preset;
+  }
+  if (usesAdultLexicon(config)) {
     const validConsent =
       Array.isArray(roundConsentedPlayerIds) &&
       roundConsentedPlayerIds.length > 0 &&
@@ -499,9 +509,8 @@ function startRound(room, selected = room.mode, rawConfig = null, roundConsented
     if (!validConsent) return;
   }
   clearRoomTimer(room);
-  room.mode = rawMode;
-  const config = requestedConfig(room.mode, rawConfig),
-    validationMode = config.adult ? "dirty" : room.mode,
+  room.mode = selected;
+  const validationMode = usesAdultLexicon(config) ? "dirty" : room.mode,
     board = generateBoard(
       config.size,
       createLexicon(validationMode),
@@ -1155,26 +1164,34 @@ function handle(ws, message) {
     if ("customWords" in message) {
       return send(ws, { type: "error", code: "CUSTOM_WORDS_REJECTED" });
     }
-    if (isAdultRequest(requested, message.config)) {
-      if (room.pendingConsent)
-        cancelPendingConsent(room, "configuration_changed");
-      createPendingConsent(room, requested, message.config);
-      return;
-    }
-    if (room.pendingConsent)
-      cancelPendingConsent(room, "configuration_changed");
     if (requested === "random") {
       room.randomRush = true;
       room.randomModeQueue = [];
       return startRound(room, randomMode(room));
     }
+    let config;
+    if (requested === "custom") {
+      const result = validateCustomConfig(message.config);
+      if (!result.valid)
+        return send(ws, { type: "error", code: "CUSTOM_CONFIG_INVALID", detail: result.error });
+      config = result.config;
+    } else {
+      const preset = configForPreset(requested);
+      if (!preset)
+        return send(ws, { type: "error", code: "UNKNOWN_MODE" });
+      config = preset;
+    }
+    if (usesAdultLexicon(config)) {
+      if (room.pendingConsent)
+        cancelPendingConsent(room, "configuration_changed");
+      createPendingConsent(room, requested, config);
+      return;
+    }
+    if (room.pendingConsent)
+      cancelPendingConsent(room, "configuration_changed");
     room.randomRush = false;
     room.randomModeQueue = [];
-    return startRound(
-      room,
-      requested === "custom" || MODE_CONFIG[requested] ? requested : "classic",
-      message.config,
-    );
+    return startRound(room, requested, config);
   }
   if (type === "start_round_now") {
     if (client.id !== room.creatorId)
@@ -1235,8 +1252,9 @@ function handle(ws, message) {
       minimum: roomConfig(room).min,
       found: room.mode === "coop" ? room.round.found : player.found,
     });
+    const config = roomConfig(room);
     const chainBreak =
-      roomConfig(room).chain &&
+      requiresChain(config) &&
       room.round.lastWord &&
       result.word[0] !== room.round.lastWord.at(-1);
     if (chainBreak && result.valid)
@@ -1246,19 +1264,16 @@ function handle(ws, message) {
         wordLength: result.word.length,
         reason: result.reason,
         validationMode: room.round.validationMode,
-        minimum: roomConfig(room).min,
+        minimum: config.min,
       }));
       send(ws, {
         type: "word_rejected",
         playerId: client.id,
         word: result.word,
         reason: result.reason,
-        minimum: roomConfig(room).min,
+        minimum: config.min,
       });
-      if (
-        (room.mode === "sudden" || roomConfig(room).sudden) &&
-        result.reason !== "duplicate"
-      )
+      if (shouldEndOnRejectedWord(config, result.reason))
         finishRound(room, "invalid_word", {
           playerId: client.id,
           playerName: player.name,
@@ -1294,10 +1309,7 @@ function handle(ws, message) {
         score: playerScore(room, p),
       })),
     });
-    if (
-      (room.mode === "race" && player.score >= 500) ||
-      (roomConfig(room).target && player.score >= roomConfig(room).target)
-    )
+    if (hasScoreTarget(roomConfig(room)) && player.score >= roomConfig(room).target)
       finishRound(room, "race");
     return;
   }

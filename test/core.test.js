@@ -11,6 +11,11 @@ const {
   hasPath,
   validateSubmission,
 } = require("../game-core");
+const {
+  configForPreset,
+  validateCustomConfig,
+  shouldEndOnRejectedWord,
+} = require("../game-config");
 test("Random Rush includes every eligible built-in game mode", () => {
   assert.deepEqual(RANDOM_RUSH_EXCLUDED_MODES, ["coop", "dirty"]);
   assert.deepEqual(
@@ -149,7 +154,70 @@ test("dirty boards strongly favor playable adult words", () => {
     );
     assert.ok(
       playableAdultWords.length >= 5,
-      `expected at least 5 dirty words on ${size}×${size}, found ${playableAdultWords.length}`,
+      `expected at least 5 dirty words on ${size}\u00d7${size}, found ${playableAdultWords.length}`,
     );
   }
+});
+test("canonical config matches expected shape and validates correctly", () => {
+  for (const [mode, expected] of Object.entries({
+    classic: { sudden: false, chain: false, adult: false, party: false, target: null },
+    minimum: { sudden: false, chain: false, adult: false, party: false, target: null },
+    sudden: { sudden: true, chain: false, adult: false, party: false, target: null },
+    race: { sudden: false, chain: false, adult: false, party: false, target: 500 },
+    dirty: { sudden: false, chain: false, adult: true, party: false, target: null },
+    chain: { sudden: false, chain: true, adult: false, party: false, target: null },
+    scoreattack: { sudden: false, chain: false, adult: false, party: false, target: 250 },
+    coop: { sudden: false, chain: false, adult: false, party: false, target: null },
+    blitz: { sudden: false, chain: false, adult: false, party: false, target: null },
+    longhaul: { sudden: false, chain: false, adult: false, party: false, target: null },
+    storm: { sudden: false, chain: false, adult: false, party: false, target: null },
+  })) {
+    const config = configForPreset(mode);
+    assert.ok(config, `preset ${mode} should exist`);
+    for (const [field, value] of Object.entries(expected))
+      assert.equal(config[field], value, `${mode}.${field}`);
+  }
+  assert.equal(configForPreset("nonexistent"), null);
+  const valid = validateCustomConfig({ label: "X", min: 5, size: 6, seconds: 60, rule: "Y", sudden: true });
+  assert.equal(valid.valid, true);
+  assert.equal(valid.config.sudden, true);
+  assert.equal(valid.config.party, false);
+  assert.equal(valid.config.adult, false);
+  const party = validateCustomConfig({ label: "Party!", min: 3, size: 5, seconds: 120, rule: "Z", party: true });
+  assert.equal(party.valid, true);
+  assert.equal(party.config.party, true);
+  const adult = validateCustomConfig({ label: "A", min: 3, size: 4, seconds: 60, rule: "B", adult: true });
+  assert.equal(adult.valid, true);
+  assert.equal(adult.config.adult, true);
+  const target = validateCustomConfig({ label: "T", min: 3, size: 4, seconds: 60, rule: "R", target: 100 });
+  assert.equal(target.valid, true);
+  assert.equal(target.config.target, 100);
+  const arrays = validateCustomConfig(["LABEL", 3, 4, 120, "rule", {}]);
+  assert.equal(arrays.valid, false);
+  const noLabel = validateCustomConfig({ min: 3, size: 4, seconds: 60, rule: "R" });
+  assert.equal(noLabel.valid, false);
+  const minLow = validateCustomConfig({ label: "L", min: 1, size: 4, seconds: 60, rule: "R" });
+  assert.equal(minLow.valid, false);
+  const sizeHigh = validateCustomConfig({ label: "L", min: 3, size: 9, seconds: 60, rule: "R" });
+  assert.equal(sizeHigh.valid, false);
+  const secondsLow = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 5, rule: "R" });
+  assert.equal(secondsLow.valid, false);
+  const targetLow = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", target: 0 });
+  assert.equal(targetLow.valid, false);
+  const chain = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", chain: true });
+  assert.equal(chain.valid, false);
+  const contradict = validateCustomConfig({ label: "L", min: 3, size: 4, seconds: 60, rule: "R", sudden: true, target: 500 });
+  assert.equal(contradict.valid, false);
+});
+test("shouldEndOnRejectedWord matches expected semantics", () => {
+  for (const { config, reason, expected } of [
+    { config: { sudden: true }, reason: "minimum", expected: true },
+    { config: { sudden: true }, reason: "dictionary", expected: true },
+    { config: { sudden: true }, reason: "path", expected: true },
+    { config: { sudden: true }, reason: "chain", expected: true },
+    { config: { sudden: true }, reason: "duplicate", expected: false },
+    { config: { sudden: false }, reason: "minimum", expected: false },
+    { config: { sudden: false }, reason: "duplicate", expected: false },
+  ])
+    assert.equal(shouldEndOnRejectedWord(config, reason), expected);
 });
