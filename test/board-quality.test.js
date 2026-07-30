@@ -34,6 +34,30 @@ function report(overrides = {}) {
   };
 }
 
+function longOnlyReport({ size, wordCount, ninePlusWords = 0, longestLength, coverage, spatialReach = 1 }) {
+  return report({
+    totalPlayableWords: wordCount,
+    lengthBuckets: {
+      "3-4": 0,
+      "5-6": 0,
+      "7-8": wordCount - ninePlusWords,
+      "9+": ninePlusWords,
+    },
+    longestPlayableLength: longestLength,
+    coverage: {
+      all: { tileCount: coverage },
+      medium: { tileCount: 0 },
+      long: { tileCount: coverage },
+    },
+    spatialDistribution: {
+      long: {
+        rows: Array(size).fill({ coveredTileCount: spatialReach }),
+        columns: Array(size).fill({ coveredTileCount: spatialReach }),
+      },
+    },
+  });
+}
+
 test("all six named profiles are immutable and selected exactly", () => {
   const expected = [
     [4, 3, "classic", "4x4-min3"],
@@ -72,34 +96,73 @@ test("custom profiles use a conservative same-size fallback", () => {
         assert.equal(getQualityProfile(size, minimum, "dirty").measured, true);
 });
 
-test("unsupported minimum-seven profiles omit impossible medium gates", () => {
+test("unsupported long-only fallbacks use consistent metric families", () => {
   const cases = [
-    { size: 4, mode: "classic", source: "4x4-min3", total: 121, long: 2, longest: 7, all: 16, longCoverage: 12 },
-    { size: 7, mode: "classic", source: "4x4-min3", total: 121, long: 2, longest: 7, all: 49, longCoverage: 37 },
-    { size: 4, mode: "dirty", source: "dirty-5x5-min3", total: 126, long: 3, longest: 8, all: 16, longCoverage: 10 },
-    { size: 7, mode: "dirty", source: "dirty-5x5-min3", total: 126, long: 3, longest: 8, all: 49, longCoverage: 30 },
+    { size: 4, mode: "classic", source: "4x4-min6", words: 4, longest: 8, coverage: 14, spatialReach: 2 },
+    { size: 7, mode: "classic", source: "4x4-min3", words: 2, longest: 7, coverage: 37, spatialReach: 1 },
+    { size: 4, mode: "dirty", source: "dirty-4x4-min6", words: 1, longest: 7, coverage: 7, spatialReach: 1 },
+    { size: 7, mode: "dirty", source: "dirty-5x5-min3", words: 3, longest: 8, coverage: 30, spatialReach: 1 },
   ];
   for (const scenario of cases) {
     const profile = getQualityProfile(scenario.size, 7, scenario.mode);
     assert.equal(profile.sourceProfileId, scenario.source);
+    assert.equal(profile.gates.totalWords, undefined);
     assert.equal(profile.gates.mediumWords, undefined);
+    assert.equal(profile.gates.allCoverage, undefined);
     assert.equal(profile.gates.mediumCoverage, undefined);
-    assert.equal(profile.gates.longestLength[2] >= 7, true);
+    assert.equal(profile.gates.ninePlusWords, undefined);
     assert.equal(profile.gates.longWords[2] >= 1, true);
-    const boardReport = report({
-      totalPlayableWords: scenario.total,
-      lengthBuckets: { "3-4": 0, "5-6": 0, "7-8": scenario.long, "9+": 0 },
-      longestPlayableLength: scenario.longest,
-      coverage: { all: { tileCount: scenario.all }, long: { tileCount: scenario.longCoverage } },
-      spatialDistribution: {
-        long: {
-          rows: Array(scenario.size).fill({ coveredTileCount: 1 }),
-          columns: Array(scenario.size).fill({ coveredTileCount: 1 }),
-        },
-      },
+    assert.equal(profile.gates.longestLength[2] >= 7, true);
+    const boardReport = longOnlyReport({
+      size: scenario.size,
+      wordCount: scenario.words,
+      longestLength: scenario.longest,
+      coverage: scenario.coverage,
+      spatialReach: scenario.spatialReach,
     });
     assert.equal(evaluateBoardQuality(boardReport, profile, `${scenario.mode}-${scenario.size}`).passed, true);
   }
+  const insufficient = getQualityProfile(4, 7, "classic");
+  const failed = evaluateBoardQuality(longOnlyReport({
+    size: 4,
+    wordCount: 3,
+    longestLength: 8,
+    coverage: 14,
+    spatialReach: 2,
+  }), insufficient, "insufficient-long-depth");
+  assert.deepEqual(failed.failureReasons, ["LONG_WORDS_LOW"]);
+});
+
+test("minimum-nine fallback uses one consistent nine-plus depth gate", () => {
+  const profile = getQualityProfile(4, 9, "classic");
+  assert.equal(profile.sourceProfileId, "4x4-min6");
+  assert.equal(profile.gates.totalWords, undefined);
+  assert.equal(profile.gates.longWords, undefined);
+  assert.equal(profile.gates.mediumWords, undefined);
+  assert.equal(profile.gates.allCoverage, undefined);
+  assert.equal(profile.gates.mediumCoverage, undefined);
+  assert.deepEqual(profile.gates.ninePlusWords, ["NINE_PLUS_WORD_REQUIRED", ">=", 1]);
+  assert.equal(profile.gates.longestLength[2] >= 9, true);
+  assert.equal(evaluateBoardQuality(longOnlyReport({
+    size: 4,
+    wordCount: 2,
+    ninePlusWords: 2,
+    longestLength: 9,
+    coverage: 14,
+    spatialReach: 2,
+  }), profile, "minimum-nine-healthy").passed, true);
+});
+
+test("unsupported fallback selects measured same-minimum supplementary evidence", () => {
+  const profile = getQualityProfile(7, 4, "classic");
+  assert.equal(profile.sourceProfileId, "8x8-min4");
+  assert.equal(profile.measured, false);
+  assert.equal(profile.gates.totalWords[2], 299);
+  assert.equal(profile.gates.longCoverage[2], 35);
+  const measured = getQualityProfile(8, 4, "classic");
+  assert.equal(measured.measured, true);
+  assert.equal(measured.gates.totalWords[2], 428);
+  assert.equal(measured.gates.longCoverage[2], 45);
 });
 
 test("quality evaluation returns stable codes and omits redundant gates", () => {

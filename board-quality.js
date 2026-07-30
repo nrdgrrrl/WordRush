@@ -159,6 +159,24 @@ function supplementaryGates(values) {
   ));
 }
 
+const SUPPLEMENTARY_REFERENCES = Object.freeze(Object.entries(SUPPLEMENTARY_GATES).map(([profileId, values]) => {
+  const match = /^(dirty-)?(\d+)x\2-min(\d+)$/.exec(profileId);
+  if (!match) throw new Error(`Invalid supplementary profile ID: ${profileId}`);
+  return Object.freeze({
+    profileId,
+    size: Number(match[2]),
+    minimum: Number(match[3]),
+    validationMode: match[1] ? "dirty" : "classic",
+    measured: true,
+    gates: supplementaryGates({ ...values, minimum: Number(match[3]) }),
+  });
+}));
+
+const MEASURED_REFERENCE_PROFILES = Object.freeze([
+  ...Object.values(NAMED_PROFILES),
+  ...SUPPLEMENTARY_REFERENCES,
+]);
+
 for (const profile of Object.values(NAMED_PROFILES))
   for (const gate of Object.values(profile.gates)) Object.freeze(gate);
 
@@ -181,12 +199,20 @@ function ceilCoverage(reference, referenceArea, area) {
 }
 
 function customReference(size, minimum, validationMode) {
-  const sameSize = Object.values(NAMED_PROFILES)
+  const references = MEASURED_REFERENCE_PROFILES
+    .filter((profile) => profile.validationMode === validationMode);
+  const sameSize = references
     .filter((profile) => profile.size === size && profile.validationMode === validationMode)
-    .sort((a, b) => Math.abs(a.minimum - minimum) - Math.abs(b.minimum - minimum));
-  const sameMinimum = Object.values(NAMED_PROFILES)
+    .sort((a, b) =>
+      Math.abs(a.minimum - minimum) - Math.abs(b.minimum - minimum) ||
+      b.minimum - a.minimum ||
+      b.size - a.size);
+  const sameMinimum = references
     .filter((profile) => profile.minimum === minimum && profile.validationMode === validationMode)
-    .sort((a, b) => Math.abs(a.size - size) - Math.abs(b.size - size));
+    .sort((a, b) =>
+      Math.abs(a.size - size) - Math.abs(b.size - size) ||
+      b.size - a.size ||
+      b.minimum - a.minimum);
   if (sameSize[0] || sameMinimum[0]) return sameSize[0] || sameMinimum[0];
   return validationMode === "dirty"
     ? NAMED_PROFILES["dirty-5x5-min3"]
@@ -199,21 +225,26 @@ function conservativeCustomGates(size, minimum, validationMode) {
   const referenceArea = reference.size * reference.size;
   const referenceGates = reference.gates;
   const gateValue = (key, fallback) => referenceGates[key]?.[2] ?? fallback;
-  const gates = {
-    totalWords: ["TOTAL_WORDS_LOW", ">=", Math.max(minimum, Math.floor(gateValue("totalWords", 1) * 0.7))],
-    longWords: ["LONG_WORDS_LOW", ">=", Math.max(1, Math.floor(gateValue("longWords", 1) * 0.7))],
-    longestLength: ["LONGEST_WORD_SHORT", ">=", Math.max(minimum, gateValue("longestLength", minimum))],
-    allCoverage: ["ALL_COVERAGE_LOW", ">=", ceilCoverage(gateValue("allCoverage", 1), referenceArea, area)],
-    longCoverage: ["LONG_COVERAGE_LOW", ">=", ceilCoverage(gateValue("longCoverage", 1), referenceArea, area)],
-  };
-  if (minimum < 7) {
+  const gates = {};
+  if (minimum >= 9) {
+    gates.ninePlusWords = ["NINE_PLUS_WORD_REQUIRED", ">=", Math.max(1, gateValue("ninePlusWords", 1))];
+  } else if (minimum >= 7) {
+    gates.longWords = [
+      "LONG_WORDS_LOW",
+      ">=",
+      Math.max(1, Math.floor(gateValue("longWords", gateValue("ninePlusWords", 1)) * 0.7)),
+    ];
+  } else {
+    gates.totalWords = ["TOTAL_WORDS_LOW", ">=", Math.max(minimum, Math.floor(gateValue("totalWords", 1) * 0.7))];
     gates.mediumWords = ["MEDIUM_WORDS_LOW", ">=", Math.max(0, Math.floor(gateValue("mediumWords", 0) * 0.7))];
+    gates.allCoverage = ["ALL_COVERAGE_LOW", ">=", ceilCoverage(gateValue("allCoverage", 1), referenceArea, area)];
     gates.mediumCoverage = ["MEDIUM_COVERAGE_LOW", ">=", ceilCoverage(gateValue("mediumCoverage", 1), referenceArea, area)];
+    gates.longWords = ["LONG_WORDS_LOW", ">=", Math.max(1, Math.floor(gateValue("longWords", 1) * 0.7))];
   }
-  if (minimum >= 6 && referenceGates.ninePlusWords)
-    gates.ninePlusWords = ["NINE_PLUS_WORD_REQUIRED", ">=", 1];
+  gates.longestLength = ["LONGEST_WORD_SHORT", ">=", Math.max(minimum, gateValue("longestLength", minimum))];
+  gates.longCoverage = ["LONG_COVERAGE_LOW", ">=", ceilCoverage(gateValue("longCoverage", 1), referenceArea, area)];
   if (referenceGates.spatialReach)
-    gates.spatialReach = ["LONG_SPATIAL_REACH_LOW", ">=", 1];
+    gates.spatialReach = ["LONG_SPATIAL_REACH_LOW", ">=", referenceGates.spatialReach[2]];
   if (referenceGates.lowValueRegion)
     gates.lowValueRegion = ["LOW_VALUE_REGION_LARGE", "<=", referenceGates.lowValueRegion[2]];
   if (referenceGates.unusedRegion)
