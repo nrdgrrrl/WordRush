@@ -10,12 +10,10 @@ const http = require("node:http"),
 const {
   MODE_CONFIG,
   getPreparedLexicon,
-  getPreparedAnalysisIndex,
   generateBoardCooperatively,
   isDictionaryWord,
   validateSubmission,
 } = require("./game-core");
-const { selectRoundBoard } = require("./board-selector");
 const {
   DEFAULT_DICTIONARY_ID,
   getDictionary,
@@ -31,6 +29,9 @@ const {
   isPartyRound,
   shouldEndOnRejectedWord,
 } = require("./game-config");
+const {
+  generateQualityRoundBoard,
+} = require("./production-board-generator");
 const PORT = Number(process.env.PORT || 8000),
   HOST = process.env.HOST || "127.0.0.1",
   MAX_PLAYERS = 10,
@@ -76,6 +77,7 @@ const configuredHosts = (process.env.WORDRUSH_ALLOWED_HOSTS || "")
   .filter(Boolean);
 const generationTestHooks = {
   limits: null,
+  selectorLimits: null,
   lexicon: null,
   yieldScheduler: null,
   onContract: null,
@@ -235,6 +237,21 @@ function requestedConfig(mode, raw) {
   return configForPreset(mode);
 }
 const SOLO_REQUEST_FIELDS = new Set(["mode", "config", "dictionaryId", "adult"]);
+const SERVER_GENERATION_POLICY_FIELDS = new Set([
+  "seed",
+  "requestedSeed",
+  "candidateCount",
+  "qualityProfile",
+  "qualityProfileId",
+  "thresholds",
+  "selectorLimits",
+  "generationLimits",
+  "analysisLimits",
+  "candidateSeeds",
+  "rankingPolicy",
+  "vocabulary",
+  "words",
+]);
 const CUSTOM_CONFIG_FIELDS = new Set([
   "label",
   "min",
@@ -614,6 +631,11 @@ function generationFailure(room, generation, result) {
   const diagnostics = result?.diagnostics
     ? { ...result.diagnostics, dictionary: generation.dictionary }
     : null;
+  if (failureCode !== "QUALITY_SELECTION_CANCELLED" && failureCode !== "CONSENT_INVALIDATED")
+    console.warn("Wordrush quality board generation failed", JSON.stringify({
+      failureCode,
+      diagnostics,
+    }));
   send(creator?.ws, {
     type: "error",
     code: "BOARD_GENERATION_FAILED",
@@ -636,16 +658,12 @@ function boardGenerationContract(config, dictionaryId = DEFAULT_DICTIONARY_ID) {
       getPreparedLexicon(dictionary.id, validationMode),
   };
 }
-// Explicit development-only entry point. Normal solo and multiplayer callers
-// continue to use generateRoundBoard() and never invoke quality selection.
+// Development/test entry point for the same server-owned quality path used by
+// production callers. It is retained for focused selector diagnostics.
 async function selectRoundBoardForDevelopment(contract, options = {}) {
-  return selectRoundBoard(contract, {
+  return generateProductionRoundBoard(contract, {
     ...options,
-    analysisIndex: getPreparedAnalysisIndex(contract.dictionary.id, contract.validationMode),
-    yieldScheduler:
-      options.yieldScheduler ||
-      generationTestHooks.yieldScheduler ||
-      nodeGenerationScheduler,
+    requestedSeed: options.requestedSeed ?? options.seed,
   });
 }
 async function generateRoundBoard(contract, options = {}) {
@@ -691,6 +709,29 @@ async function generateRoundBoard(contract, options = {}) {
   generationTestHooks.onResult?.(result);
   return { result, seed };
 }
+async function generateProductionRoundBoard(contract, options = {}) {
+  const requestedSeed = options.requestedSeed ?? crypto.randomInt(0x100000000);
+  generationTestHooks.onContract?.({
+    size: contract.size,
+    minimum: contract.minimum,
+    validationMode: contract.validationMode,
+    dictionaryId: contract.dictionary.id,
+    requestedSeed,
+  });
+  const result = await generateQualityRoundBoard(contract, {
+    requestedSeed,
+    isCancelled: options.isCancelled,
+    selectorLimits:
+      options.selectorLimits || generationTestHooks.selectorLimits || undefined,
+    analysisIndex: options.analysisIndex,
+    yieldScheduler:
+      options.yieldScheduler ||
+      generationTestHooks.yieldScheduler ||
+      nodeGenerationScheduler,
+  });
+  generationTestHooks.onResult?.(result);
+  return result;
+}
 async function startRound(
   room,
   selected = room.mode,
@@ -723,13 +764,13 @@ async function startRound(
   const generation = {
     token: crypto.randomUUID(),
     consentRequestId,
-    seed: crypto.randomInt(0x100000000),
+    requestedSeed: crypto.randomInt(0x100000000),
     cancelled: false,
     dictionary: dictionary.metadata,
   };
   room.generation = generation;
-  const { result } = await generateRoundBoard(contract, {
-    seed: generation.seed,
+  const result = await generateProductionRoundBoard(contract, {
+    requestedSeed: generation.requestedSeed,
     isCancelled: () => generation.cancelled,
   });
   if (generation.cancelled) {
@@ -778,6 +819,17 @@ async function startRound(
     dictionaryId: dictionary.id,
     dictionary: dictionary.metadata,
     validationMode,
+    quality: result.diagnostics
+      ? {
+          selectorVersion: result.diagnostics.selectorVersion,
+          profileId: result.diagnostics.profileId,
+          requestedSeed: result.requestedSeed,
+          selectedCandidateIndex: result.diagnostics.selectedCandidateIndex,
+          selectedCandidateSeed: result.selectedCandidateSeed,
+          selectedFingerprint: result.diagnostics.selectedFingerprint,
+          selectedRanking: result.diagnostics.selectedRanking,
+        }
+      : null,
     adultConsentRequestId: consentRequestId,
     consentedPlayerIds,
   };
@@ -1082,6 +1134,8 @@ async function handle(ws, message) {
     if ("customWords" in message) {
       return send(ws, { type: "error", code: "CUSTOM_WORDS_REJECTED" });
     }
+    if (Object.keys(message).some((field) => SERVER_GENERATION_POLICY_FIELDS.has(field)))
+      return send(ws, { type: "error", code: "ROUND_GENERATION_POLICY_NOT_ALLOWED" });
     const room = {
       code: code(),
       mode: "classic",
@@ -1427,6 +1481,8 @@ async function handle(ws, message) {
     if ("customWords" in message) {
       return send(ws, { type: "error", code: "CUSTOM_WORDS_REJECTED" });
     }
+    if (Object.keys(message).some((field) => SERVER_GENERATION_POLICY_FIELDS.has(field)))
+      return send(ws, { type: "error", code: "ROUND_GENERATION_POLICY_NOT_ALLOWED" });
     if (requested === "random") {
       if (room.pendingConsent)
         cancelPendingConsent(room, "configuration_changed");
@@ -1748,6 +1804,7 @@ module.exports = {
   startRound,
   boardGenerationContract,
   generateRoundBoard,
+  generateProductionRoundBoard,
   selectRoundBoardForDevelopment,
   validateSoloBoardRequest,
   generationTestHooks,
@@ -1871,7 +1928,7 @@ async function leaderboardRequest(req, res) {
         request.config,
         request.dictionary.id,
       );
-      const { result, seed } = await generateRoundBoard(contract, {
+      const result = await generateProductionRoundBoard(contract, {
         isCancelled: cancellation.isCancelled,
       });
       if (cancellation.isCancelled()) return true;
@@ -1880,6 +1937,11 @@ async function leaderboardRequest(req, res) {
         dictionary: request.dictionary.metadata,
       };
       if (!result.ok) {
+        if (result.error?.code !== "QUALITY_SELECTION_CANCELLED")
+          console.warn("Wordrush solo quality board generation failed", JSON.stringify({
+            failureCode: result.error?.code || "GENERATION_FAILED",
+            diagnostics,
+          }));
         res.writeHead(503, {
           "Content-Type": "application/json; charset=utf-8",
           "Cache-Control": "no-store",
@@ -1899,7 +1961,8 @@ async function leaderboardRequest(req, res) {
         mode: request.mode,
         config: request.config,
         validationMode: contract.validationMode,
-        seed,
+        seed: result.requestedSeed,
+        selectedCandidateSeed: result.selectedCandidateSeed,
         dictionary: request.dictionary.metadata,
         diagnostics,
       }));

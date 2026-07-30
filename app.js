@@ -845,7 +845,11 @@ async function start(
     if (generationRequest !== soloGenerationRequest) return;
     toast(
       error.code === "BOARD_GENERATION_FAILED" &&
-        error.failureCode !== "GENERATION_EXCEPTION"
+        [
+          "NO_QUALITY_CANDIDATE",
+          "QUALITY_SELECTION_GLOBAL_LIMIT",
+          "QUALITY_PROFILE_UNAVAILABLE",
+        ].includes(error.failureCode)
         ? "No playable board is available for this configuration."
         : "Board generation failed. Please try again.",
     );
