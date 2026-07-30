@@ -127,7 +127,7 @@ async function selectRoundBoard(contract, options = {}) {
     };
   }
   const candidates = [];
-  let inFlightYields = 0;
+  let selectorYieldCount = 0;
   const dependencies = options.dependencies || {};
   const generate = dependencies.generate || ((candidateOptions) =>
     generateBoardCooperatively(contract.size, contract.prepared, candidateOptions));
@@ -149,7 +149,10 @@ async function selectRoundBoard(contract, options = {}) {
   const scheduler = options.yieldScheduler || (() => new Promise((resolve) => setImmediate(resolve)));
   const startedAt = Date.now();
   const exhausted = new Set();
-  const totalUsed = () => aggregateDiagnostics(candidates);
+  const totalUsed = () => ({
+    ...aggregateDiagnostics(candidates),
+    cooperativeYields: selectorYieldCount,
+  });
   const markExhausted = (totals) => {
     if (totals.generationAttempts >= limits.totalGenerationAttempts) exhausted.add("GENERATION_ATTEMPT_GLOBAL_LIMIT");
     if (totals.placementOperations >= limits.totalPlacementOperations) exhausted.add("PLACEMENT_GLOBAL_LIMIT");
@@ -214,16 +217,12 @@ async function selectRoundBoard(contract, options = {}) {
       break;
     }
     const schedulerForCandidate = async () => {
-      if (totalUsed().cooperativeYields + inFlightYields >= limits.totalYields) {
+      if (selectorYieldCount >= limits.totalYields) {
         exhausted.add("YIELD_GLOBAL_LIMIT");
         throw new SelectorBudgetError("YIELD_GLOBAL_LIMIT");
       }
-      inFlightYields++;
-      try {
-        await scheduler();
-      } finally {
-        inFlightYields--;
-      }
+      selectorYieldCount++;
+      await scheduler();
     };
     try {
       const generated = await generate({

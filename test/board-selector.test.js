@@ -84,6 +84,70 @@ test("strongest passing candidate wins with deterministic ranking", async () => 
   assert.equal(result.diagnostics.candidatesAttempted, 2);
 });
 
+test("equal passing candidates use the ascending fingerprint tie-break", async () => {
+  async function run(fingerprints) {
+    let generated = 0;
+    return selectRoundBoard(contract(), {
+      requestedSeed: 11,
+      candidateCount: 2,
+      dependencies: {
+        async generate() {
+          generated++;
+          return { ok: true, board: [String(generated)], diagnostics: { attemptCount: 1 } };
+        },
+        async analyze() {
+          const fingerprint = fingerprints[generated - 1];
+          return {
+            ok: true,
+            report: report({ fingerprint }),
+            diagnostics: { boardFingerprint: fingerprint, operationCount: 1, yieldCount: 0 },
+          };
+        },
+      },
+    });
+  }
+  const first = await run(["ffff", "0000"]);
+  const second = await run(["0000", "ffff"]);
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(first.diagnostics.selectedFingerprint, "0000");
+  assert.equal(second.diagnostics.selectedFingerprint, "0000");
+});
+
+test("selector-wide yield budget is cumulative and stops later candidates", async () => {
+  let generated = 0;
+  let handoffAttempts = 0;
+  let schedulerCalls = 0;
+  const result = await selectRoundBoard(contract(), {
+    requestedSeed: 11,
+    candidateCount: 2,
+    limits: { totalYields: 2 },
+    yieldScheduler: async () => { schedulerCalls++; },
+    dependencies: {
+      async generate(options) {
+        generated++;
+        for (let index = 0; index < 3; index++) {
+          handoffAttempts++;
+          await options.yieldScheduler();
+        }
+        return { ok: true, board: ["A"], diagnostics: { attemptCount: 1, yieldCount: 3 } };
+      },
+      async analyze() {
+        throw new Error("analysis must not begin after the third handoff is rejected");
+      },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "QUALITY_SELECTION_GLOBAL_LIMIT");
+  assert.equal(generated, 1);
+  assert.equal(handoffAttempts, 3);
+  assert.equal(schedulerCalls, 2);
+  assert.equal(result.diagnostics.candidatesAttempted, 1);
+  assert.equal(result.diagnostics.aggregateWork.cooperativeYields, 2);
+  assert.equal(result.diagnostics.exhaustedBudgets.includes("YIELD_GLOBAL_LIMIT"), true);
+  assert.equal(result.diagnostics.candidates[0].errorCode, "YIELD_GLOBAL_LIMIT");
+});
+
 test("no passing candidate, candidate-level failure, and global budgets are explicit", async () => {
   const result = await selectRoundBoard(contract(), {
     requestedSeed: 11,

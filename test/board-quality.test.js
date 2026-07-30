@@ -72,6 +72,36 @@ test("custom profiles use a conservative same-size fallback", () => {
         assert.equal(getQualityProfile(size, minimum, "dirty").measured, true);
 });
 
+test("unsupported minimum-seven profiles omit impossible medium gates", () => {
+  const cases = [
+    { size: 4, mode: "classic", source: "4x4-min3", total: 121, long: 2, longest: 7, all: 16, longCoverage: 12 },
+    { size: 7, mode: "classic", source: "4x4-min3", total: 121, long: 2, longest: 7, all: 49, longCoverage: 37 },
+    { size: 4, mode: "dirty", source: "dirty-5x5-min3", total: 126, long: 3, longest: 8, all: 16, longCoverage: 10 },
+    { size: 7, mode: "dirty", source: "dirty-5x5-min3", total: 126, long: 3, longest: 8, all: 49, longCoverage: 30 },
+  ];
+  for (const scenario of cases) {
+    const profile = getQualityProfile(scenario.size, 7, scenario.mode);
+    assert.equal(profile.sourceProfileId, scenario.source);
+    assert.equal(profile.gates.mediumWords, undefined);
+    assert.equal(profile.gates.mediumCoverage, undefined);
+    assert.equal(profile.gates.longestLength[2] >= 7, true);
+    assert.equal(profile.gates.longWords[2] >= 1, true);
+    const boardReport = report({
+      totalPlayableWords: scenario.total,
+      lengthBuckets: { "3-4": 0, "5-6": 0, "7-8": scenario.long, "9+": 0 },
+      longestPlayableLength: scenario.longest,
+      coverage: { all: { tileCount: scenario.all }, long: { tileCount: scenario.longCoverage } },
+      spatialDistribution: {
+        long: {
+          rows: Array(scenario.size).fill({ coveredTileCount: 1 }),
+          columns: Array(scenario.size).fill({ coveredTileCount: 1 }),
+        },
+      },
+    });
+    assert.equal(evaluateBoardQuality(boardReport, profile, `${scenario.mode}-${scenario.size}`).passed, true);
+  }
+});
+
 test("quality evaluation returns stable codes and omits redundant gates", () => {
   const profile = getQualityProfile(5, 3, "classic");
   const result = evaluateBoardQuality(report({
@@ -127,5 +157,5 @@ test("fingerprint is the deterministic final tie-break", () => {
   const profile = getQualityProfile(5, 3, "classic");
   const left = evaluateBoardQuality(report(), profile, "0000");
   const right = evaluateBoardQuality(report(), profile, "ffff");
-  assert.equal(compareRanking(left, right) < 0, true);
+  assert.equal(compareRanking(left, right) > 0, true);
 });

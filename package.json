@@ -13,7 +13,7 @@
     "compile:dictionary": "node scripts/compile-dictionary.js",
     "corpus:boards": "node scripts/generate-board-corpus.js",
     "compare:boards": "node scripts/compare-board-selection.js",
-    "check": "node --check game-config.js && node --check board-core.js && node --check board-analysis.js && node --check board-quality.js && node --check board-selector.js && node --check analytics.js && node --check app.js && node --check achievements.js && node --check leaderboard-client.js && node --check multiplayer-client.js && node --check random-rush.js && node --check cast-sender.js && node --check results.js && node --check stats.js && node --check headless-client.js && node --check server.js && node --check dictionary-compiler.js && node --check dictionary-registry.js && node --check scripts/compile-dictionary.js && node --check scripts/generate-board-corpus.js && node --check receiver/receiver.js",
+    "check": "node --check game-config.js && node --check board-core.js && node --check board-analysis.js && node --check board-quality.js && node --check board-selector.js && node --check analytics.js && node --check app.js && node --check achievements.js && node --check leaderboard-client.js && node --check multiplayer-client.js && node --check random-rush.js && node --check cast-sender.js && node --check results.js && node --check stats.js && node --check headless-client.js && node --check server.js && node --check dictionary-compiler.js && node --check dictionary-registry.js && node --check scripts/compile-dictionary.js && node --check scripts/generate-board-corpus.js && node --check scripts/compare-board-selection.js && node --check receiver/receiver.js",
     "headless": "node headless-client.js"
   },
   "dependencies": {

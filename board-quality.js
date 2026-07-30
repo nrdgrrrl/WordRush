@@ -180,27 +180,36 @@ function ceilCoverage(reference, referenceArea, area) {
   return Math.ceil((reference * area) / referenceArea);
 }
 
-function conservativeCustomGates(size, minimum, validationMode) {
-  const area = size * size;
+function customReference(size, minimum, validationMode) {
   const sameSize = Object.values(NAMED_PROFILES)
     .filter((profile) => profile.size === size && profile.validationMode === validationMode)
     .sort((a, b) => Math.abs(a.minimum - minimum) - Math.abs(b.minimum - minimum));
   const sameMinimum = Object.values(NAMED_PROFILES)
     .filter((profile) => profile.minimum === minimum && profile.validationMode === validationMode)
     .sort((a, b) => Math.abs(a.size - size) - Math.abs(b.size - size));
-  const reference = sameSize[0] || sameMinimum[0] || NAMED_PROFILES["4x4-min3"];
+  if (sameSize[0] || sameMinimum[0]) return sameSize[0] || sameMinimum[0];
+  return validationMode === "dirty"
+    ? NAMED_PROFILES["dirty-5x5-min3"]
+    : NAMED_PROFILES["4x4-min3"];
+}
+
+function conservativeCustomGates(size, minimum, validationMode) {
+  const area = size * size;
+  const reference = customReference(size, minimum, validationMode);
   const referenceArea = reference.size * reference.size;
   const referenceGates = reference.gates;
   const gateValue = (key, fallback) => referenceGates[key]?.[2] ?? fallback;
   const gates = {
     totalWords: ["TOTAL_WORDS_LOW", ">=", Math.max(minimum, Math.floor(gateValue("totalWords", 1) * 0.7))],
-    mediumWords: ["MEDIUM_WORDS_LOW", ">=", Math.max(0, Math.floor(gateValue("mediumWords", 0) * 0.7))],
     longWords: ["LONG_WORDS_LOW", ">=", Math.max(1, Math.floor(gateValue("longWords", 1) * 0.7))],
     longestLength: ["LONGEST_WORD_SHORT", ">=", Math.max(minimum, gateValue("longestLength", minimum))],
     allCoverage: ["ALL_COVERAGE_LOW", ">=", ceilCoverage(gateValue("allCoverage", 1), referenceArea, area)],
-    mediumCoverage: ["MEDIUM_COVERAGE_LOW", ">=", ceilCoverage(gateValue("mediumCoverage", 1), referenceArea, area)],
     longCoverage: ["LONG_COVERAGE_LOW", ">=", ceilCoverage(gateValue("longCoverage", 1), referenceArea, area)],
   };
+  if (minimum < 7) {
+    gates.mediumWords = ["MEDIUM_WORDS_LOW", ">=", Math.max(0, Math.floor(gateValue("mediumWords", 0) * 0.7))];
+    gates.mediumCoverage = ["MEDIUM_COVERAGE_LOW", ">=", ceilCoverage(gateValue("mediumCoverage", 1), referenceArea, area)];
+  }
   if (minimum >= 6 && referenceGates.ninePlusWords)
     gates.ninePlusWords = ["NINE_PLUS_WORD_REQUIRED", ">=", 1];
   if (referenceGates.spatialReach)
@@ -244,11 +253,7 @@ function getQualityProfile(size, minimum, validationMode = "classic") {
     minimum,
     validationMode,
     measured: false,
-    sourceProfileId: Object.values(NAMED_PROFILES)
-      .find((candidate) => candidate.size === size && candidate.validationMode === validationMode)?.profileId ||
-      Object.values(NAMED_PROFILES)
-        .find((candidate) => candidate.minimum === minimum && candidate.validationMode === validationMode)?.profileId ||
-      "4x4-min3",
+    sourceProfileId: customReference(size, minimum, validationMode).profileId,
     gates: conservativeCustomGates(size, minimum, validationMode),
   };
   return Object.freeze({ ...profile, gates: Object.freeze(profile.gates) });
@@ -323,8 +328,8 @@ function compareRanking(left, right) {
     if (index === length - 1) {
       const leftValue = String(a[index] ?? "");
       const rightValue = String(b[index] ?? "");
-      if (leftValue < rightValue) return -1;
-      if (leftValue > rightValue) return 1;
+      if (leftValue < rightValue) return 1;
+      if (leftValue > rightValue) return -1;
       continue;
     }
     const leftValue = Number(a[index] ?? 0), rightValue = Number(b[index] ?? 0);
