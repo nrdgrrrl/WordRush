@@ -819,17 +819,7 @@ async function startRound(
     dictionaryId: dictionary.id,
     dictionary: dictionary.metadata,
     validationMode,
-    quality: result.diagnostics
-      ? {
-          selectorVersion: result.diagnostics.selectorVersion,
-          profileId: result.diagnostics.profileId,
-          requestedSeed: result.requestedSeed,
-          selectedCandidateIndex: result.diagnostics.selectedCandidateIndex,
-          selectedCandidateSeed: result.selectedCandidateSeed,
-          selectedFingerprint: result.diagnostics.selectedFingerprint,
-          selectedRanking: result.diagnostics.selectedRanking,
-        }
-      : null,
+    quality: result.compactDiagnostics || null,
     adultConsentRequestId: consentRequestId,
     consentedPlayerIds,
   };

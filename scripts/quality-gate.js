@@ -131,7 +131,17 @@ function contractFor(size, minimum, validationMode) {
   };
 }
 
-async function selectOne({ size, minimum, validationMode, requestedSeed, candidateCount, production, limits }) {
+function eventLoopSummary(delay) {
+  if (!delay) return null;
+  return {
+    mean: Number.isFinite(delay.mean) ? delay.mean / 1e6 : null,
+    p95: Number.isFinite(delay.percentile(95)) ? delay.percentile(95) / 1e6 : null,
+    p99: Number.isFinite(delay.percentile(99)) ? delay.percentile(99) / 1e6 : null,
+    maximum: Number.isFinite(delay.max) ? delay.max / 1e6 : null,
+  };
+}
+
+async function selectOne({ size, minimum, validationMode, requestedSeed, candidateCount, production, limits, includeDetails = true }) {
   const contract = contractFor(size, minimum, validationMode);
   const started = performance.now();
   let result;
@@ -168,7 +178,7 @@ async function selectOne({ size, minimum, validationMode, requestedSeed, candida
     selectedFingerprint: diagnostics.selectedFingerprint ?? null,
     ranking: diagnostics.selectedRanking ?? null,
     candidateSeeds: diagnostics.candidateSeeds || [],
-    candidateOutcomes: diagnostics.candidates || [],
+    ...(includeDetails ? { candidateOutcomes: diagnostics.candidates || [] } : {}),
     generationAttempts: work.generationAttempts || 0,
     placementOperations: work.placementOperations || 0,
     generationBacktracks: work.generationBacktracks || 0,
@@ -207,21 +217,37 @@ function unmeasuredSmokeProfiles() {
   return profiles;
 }
 
-async function runProfileCorpus(profiles, samples, production, candidateCountFor, limits = null) {
+async function runProfileCorpus(
+  profiles,
+  samples,
+  production,
+  candidateCountFor,
+  limits = null,
+  { isolatedEventLoop = false, retainDetails = false } = {},
+) {
   const results = [];
   for (let profileIndex = 0; profileIndex < profiles.length; profileIndex++) {
     const profile = profiles[profileIndex];
     const records = [];
-    for (let index = 0; index < samples; index++) {
-      records.push(await selectOne({
-        size: profile.size,
-        minimum: profile.minimum,
-        validationMode: profile.validationMode,
-        requestedSeed: fixedSeed(index, profileIndex * 97),
-        candidateCount: candidateCountFor(profile),
-        production,
-        limits,
-      }));
+    const profileDelay = isolatedEventLoop
+      ? monitorEventLoopDelay({ resolution: 10 })
+      : null;
+    profileDelay?.enable();
+    try {
+      for (let index = 0; index < samples; index++) {
+        records.push(await selectOne({
+          size: profile.size,
+          minimum: profile.minimum,
+          validationMode: profile.validationMode,
+          requestedSeed: fixedSeed(index, profileIndex * 97),
+          candidateCount: candidateCountFor(profile),
+          production,
+          limits,
+          includeDetails: retainDetails,
+        }));
+      }
+    } finally {
+      profileDelay?.disable();
     }
     const latencies = records.map((record) => record.elapsedMs);
     results.push({
@@ -240,7 +266,8 @@ async function runProfileCorpus(profiles, samples, production, candidateCountFor
       generationBacktracks: records.reduce((sum, record) => sum + record.generationBacktracks, 0),
       analysisOperations: records.reduce((sum, record) => sum + record.analysisOperations, 0),
       cooperativeYields: records.reduce((sum, record) => sum + record.cooperativeYields, 0),
-      records,
+      ...(profileDelay ? { eventLoopDelayMs: eventLoopSummary(profileDelay) } : {}),
+      ...(retainDetails ? { records } : {}),
     });
   }
   return results;
@@ -290,7 +317,7 @@ function waitForMessage(ws, predicate, timeoutMs = 5_000) {
   });
 }
 
-async function multiplayerQueueMeasurement(port) {
+async function multiplayerQueueMeasurement(port, mode = "classic") {
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
   await new Promise((resolve, reject) => {
     ws.once("open", resolve);
@@ -302,26 +329,36 @@ async function multiplayerQueueMeasurement(port) {
   const created = await waitForMessage(ws, (message) => message.type === "room_created");
   const startedAt = performance.now();
   const order = [];
+  let queuedActionAt = null;
+  let roundStartedAt = null;
   const orderListener = (raw) => {
     let message;
     try { message = JSON.parse(raw); } catch { return; }
-    if (message.type === "round_started") order.push("round_started");
-    if (message.type === "room_state" && message.players?.some((player) => player.name === "queued"))
+    const receivedAt = performance.now();
+    if (message.type === "round_started") {
+      if (roundStartedAt === null) roundStartedAt = receivedAt;
+      order.push("round_started");
+    }
+    if (message.type === "room_state" && message.players?.some((player) => player.name === `queued-${mode}`)) {
+      if (queuedActionAt === null) queuedActionAt = receivedAt;
       order.push("queued_action");
+    }
   };
   ws.on("message", orderListener);
-  const startedPromise = waitForMessage(ws, (message) => message.type === "round_started");
   const updatePromise = waitForMessage(ws, (message) =>
-    message.type === "room_state" && message.players?.some((player) => player.name === "queued"));
-  ws.send(JSON.stringify({ type: "start_game", mode: "classic" }));
-  ws.send(JSON.stringify({ type: "update_identity", name: "queued", avatar: "🐸" }));
-  const [started, updated] = await Promise.all([startedPromise, updatePromise]);
+    message.type === "room_state" && message.players?.some((player) => player.name === `queued-${mode}`), 60_000);
+  const startedPromiseLong = waitForMessage(ws, (message) => message.type === "round_started", 60_000);
+  ws.send(JSON.stringify({ type: "start_game", mode }));
+  ws.send(JSON.stringify({ type: "update_identity", name: `queued-${mode}`, avatar: "🐸" }));
+  const [started, updated] = await Promise.all([startedPromiseLong, updatePromise]);
   const result = {
     roomCode: created.code,
+    mode,
     roundStarted: Boolean(started.round),
-    queuedActionLatencyMs: performance.now() - startedAt,
-    queuedActionBeforeRound: order.indexOf("queued_action") >= 0 &&
-      order.indexOf("queued_action") < order.indexOf("round_started"),
+    queuedActionLatencyMs: queuedActionAt === null ? null : queuedActionAt - startedAt,
+    roundStartedLatencyMs: roundStartedAt === null ? null : roundStartedAt - startedAt,
+    queuedActionBeforeRound: queuedActionAt !== null && roundStartedAt !== null &&
+      queuedActionAt < roundStartedAt,
     updatedStateReceived: Boolean(updated),
     eventOrder: order,
   };
@@ -341,11 +378,13 @@ async function integrationMeasurement(sampleCount) {
     const solo = [];
     for (let index = 0; index < sampleCount; index++)
       solo.push(await httpPost(port, { mode: "classic", dictionaryId: DEFAULT_DICTIONARY_ID }));
-    let multiplayer;
-    try {
-      multiplayer = await multiplayerQueueMeasurement(port);
-    } catch (error) {
-      multiplayer = { error: error.message };
+    const multiplayer = {};
+    for (const mode of ["classic", "storm", "longhaul"]) {
+      try {
+        multiplayer[mode] = await multiplayerQueueMeasurement(port, mode);
+      } catch (error) {
+        multiplayer[mode] = { mode, error: error.message };
+      }
     }
     return {
       solo: {
@@ -366,8 +405,8 @@ async function integrationMeasurement(sampleCount) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const delay = monitorEventLoopDelay({ resolution: 10 });
-  delay.enable();
+  const harnessDelay = monitorEventLoopDelay({ resolution: 10 });
+  harnessDelay.enable();
   const memoryBefore = process.memoryUsage();
   const startedAt = new Date().toISOString();
   const namedProfiles = Object.values(NAMED_PROFILES);
@@ -404,7 +443,14 @@ async function main() {
   const runProduction = options.scope !== "smoke";
   const runSmoke = options.scope !== "production";
   if (runProduction && options.mode === "measure") {
-    report.named = await runProfileCorpus(namedProfiles, options.samples, true, candidateCountFor);
+    report.named = await runProfileCorpus(
+      namedProfiles,
+      options.samples,
+      true,
+      candidateCountFor,
+      null,
+      { isolatedEventLoop: true, retainDetails: Boolean(options.output) },
+    );
     const longHaul = namedProfiles.find((profile) => profile.profileId === "6x6-min6");
     const seeds = Array.from({ length: options.samples }, (_, index) => fixedSeed(index, namedProfiles.indexOf(longHaul) * 97));
     const comparison = {};
@@ -427,12 +473,8 @@ async function main() {
         successCount: records.filter((record) => record.ok).length,
         noPassCount: records.filter((record) => record.errorCode === "NO_QUALITY_CANDIDATE").length,
         latency: latencySummary(records.map((record) => record.elapsedMs)),
-        eventLoopDelayMs: {
-          mean: Number.isFinite(comparisonDelay.mean) ? comparisonDelay.mean / 1e6 : null,
-          p95: Number.isFinite(comparisonDelay.percentile(95)) ? comparisonDelay.percentile(95) / 1e6 : null,
-          maximum: Number.isFinite(comparisonDelay.max) ? comparisonDelay.max / 1e6 : null,
-        },
-        records,
+        eventLoopDelayMs: eventLoopSummary(comparisonDelay),
+        ...(options.output ? { records } : {}),
       };
     }
     report.longHaulComparison = comparison;
@@ -444,6 +486,7 @@ async function main() {
       false,
       candidateCountFor,
       UNMEASURED_SMOKE_LIMITS,
+      { retainDetails: Boolean(options.output) },
     );
     report.unmeasured = await runProfileCorpus(
       unmeasuredProfiles,
@@ -451,17 +494,14 @@ async function main() {
       false,
       candidateCountFor,
       UNMEASURED_SMOKE_LIMITS,
+      { retainDetails: Boolean(options.output) },
     );
   }
   if (!options.skipHttp) report.integration = await integrationMeasurement(options.httpSamples);
-  delay.disable();
+  harnessDelay.disable();
   const memoryAfter = process.memoryUsage();
   report.runtime = {
-    eventLoopDelayMs: {
-      mean: Number.isFinite(delay.mean) ? delay.mean / 1e6 : null,
-      p95: Number.isFinite(delay.percentile(95)) ? delay.percentile(95) / 1e6 : null,
-      maximum: Number.isFinite(delay.max) ? delay.max / 1e6 : null,
-    },
+    harnessEventLoopDelay: eventLoopSummary(harnessDelay),
     memoryBefore: memoryBefore,
     memoryAfter: memoryAfter,
     rssDelta: memoryAfter.rss - memoryBefore.rss,
@@ -477,7 +517,7 @@ async function main() {
     schemaVersion: report.schemaVersion,
     mode: report.mode,
     output: report.output || null,
-    named: report.named.map(({ profileId, successCount, noPassCount, latency }) => ({ profileId, successCount, noPassCount, latency })),
+    named: report.named.map(({ profileId, successCount, noPassCount, latency, eventLoopDelayMs }) => ({ profileId, successCount, noPassCount, latency, eventLoopDelayMs })),
     longHaulComparison: report.longHaulComparison && Object.fromEntries(
       Object.entries(report.longHaulComparison).map(([count, value]) => [count, {
         successCount: value.successCount,

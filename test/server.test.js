@@ -418,8 +418,31 @@ test("solo and multiplayer rounds use the same server generator contract", async
     ],
   );
   const room = rooms.get(created.code);
-  assert.equal(Number.isInteger(room.round.quality.requestedSeed), true);
-  assert.equal(Number.isInteger(room.round.quality.selectedCandidateSeed), true);
+  const quality = room.round.quality;
+  assert.equal(Number.isInteger(quality.requestedSeed), true);
+  assert.equal(Number.isInteger(quality.selectedCandidateSeed), true);
+  assert.equal(quality.selectorVersion, results[1].diagnostics.selectorVersion);
+  assert.equal(quality.profileId, results[1].diagnostics.profileId);
+  assert.equal(quality.candidateCount, 4);
+  assert.equal(Array.isArray(quality.candidateSeeds), true);
+  assert.equal(quality.candidateSeeds.length, quality.candidateCount);
+  assert.equal(Number.isInteger(quality.selectedCandidateIndex), true);
+  assert.equal(typeof quality.selectedFingerprint, "string");
+  assert.equal(Array.isArray(quality.selectedRanking), true);
+  assert.equal(Array.isArray(quality.candidates), true);
+  for (const field of [
+    "generationAttempts",
+    "placementOperations",
+    "generationBacktracks",
+    "analysisOperations",
+    "cooperativeYields",
+    "elapsedMs",
+    "size",
+    "minimum",
+  ]) assert.equal(typeof quality[field], "number");
+  assert.equal(quality.validationMode, "classic");
+  assert.deepEqual(Object.keys(quality.dictionary).sort(), ["artifactSha256", "dictionaryId"]);
+  assert.equal(quality.candidates.some((candidate) => "report" in candidate), false);
   assert.equal(started.round.quality, undefined);
   host.close();
 });
@@ -685,7 +708,9 @@ test("display tokens grant a room-scoped connection that can resume independentl
     (update) => update.event === "round_started",
   );
   message(host, "start_game", { mode: "classic" });
-  assert.equal((await roundState).state.status, "playing");
+  const startedDisplay = await roundState;
+  assert.equal(startedDisplay.state.status, "playing");
+  assert.equal(startedDisplay.state.round.quality, undefined);
 
   const closed = next(display, "session_closed");
   message(host, "leave_session");

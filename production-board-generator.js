@@ -89,6 +89,48 @@ function normalizeDiagnostics(contract, profile, candidateCount, result) {
   };
 }
 
+function compactRoundDiagnostics(diagnostics, result) {
+  const work = diagnostics?.aggregateWork || {};
+  return {
+    selectorVersion: diagnostics?.selectorVersion || PRODUCTION_SELECTOR_VERSION,
+    profileId: diagnostics?.profileId || null,
+    requestedSeed: result?.requestedSeed ?? diagnostics?.requestedSeed ?? null,
+    candidateSeeds: [...(diagnostics?.candidateSeeds || [])],
+    candidateCount: diagnostics?.candidateCount || 0,
+    selectedCandidateIndex: diagnostics?.selectedCandidateIndex ?? null,
+    selectedCandidateSeed: result?.selectedCandidateSeed ?? diagnostics?.selectedCandidateSeed ?? null,
+    selectedFingerprint: diagnostics?.selectedFingerprint || null,
+    selectedRanking: diagnostics?.selectedRanking || null,
+    candidates: (diagnostics?.candidates || []).map((candidate) => ({
+      index: candidate.index,
+      seed: candidate.seed,
+      ok: Boolean(candidate.ok),
+      passed: Boolean(candidate.passed),
+      fingerprint: candidate.fingerprint || null,
+      failureReasons: [...(candidate.failureReasons || [])],
+      errorCode: candidate.errorCode || null,
+      ranking: candidate.ranking || null,
+      generation: candidate.generation ? { ...candidate.generation } : null,
+      analysis: candidate.analysis ? { ...candidate.analysis } : null,
+    })),
+    generationAttempts: work.generationAttempts || 0,
+    placementOperations: work.placementOperations || 0,
+    generationBacktracks: work.generationBacktracks || 0,
+    analysisOperations: work.analysisOperations || 0,
+    cooperativeYields: work.cooperativeYields || 0,
+    elapsedMs: diagnostics?.elapsedMs || 0,
+    dictionary: diagnostics?.dictionary
+      ? {
+          dictionaryId: diagnostics.dictionary.dictionaryId,
+          artifactSha256: diagnostics.dictionary.artifactSha256,
+        }
+      : null,
+    validationMode: diagnostics?.validationMode || null,
+    size: diagnostics?.size || null,
+    minimum: diagnostics?.minimum || null,
+  };
+}
+
 async function generateQualityRoundBoard(contract, options = {}) {
   const profile = contract && getQualityProfile(
     contract.size,
@@ -147,6 +189,7 @@ async function generateQualityRoundBoard(contract, options = {}) {
       requestedSeed,
       selectedCandidateSeed: result.selectedCandidateSeed,
       diagnostics: normalized,
+      compactDiagnostics: compactRoundDiagnostics(normalized, result),
     };
   } catch {
     return failureResult(
@@ -165,5 +208,6 @@ module.exports = {
   PRODUCTION_SELECTOR_VERSION,
   isMeasuredProductionProfile,
   scaleSelectorLimits,
+  compactRoundDiagnostics,
   generateQualityRoundBoard,
 };

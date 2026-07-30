@@ -843,16 +843,17 @@ async function start(
     generated = await applySoloBoardTestFixture(generated);
   } catch (error) {
     if (generationRequest !== soloGenerationRequest) return;
-    toast(
+    const failureMessage =
       error.code === "BOARD_GENERATION_FAILED" &&
-        [
-          "NO_QUALITY_CANDIDATE",
-          "QUALITY_SELECTION_GLOBAL_LIMIT",
-          "QUALITY_PROFILE_UNAVAILABLE",
-        ].includes(error.failureCode)
-        ? "No playable board is available for this configuration."
-        : "Board generation failed. Please try again.",
-    );
+      error.failureCode === "QUALITY_PROFILE_UNAVAILABLE"
+        ? "This configuration is not currently supported."
+        : error.code === "BOARD_GENERATION_FAILED" &&
+          ["NO_QUALITY_CANDIDATE", "QUALITY_SELECTION_GLOBAL_LIMIT"].includes(
+            error.failureCode,
+          )
+          ? "No suitable board was found. Please try again."
+          : "Board generation failed. Please try again.";
+    toast(failureMessage);
     return;
   }
   if (generationRequest !== soloGenerationRequest) return;
