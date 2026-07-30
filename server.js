@@ -10,10 +10,12 @@ const http = require("node:http"),
 const {
   MODE_CONFIG,
   getPreparedLexicon,
+  getPreparedAnalysisIndex,
   generateBoardCooperatively,
   isDictionaryWord,
   validateSubmission,
 } = require("./game-core");
+const { selectRoundBoard } = require("./board-selector");
 const {
   DEFAULT_DICTIONARY_ID,
   getDictionary,
@@ -633,6 +635,18 @@ function boardGenerationContract(config, dictionaryId = DEFAULT_DICTIONARY_ID) {
       generationTestHooks.lexicon ||
       getPreparedLexicon(dictionary.id, validationMode),
   };
+}
+// Explicit development-only entry point. Normal solo and multiplayer callers
+// continue to use generateRoundBoard() and never invoke quality selection.
+async function selectRoundBoardForDevelopment(contract, options = {}) {
+  return selectRoundBoard(contract, {
+    ...options,
+    analysisIndex: getPreparedAnalysisIndex(contract.dictionary.id, contract.validationMode),
+    yieldScheduler:
+      options.yieldScheduler ||
+      generationTestHooks.yieldScheduler ||
+      nodeGenerationScheduler,
+  });
 }
 async function generateRoundBoard(contract, options = {}) {
   const seed = options.seed ?? crypto.randomInt(0x100000000);
@@ -1734,6 +1748,7 @@ module.exports = {
   startRound,
   boardGenerationContract,
   generateRoundBoard,
+  selectRoundBoardForDevelopment,
   validateSoloBoardRequest,
   generationTestHooks,
   MAX_PLAYERS,
