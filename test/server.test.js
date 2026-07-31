@@ -153,6 +153,7 @@ test.after(
 );
 test.afterEach(() => {
   generationTestHooks.limits = null;
+  generationTestHooks.selectorLimits = null;
   generationTestHooks.lexicon = null;
   generationTestHooks.yieldScheduler = null;
   generationTestHooks.onContract = null;
@@ -295,7 +296,8 @@ test("solo board endpoint generates validated preset and custom rounds", async (
   assert.equal(preset.validationMode, "classic");
   assert.equal(preset.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
   assert.equal(preset.board.length, preset.config.size ** 2);
-  assert.equal(preset.seed, preset.diagnostics.seed);
+  assert.equal(preset.seed, preset.diagnostics.requestedSeed);
+  assert.equal(Number.isInteger(preset.selectedCandidateSeed), true);
   assert.deepEqual(preset.diagnostics.dictionary, preset.dictionary);
 
   const customResponse = await postSoloBoard({
@@ -318,6 +320,23 @@ test("solo board endpoint generates validated preset and custom rounds", async (
   assert.equal(custom.config.adult, true);
   assert.equal(custom.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
   assert.equal(custom.board.length, 16);
+
+  const unavailableResponse = await postSoloBoard({
+    mode: "custom",
+    dictionaryId: DEFAULT_DICTIONARY_ID,
+    config: {
+      label: "UNMEASURED",
+      min: 7,
+      size: 4,
+      seconds: 60,
+      rule: "Unmeasured profile",
+    },
+  });
+  assert.equal(unavailableResponse.status, 503);
+  const unavailable = await unavailableResponse.json();
+  assert.equal(unavailable.error, "BOARD_GENERATION_FAILED");
+  assert.equal(unavailable.failureCode, "QUALITY_PROFILE_UNAVAILABLE");
+  assert.equal(unavailable.board, undefined);
 });
 
 test("solo board endpoint rejects unsupported input and unknown dictionaries", async () => {
@@ -358,7 +377,9 @@ test("solo board endpoint rejects unsupported input and unknown dictionaries", a
 
 test("solo and multiplayer rounds use the same server generator contract", async () => {
   const contracts = [];
+  const results = [];
   generationTestHooks.onContract = (contract) => contracts.push(contract);
+  generationTestHooks.onResult = (result) => results.push(result);
   const soloResponse = await postSoloBoard({
     mode: "classic",
     dictionaryId: DEFAULT_DICTIONARY_ID,
@@ -368,17 +389,19 @@ test("solo and multiplayer rounds use the same server generator contract", async
   const host = await client("shared-generator-host");
   const createdPromise = next(host, "room_created");
   message(host, "create_room");
-  await createdPromise;
+  const created = await createdPromise;
   const startedPromise = next(host, "round_started");
   message(host, "start_game", {
     mode: "classic",
     dictionaryId: DEFAULT_DICTIONARY_ID,
   });
-  await startedPromise;
+  const started = await startedPromise;
 
   assert.equal(contracts.length, 2);
+  assert.equal(results.length, 2);
+  assert.equal(results.every((result) => result.diagnostics.selectorVersion), true);
   assert.deepEqual(
-    contracts.map(({ seed, ...contract }) => contract),
+    contracts.map(({ requestedSeed, ...contract }) => contract),
     [
       {
         size: 4,
@@ -394,14 +417,64 @@ test("solo and multiplayer rounds use the same server generator contract", async
       },
     ],
   );
+  const room = rooms.get(created.code);
+  const quality = room.round.quality;
+  assert.equal(Number.isInteger(quality.requestedSeed), true);
+  assert.equal(Number.isInteger(quality.selectedCandidateSeed), true);
+  assert.equal(quality.selectorVersion, results[1].diagnostics.selectorVersion);
+  assert.equal(quality.profileId, results[1].diagnostics.profileId);
+  assert.equal(quality.candidateCount, 4);
+  assert.equal(Array.isArray(quality.candidateSeeds), true);
+  assert.equal(quality.candidateSeeds.length, quality.candidateCount);
+  assert.equal(Number.isInteger(quality.selectedCandidateIndex), true);
+  assert.equal(typeof quality.selectedFingerprint, "string");
+  assert.equal(Array.isArray(quality.selectedRanking), true);
+  assert.equal(Array.isArray(quality.candidates), true);
+  for (const field of [
+    "generationAttempts",
+    "placementOperations",
+    "generationBacktracks",
+    "analysisOperations",
+    "cooperativeYields",
+    "elapsedMs",
+    "size",
+    "minimum",
+  ]) assert.equal(typeof quality[field], "number");
+  assert.equal(quality.validationMode, "classic");
+  assert.deepEqual(Object.keys(quality.dictionary).sort(), ["artifactSha256", "dictionaryId"]);
+  assert.equal(quality.candidates.some((candidate) => "report" in candidate), false);
+  assert.equal(started.round.quality, undefined);
   host.close();
 });
 
+test("multiplayer rejects browser-owned seed and selector policy controls", async () => {
+  const ws = await client("policy-controls-host");
+  const createdPromise = next(ws, "room_created");
+  const lobbyPromise = next(ws, "room_state");
+  message(ws, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const errorPromise = next(ws, "error");
+  message(ws, "start_game", {
+    mode: "classic",
+    requestedSeed: 123,
+    candidateCount: 6,
+    selectorLimits: { totalYields: 1 },
+  });
+  const error = await errorPromise;
+  assert.equal(error.code, "ROUND_GENERATION_POLICY_NOT_ALLOWED");
+  assert.equal(rooms.get(created.code).round, null);
+  assert.equal(rooms.get(created.code).generation, null);
+  ws.close();
+});
+
 test("solo board generation failure is explicit and never returns a board", async () => {
-  generationTestHooks.limits = {
-    maxAttempts: 1,
-    maxPlacementOperations: 1,
-    maxBacktracks: 0,
+  generationTestHooks.selectorLimits = {
+    totalGenerationAttempts: 1,
+    totalPlacementOperations: 1,
+    totalGenerationBacktracks: 1,
+    totalAnalysisOperations: 1,
+    totalYields: 1,
     operationsPerYield: 1,
   };
   const response = await postSoloBoard({
@@ -411,14 +484,14 @@ test("solo board generation failure is explicit and never returns a board", asyn
   assert.equal(response.status, 503);
   const failure = await response.json();
   assert.equal(failure.error, "BOARD_GENERATION_FAILED");
-  assert.equal(failure.failureCode, "PLACEMENT_LIMIT");
+  assert.equal(failure.failureCode, "QUALITY_SELECTION_GLOBAL_LIMIT");
   assert.equal(failure.board, undefined);
   assert.equal(failure.diagnostics.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
-  assert.equal(Number.isInteger(failure.diagnostics.seed), true);
+  assert.equal(Number.isInteger(failure.diagnostics.requestedSeed), true);
 });
 
 test("abandoned solo requests cancel generation without completing a response", async () => {
-  generationTestHooks.limits = { operationsPerYield: 1 };
+  generationTestHooks.selectorLimits = { operationsPerYield: 1 };
   let releaseGeneration;
   let generationYielded;
   const yielded = new Promise((resolve) => {
@@ -460,13 +533,13 @@ test("abandoned solo requests cancel generation without completing a response", 
   releaseGeneration();
   const cancelled = await result;
   assert.equal(cancelled.ok, false);
-  assert.equal(cancelled.error.code, "GENERATION_CANCELLED");
+  assert.equal(cancelled.error.code, "QUALITY_SELECTION_CANCELLED");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(responseCompleted, false);
 });
 
 test("cooperative board generation lets another room process a queued action", async () => {
-  generationTestHooks.limits = { operationsPerYield: 1 };
+  generationTestHooks.selectorLimits = { operationsPerYield: 2_048 };
   const firstHost = await client("yield-first");
   const secondHost = await client("yield-second");
   const firstCreated = next(firstHost, "room_created");
@@ -519,22 +592,24 @@ test("board generation failure is recoverable and overlapping starts are rejecte
   const created = await createdPromise;
   await lobbyPromise;
   const room = rooms.get(created.code);
-  generationTestHooks.limits = {
-    maxAttempts: 1,
-    maxPlacementOperations: 1,
-    maxBacktracks: 0,
+  generationTestHooks.selectorLimits = {
+    totalGenerationAttempts: 1,
+    totalPlacementOperations: 1,
+    totalGenerationBacktracks: 1,
+    totalAnalysisOperations: 1,
+    totalYields: 1,
     operationsPerYield: 1,
   };
   const failedPromise = next(ws, "error");
   message(ws, "start_game", { mode: "classic" });
   const failed = await failedPromise;
   assert.equal(failed.code, "BOARD_GENERATION_FAILED");
-  assert.equal(failed.failureCode, "PLACEMENT_LIMIT");
+  assert.equal(failed.failureCode, "QUALITY_SELECTION_GLOBAL_LIMIT");
   assert.equal(room.status, "lobby");
   assert.equal(room.round, null);
   assert.equal(room.generation, null);
 
-  generationTestHooks.limits = { operationsPerYield: 1 };
+  generationTestHooks.selectorLimits = { operationsPerYield: 2_048 };
   const startedPromise = next(ws, "round_started");
   const busyPromise = next(ws, "error");
   message(ws, "start_game", { mode: "classic" });
@@ -633,7 +708,9 @@ test("display tokens grant a room-scoped connection that can resume independentl
     (update) => update.event === "round_started",
   );
   message(host, "start_game", { mode: "classic" });
-  assert.equal((await roundState).state.status, "playing");
+  const startedDisplay = await roundState;
+  assert.equal(startedDisplay.state.status, "playing");
+  assert.equal(startedDisplay.state.round.quality, undefined);
 
   const closed = next(display, "session_closed");
   message(host, "leave_session");
@@ -987,7 +1064,7 @@ test("host and guest both accept dirty consent and round starts", async () => {
 });
 
 test("disconnecting consented player cancels an in-flight adult generation", async () => {
-  generationTestHooks.limits = { operationsPerYield: 1 };
+  generationTestHooks.selectorLimits = { operationsPerYield: 1 };
   let generationYielded;
   const generationYieldedPromise = new Promise((resolve) => {
     generationYielded = resolve;
@@ -1041,7 +1118,7 @@ function roomGeneration(code) {
 }
 
 test("a consenting guest admitted during Dirty generation can reconnect", async () => {
-  generationTestHooks.limits = { operationsPerYield: 1 };
+  generationTestHooks.selectorLimits = { operationsPerYield: 2_048 };
   let generationYielded;
   const generationYieldedPromise = new Promise((resolve) => {
     generationYielded = resolve;
