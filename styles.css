@@ -251,6 +251,32 @@ h2 {
   color: var(--ink);
   font-size: 21px;
 }
+.chain-status {
+  display: grid;
+  gap: 3px;
+  margin: -4px 0 9px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 88%, #b9f2dc);
+  font: 11px monospace;
+}
+.chain-status div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.chain-status span {
+  color: var(--muted);
+}
+.chain-status strong {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.chain-status p {
+  margin: 2px 0 0;
+  color: var(--coral);
+  overflow-wrap: anywhere;
+}
 .board {
   background: var(--dark);
   padding: 8px;
@@ -843,6 +869,7 @@ html[data-theme="dark"] nav {
 .rule-banner,
 .game-meta,
 .preview,
+.chain-status,
 .game-foot {
   flex: none;
 }

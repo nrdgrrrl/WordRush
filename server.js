@@ -24,6 +24,8 @@ const {
   validateCustomConfig,
   isSuddenDeath,
   requiresChain,
+  chainWordMatches,
+  advanceChainFields,
   hasScoreTarget,
   usesAdultLexicon,
   isPartyRound,
@@ -480,6 +482,14 @@ function playerScore(room, player) {
       ? recordedScore(player)
       : Number(player.score) || 0;
 }
+function publicChainState(round) {
+  if (!round?.config?.chain) return null;
+  return {
+    lastAcceptedWord: round.lastAcceptedWord,
+    requiredLetter: round.requiredLetter,
+    chainResetLetter: round.chainResetLetter,
+  };
+}
 function state(room) {
   return {
     type: "room_state",
@@ -492,6 +502,9 @@ function state(room) {
     results: room.results,
     config: roomConfig(room),
     lastResult: room.status === "finished" ? room.lastResult : null,
+    ...(room.status === "playing" && room.round?.config?.chain
+      ? { chain: publicChainState(room.round) }
+      : {}),
     players: [...room.players.values()].map((p) => ({
       id: p.id,
       name: p.name,
@@ -810,7 +823,14 @@ async function startRound(
     board: result.board,
     size: config.size,
     found: new Set(),
-    lastWord: "",
+    ...(requiresChain(config)
+      ? {
+          lastAcceptedWord: "",
+          requiredLetter: "",
+          chainResetLetter: "",
+          chainRemainingByInitial: { ...result.report.playableWordStarts },
+        }
+      : {}),
     startedAt,
     introEndsAt,
     endsAt: startedAt + config.seconds * 1000,
@@ -1562,14 +1582,13 @@ async function handle(ws, message) {
       mode: room.round.validationMode,
       dictionaryId: room.round.dictionaryId,
       minimum: roomConfig(room).min,
-      found: room.mode === "coop" ? room.round.found : player.found,
+      found: requiresChain(roomConfig(room)) || room.mode === "coop"
+        ? room.round.found
+        : player.found,
     });
     const config = roomConfig(room);
-    const chainBreak =
-      requiresChain(config) &&
-      room.round.lastWord &&
-      result.word[0] !== room.round.lastWord.at(-1);
-    if (chainBreak && result.valid)
+    if (result.valid && requiresChain(config) &&
+      !chainWordMatches(room.round.requiredLetter, result.word))
       result = { ...result, valid: false, reason: "chain", points: 0 };
     if (!result.valid) {
       console.warn("Wordrush rejected submission", JSON.stringify({
@@ -1584,6 +1603,12 @@ async function handle(ws, message) {
         word: result.word,
         reason: result.reason,
         minimum: config.min,
+        ...(requiresChain(config)
+          ? {
+              requiredLetter: room.round.requiredLetter,
+              chain: publicChainState(room.round),
+            }
+          : {}),
       });
       if (shouldEndOnRejectedWord(config, result.reason))
         finishRound(room, "invalid_word", {
@@ -1599,7 +1624,8 @@ async function handle(ws, message) {
     // A word received before the deadline must not be awarded after it.
     if (Date.now() >= room.round.endsAt) return finishRound(room, "timeout");
     room.round.found.add(result.word);
-    room.round.lastWord = result.word;
+    if (requiresChain(config))
+      advanceChainFields(room.round, result.word);
     player.found.add(result.word);
     if (room.mode === "coop") {
       room.teamScore += result.points;
@@ -1620,6 +1646,7 @@ async function handle(ws, message) {
         avatar: p.avatar || "🐈",
         score: playerScore(room, p),
       })),
+      ...(requiresChain(config) ? { chain: publicChainState(room.round) } : {}),
     });
     if (hasScoreTarget(roomConfig(room)) && player.score >= roomConfig(room).target)
       finishRound(room, "race");
@@ -1955,6 +1982,9 @@ async function leaderboardRequest(req, res) {
         selectedCandidateSeed: result.selectedCandidateSeed,
         dictionary: request.dictionary.metadata,
         diagnostics,
+        ...(request.config.chain
+          ? { playableWordStarts: { ...result.report.playableWordStarts } }
+          : {}),
       }));
     } finally {
       cancellation.cleanup();

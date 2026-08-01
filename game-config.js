@@ -210,6 +210,29 @@
   function requiresChain(config) {
     return config?.chain === true;
   }
+  function chainWordMatches(requiredLetter, word) {
+    const required = String(requiredLetter || "").toUpperCase();
+    const candidate = String(word || "").toUpperCase();
+    return !required || candidate.startsWith(required);
+  }
+  function advanceChainFields(fields, acceptedWord) {
+    const word = String(acceptedWord || "").toUpperCase();
+    const initial = word[0];
+    const final = word.at(-1);
+    fields.chainRemainingByInitial[initial] = Math.max(
+      0,
+      (fields.chainRemainingByInitial[initial] || 0) - 1,
+    );
+    fields.lastAcceptedWord = word;
+    if ((fields.chainRemainingByInitial[final] || 0) > 0) {
+      fields.requiredLetter = final;
+      fields.chainResetLetter = "";
+    } else {
+      fields.requiredLetter = "";
+      fields.chainResetLetter = final;
+    }
+    return fields;
+  }
   function hasScoreTarget(config) {
     return Number.isFinite(config?.target) && config.target > 0;
   }
@@ -237,6 +260,8 @@
     validateCustomConfig,
     isSuddenDeath,
     requiresChain,
+    chainWordMatches,
+    advanceChainFields,
     hasScoreTarget,
     usesAdultLexicon,
     isPartyRound,

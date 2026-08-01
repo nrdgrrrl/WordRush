@@ -5,6 +5,8 @@ const $ = (s) => document.querySelector(s),
   validateCustomConfig = sharedConfig.validateCustomConfig,
   isSuddenDeath = sharedConfig.isSuddenDeath,
   requiresChain = sharedConfig.requiresChain,
+  chainWordMatches = sharedConfig.chainWordMatches,
+  advanceChainFields = sharedConfig.advanceChainFields,
   hasScoreTarget = sharedConfig.hasScoreTarget,
   DEFAULT_DICTIONARY_ID = sharedConfig.DEFAULT_DICTIONARY_ID,
   usesAdultLexicon = sharedConfig.usesAdultLexicon,
@@ -92,6 +94,8 @@ async function requestSoloBoard({ mode, config, adultMode, dictionaryId }) {
     payload.board.some((letter) => !/^[A-Z]$/.test(letter))
   )
     throw new Error("Solo board response was invalid");
+  if (payload.config.chain && !payload.playableWordStarts)
+    throw new Error("Solo chain board response was invalid");
   return payload;
 }
 async function applySoloBoardTestFixture(generated) {
@@ -163,7 +167,12 @@ const s = {
   onlineIntroEndsAt: 0,
   onlineRandomRush: false,
   pendingOnlineTrace: null,
-  lastWord: "",
+  lastAcceptedWord: "",
+  requiredLetter: "",
+  chainResetLetter: "",
+  chainRemainingByInitial: {},
+  rejectedAttempt: "",
+  rejectionReason: "",
   suddenDeathEvent: null,
   acceptingSoloSubmissions: false,
   config: null,
@@ -423,6 +432,34 @@ function render() {
   g.innerHTML = s.b
     .map((l, i) => '<button class="tile" data-i="' + i + '">' + l + "</button>")
     .join("");
+  renderChainStatus();
+}
+function renderChainStatus() {
+  const status = $("#chainStatus");
+  if (!status) return;
+  const active = requiresChain(s.config);
+  status.hidden = !active;
+  if (!active) return;
+  $("#chainLastAccepted").textContent = s.lastAcceptedWord || "None";
+  $("#chainRequiredLetter").textContent = s.requiredLetter || "Any";
+  const guidance = $("#chainGuidance");
+  let text = "";
+  if (s.chainResetLetter) {
+    text = "No unused " + s.chainResetLetter + " words remain. Chain reset.";
+  } else if (s.rejectedAttempt) {
+    const reasons = {
+      minimum: "need at least " + s.config.min + " letters",
+      path: "tiles must connect",
+      duplicate: "that word was already used",
+      dictionary: "not in the Wordrush dictionary",
+    };
+    text = s.rejectionReason === "chain"
+      ? "Rejected: " + s.rejectedAttempt + ", must start with " + s.requiredLetter
+      : "Rejected: " + s.rejectedAttempt + ", " +
+        (reasons[s.rejectionReason] || "not accepted");
+  }
+  guidance.hidden = !text;
+  guidance.textContent = text;
 }
 function renderResults(ranking) {
   const rows = ranking?.length
@@ -878,7 +915,14 @@ async function start(
   s.time = config.seconds;
   s.score = 0;
   s.found.clear();
-  s.lastWord = "";
+  s.lastAcceptedWord = "";
+  s.requiredLetter = "";
+  s.chainResetLetter = "";
+  s.chainRemainingByInitial = config.chain
+    ? { ...generated.playableWordStarts }
+    : {};
+  s.rejectedAttempt = "";
+  s.rejectionReason = "";
   s.roundWordTimes = [];
   s.pick = [];
   s.done = 0;
@@ -987,16 +1031,24 @@ async function submit() {
       return;
     }
     const duplicate = s.found.has(w);
-    const chainBreak =
-      requiresChain(config) && s.lastWord && w[0] !== s.lastWord.at(-1);
-    const ok = w.length >= config.min && validPath && inDictionary && !chainBreak;
-    if (ok && !duplicate) {
+    let rejectReason = null;
+    if (w.length < config.min) rejectReason = "minimum";
+    else if (!validPath) rejectReason = "path";
+    else if (duplicate) rejectReason = "duplicate";
+    else if (!inDictionary) rejectReason = "dictionary";
+    else if (requiresChain(config) &&
+      !chainWordMatches(s.requiredLetter, w)) rejectReason = "chain";
+    if (!rejectReason) {
       const points = w.length * w.length;
       s.found.add(w);
-      s.lastWord = w;
+      s.lastAcceptedWord = w;
+      if (requiresChain(config)) advanceChainFields(s, w);
+      s.rejectedAttempt = "";
+      s.rejectionReason = "";
       s.score += points;
       recordAcceptedWord(w);
       updateProfile();
+      renderChainStatus();
       $("#gameScore").textContent = s.score;
       $("#preview").textContent = w + " +" + points;
       $("#preview").classList.add("found");
@@ -1009,38 +1061,25 @@ async function submit() {
         randomRush: config.randomRush,
       });
       if (hasScoreTarget(config) && s.score >= config.target) end();
-    } else if (duplicate) {
-      pulseDuplicateWord(trace);
-      profile.incorrect++;
-      updateProfile();
-      toast("Already found — try a new word", "duplicate");
-      emit("word-rejected", {
-        mode: config.mode,
-        reason: "duplicate",
-        word_length: w.length,
-        multiplayer: false,
-        random_rush: config.randomRush,
-      });
     } else {
-      const rejectReason = w.length < config.min
-        ? "minimum"
-        : chainBreak
-          ? "chain"
-          : !validPath
-            ? "path"
-            : "dictionary";
-      pulseIncorrectWord(trace);
+      s.rejectedAttempt = w;
+      s.rejectionReason = rejectReason;
+      renderChainStatus();
+      if (rejectReason === "duplicate") pulseDuplicateWord(trace);
+      else pulseIncorrectWord(trace);
       profile.incorrect++;
       updateProfile();
       toast(
         rejectReason === "minimum"
           ? "Wrong word · need " + config.min + " letters"
           : rejectReason === "chain"
-            ? "Wrong word · chain starts with " + s.lastWord.at(-1)
-          : rejectReason === "path"
-            ? "Wrong word · tiles must connect"
-            : "Wrong word · not in dictionary",
-        "wrong",
+            ? "Wrong word · chain starts with " + s.requiredLetter
+            : rejectReason === "path"
+              ? "Wrong word · tiles must connect"
+              : rejectReason === "duplicate"
+                ? "Already found — try a new word"
+                : "Wrong word · not in dictionary",
+        rejectReason === "duplicate" ? "duplicate" : "wrong",
       );
       emit("word-rejected", {
         mode: config.mode,
@@ -1273,12 +1312,26 @@ document.addEventListener("click", (event) => {
   if (target) show(target.dataset.screen);
 });
 
-window.wordrushRecordOnlineWord = (word, points) => {
+function applyOnlineChainState(chain, clearRejection = false) {
+  if (!requiresChain(s.config) || !chain) return;
+  s.lastAcceptedWord = String(chain.lastAcceptedWord || "").toUpperCase();
+  s.requiredLetter = String(chain.requiredLetter || "").toUpperCase();
+  s.chainResetLetter = String(chain.chainResetLetter || "").toUpperCase();
+  if (clearRejection) {
+    s.rejectedAttempt = "";
+    s.rejectionReason = "";
+  }
+  renderChainStatus();
+}
+window.wordrushUpdateOnlineChain = (chain, clearRejection = true) =>
+  applyOnlineChainState(chain, clearRejection);
+window.wordrushRecordOnlineWord = (word, points, chain) => {
   if (s.pendingOnlineTrace?.word === word) {
     pulseAcceptedWord(s.pendingOnlineTrace.trace);
   }
   s.pendingOnlineTrace = null;
-  s.lastWord = word;
+  applyOnlineChainState(chain, true);
+  s.lastAcceptedWord = word;
   recordAcceptedWord(word);
   updateProfile();
   emit("word-accepted", {
@@ -1289,12 +1342,16 @@ window.wordrushRecordOnlineWord = (word, points) => {
     randomRush: s.onlineRandomRush,
   });
 };
-window.wordrushRecordOnlineIncorrect = (reason, word = "") => {
+window.wordrushRecordOnlineIncorrect = (reason, word = "", chain) => {
   if (s.pendingOnlineTrace) {
     if (reason === "duplicate") pulseDuplicateWord(s.pendingOnlineTrace.trace);
     else pulseIncorrectWord(s.pendingOnlineTrace.trace);
   }
   s.pendingOnlineTrace = null;
+  applyOnlineChainState(chain, false);
+  s.rejectedAttempt = String(word || "").toUpperCase();
+  s.rejectionReason = reason;
+  renderChainStatus();
   profile.incorrect++;
   updateProfile();
   emit("word-rejected", {
@@ -1358,9 +1415,13 @@ window.wordrushOnlineRound = (
   mode,
   randomRush = false,
   dictionaryMetadata = null,
+  chain = null,
 ) => {
   const roundKey = round.id || round.endsAt + ":" + round.board.join("");
-  if (s.onlineRoundKey === roundKey && !s.done) return;
+  if (s.onlineRoundKey === roundKey && !s.done) {
+    applyOnlineChainState(chain, true);
+    return;
+  }
   activeOnlineRoundKey = null;
   s.onlineRoundKey = roundKey;
   s.onlineIntroEndsAt = round.introEndsAt || Date.now() + 4000;
@@ -1371,7 +1432,12 @@ window.wordrushOnlineRound = (
   s.onlineRandomRush = Boolean(randomRush);
   s.pendingOnlineTrace = null;
   s.suddenDeathEvent = null;
-  s.lastWord = "";
+  s.lastAcceptedWord = "";
+  s.requiredLetter = "";
+  s.chainResetLetter = "";
+  s.chainRemainingByInitial = {};
+  s.rejectedAttempt = "";
+  s.rejectionReason = "";
   s.config = config ? { ...config } : {
     label: mode?.toUpperCase() || "MULTIPLAYER",
     min: 3,
@@ -1400,6 +1466,7 @@ window.wordrushOnlineRound = (
   $("#gameHint").textContent = "Minimum " + s.config.min + " letters";
   clearInterval(s.timer);
   render();
+  applyOnlineChainState(chain, true);
   showOnlineRoundIntro(Math.max(0, s.onlineIntroEndsAt - Date.now()));
 };
 window.wordrushRoundStartNow = (timing = {}) => {
