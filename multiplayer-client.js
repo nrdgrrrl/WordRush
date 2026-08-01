@@ -275,26 +275,23 @@
     $("#endGame").hidden = !creator;
     $("#resumeMultiplayer").hidden = roomStatus !== "playing";
   }
-  function sessionDialog(open = true, modal = true) {
+  function sessionDialog(open = true) {
     const dialog = $("#multiplayerDialog");
     if (!dialog) return;
     if (open) {
-      if (!dialog.open) {
-        if (modal) dialog.showModal();
-        else dialog.show();
-      }
+      if (!dialog.open) dialog.showModal();
     }
     else {
       stopQrScanner(false);
       if (dialog.open) dialog.close();
     }
   }
-  function showLobbyView(modal = true) {
+  function showLobbyView() {
     stopQrScanner(false);
     $("#sessionChoices").hidden = true;
     $("#sessionScanner").hidden = true;
     $("#sessionLobby").hidden = false;
-    sessionDialog(true, modal);
+    sessionDialog();
   }
   function showLobby(code, isCreator) {
     pendingSession = false;
@@ -425,7 +422,7 @@
       }
       if (message.type === "adult_consent_request") {
         pendingConsentRequestId = message.requestId;
-        showLobbyView(false);
+        showLobbyView();
         const consentPanel = $("#consentPanel");
         const prePanel = $("#preAdmissionPanel");
         const actions = $("#consentActions");
@@ -449,7 +446,7 @@
       }
       if (message.type === "adult_consent_player_accepted") {
         if (pendingConsentRequestId === message.requestId) {
-          showLobbyView(false);
+          showLobbyView();
           renderConsentPlayers(message.requiredPlayerIds, message.acceptedPlayerIds);
         }
       }
@@ -473,7 +470,9 @@
         updateLobbyControls();
       }
       if (message.type === "adult_pre_admission_challenge") {
+        pendingConsentRequestId = "";
         pendingChallengeId = message.challengeId;
+        showLobbyView();
         const prePanel = $("#preAdmissionPanel");
         const consentPanel = $("#consentPanel");
         const actions = $("#consentActions");
