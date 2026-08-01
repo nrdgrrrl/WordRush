@@ -34,6 +34,16 @@
 .multiplayer-banner button:hover {
   color: var(--coral);
 }
+.multiplayer-banner #exitMultiplayer {
+  padding: 8px 10px;
+  border: 2px solid #2c1c37;
+  border-radius: 10px;
+  background: #fff9f0;
+  color: #2c1c37;
+  font: 900 12px system-ui;
+  box-shadow: 0 3px 0 #2c1c37;
+  white-space: nowrap;
+}
 .multiplayer-banner-actions {
   display: flex;
   gap: 6px;

@@ -583,9 +583,9 @@ function closeRoom(room, reason) {
       preAdmissionChallenges.delete(id);
       if (challenge.ws?.readyState === 1)
         send(challenge.ws, {
-          type: "adult_pre_admission_timeout",
-          challengeId: id,
-          reason: "room_closed",
+          type: "session_closed",
+          code: room.code,
+          reason,
         });
     }
   }
@@ -852,10 +852,16 @@ async function startRound(
     player.words = [];
     player.found = new Set();
   }
-  room.round.timer = setTimeout(
-    () => finishRound(room, "timeout"),
-    ROUND_INTRO_MS + config.seconds * 1000,
-  );
+  const roundId = room.round.id;
+  room.round.timer = setTimeout(() => {
+    if (
+      rooms.get(room.code) !== room ||
+      room.status !== "playing" ||
+      room.round?.id !== roundId
+    )
+      return;
+    finishRound(room, "timeout");
+  }, ROUND_INTRO_MS + config.seconds * 1000);
   room.round.timer.unref?.();
   broadcast(room, { ...state(room), type: "round_started", config });
   return true;
@@ -864,17 +870,20 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
   if (!room.round || room.status !== "playing") return;
   clearTimeout(room.round.timer);
   room.status = "finished";
+  const recorded = reason !== "skipped";
   for (const player of room.players.values())
     player.score = playerScore(room, player);
   const rankedPlayers = [...room.players.values()]
     .sort((a, b) => b.score - a.score);
   const winningScore = rankedPlayers[0]?.score;
-  rankedPlayers.forEach((player) => {
-    player.sessionPoints += player.score;
-    if (room.mode === "coop" || player.score === winningScore)
-      player.sessionWins += 1;
-    else player.sessionLosses += 1;
-  });
+  if (recorded) {
+    rankedPlayers.forEach((player) => {
+      player.sessionPoints += player.score;
+      if (room.mode === "coop" || player.score === winningScore)
+        player.sessionWins += 1;
+      else player.sessionLosses += 1;
+    });
+  }
   const gameSeconds = Math.min(
     roomConfig(room).seconds,
     Math.max(0, (Date.now() - room.round.startedAt) / 1000),
@@ -888,6 +897,7 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
     stats: { wordsFound: room.round.found.size },
     results: room.results,
     reason,
+    ...(recorded ? {} : { recorded: false }),
     suddenDeath,
     dictionary: room.round.dictionary,
     ranking: rankedPlayers.map((p) => ({
@@ -904,37 +914,49 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
       })),
   };
   room.lastResult = result;
-  try {
-    leaderboard.recordScores(
-      result.ranking.map((rankedPlayer) => {
-        const words = rankedPlayer.words || [];
-        return {
-          id: rankedPlayer.id,
-          name: rankedPlayer.name,
-          avatar: rankedPlayer.avatar,
-          score: rankedPlayer.score,
-          words: words.length,
-          correct: words.length,
-          longest: Math.max(0, ...words.map((item) => item.word.length)),
-          totalWordLength: words.reduce(
-            (sum, item) => sum + item.word.length,
-            0,
-          ),
-          gameSeconds,
-          multiplayer: true,
-          multiplayerWin:
-            result.cooperative || rankedPlayer.score === winningScore,
-        };
-      }),
-    );
-  } catch {
-    // A leaderboard write must never prevent the round result broadcast.
+  if (recorded) {
+    try {
+      leaderboard.recordScores(
+        result.ranking.map((rankedPlayer) => {
+          const words = rankedPlayer.words || [];
+          return {
+            id: rankedPlayer.id,
+            name: rankedPlayer.name,
+            avatar: rankedPlayer.avatar,
+            score: rankedPlayer.score,
+            words: words.length,
+            correct: words.length,
+            longest: Math.max(0, ...words.map((item) => item.word.length)),
+            totalWordLength: words.reduce(
+              (sum, item) => sum + item.word.length,
+              0,
+            ),
+            gameSeconds,
+            multiplayer: true,
+            multiplayerWin:
+              result.cooperative || rankedPlayer.score === winningScore,
+          };
+        }),
+      );
+    } catch {
+      // A leaderboard write must never prevent the round result broadcast.
+    }
   }
   broadcast(room, { type: "round_finished", ...result });
   if (room.randomRush) {
+    const finishedRoundId = result.roundId;
     room.rushTimer = setTimeout(() => {
-      if (room.randomRush && room.status === "finished" && !room.generation)
-        void startRound(room, randomMode(room));
+      room.rushTimer = null;
+      if (
+        rooms.get(room.code) !== room ||
+        !room.randomRush ||
+        room.status !== "finished" ||
+        room.lastResult?.roundId !== finishedRoundId ||
+        room.round?.id !== finishedRoundId ||
+        room.generation
+      )
+        return;
+      void startRound(room, randomMode(room));
     }, RANDOM_RUSH_DELAY);
     room.rushTimer.unref?.();
   }
@@ -1452,20 +1474,24 @@ async function handle(ws, message) {
   if (type === "leave_session") {
     const leavingRoom = rooms.get(client.roomCode);
     if (!leavingRoom) return send(ws, { type: "error", code: "NOT_IN_ROOM" });
+    if (client.id === leavingRoom.creatorId)
+      return send(ws, { type: "error", code: "CREATOR_MUST_END_SESSION" });
     if (
       leavingRoom.pendingConsent &&
       leavingRoom.pendingConsent.requiredPlayerIds.includes(client.id)
     )
       cancelPendingConsent(leavingRoom, "player_left");
-    if (client.id === leavingRoom.creatorId) {
-      closeRoom(leavingRoom, "creator_left");
-    } else {
-      clearTimeout(leavingRoom.players.get(client.id)?.disconnectTimer);
-      leavingRoom.players.delete(client.id);
-      client.roomCode = null;
-      send(ws, { type: "session_left" });
-      broadcast(leavingRoom, state(leavingRoom));
-    }
+    clearTimeout(leavingRoom.players.get(client.id)?.disconnectTimer);
+    leavingRoom.players.delete(client.id);
+    client.roomCode = null;
+    send(ws, { type: "session_left" });
+    broadcast(leavingRoom, state(leavingRoom));
+    return;
+  }
+  if (type === "end_session") {
+    if (client.id !== room.creatorId)
+      return send(ws, { type: "error", code: "CREATOR_ONLY" });
+    closeRoom(room, "creator_ended");
     return;
   }
   if (type === "start_game") {
@@ -1540,10 +1566,16 @@ async function handle(ws, message) {
     room.round.startedAt = startedAt;
     room.round.endsAt = startedAt + roomConfig(room).seconds * 1000;
     clearTimeout(room.round.timer);
-    room.round.timer = setTimeout(
-      () => finishRound(room, "timeout"),
-      roomConfig(room).seconds * 1000,
-    );
+    const roundId = room.round.id;
+    room.round.timer = setTimeout(() => {
+      if (
+        rooms.get(room.code) !== room ||
+        room.status !== "playing" ||
+        room.round?.id !== roundId
+      )
+        return;
+      finishRound(room, "timeout");
+    }, roomConfig(room).seconds * 1000);
     room.round.timer.unref?.();
     return broadcast(room, {
       type: "round_start_now",
@@ -1650,6 +1682,18 @@ async function handle(ws, message) {
     });
     if (hasScoreTarget(roomConfig(room)) && player.score >= roomConfig(room).target)
       finishRound(room, "race");
+    return;
+  }
+  if (type === "skip_round") {
+    if (client.id !== room.creatorId)
+      return send(ws, { type: "error", code: "CREATOR_ONLY" });
+    if (typeof message.roundId !== "string" || !message.roundId.trim())
+      return send(ws, { type: "error", code: "ROUND_ID_REQUIRED" });
+    if (room.status !== "playing" || !room.round)
+      return send(ws, { type: "error", code: "ROUND_NOT_PLAYING" });
+    if (message.roundId !== room.round.id)
+      return send(ws, { type: "error", code: "ROUND_STALE" });
+    finishRound(room, "skipped");
     return;
   }
   if (type === "end_round") {

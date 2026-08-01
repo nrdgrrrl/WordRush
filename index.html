@@ -121,8 +121,8 @@
               >
                 <span aria-hidden="true">▦</span> Join QR
               </button>
-              <button id="exitMultiplayer" aria-label="Exit multiplayer mode">
-                ×
+              <button id="exitMultiplayer" aria-label="Leave party">
+                Leave party
               </button>
             </div>
           </div>
@@ -269,7 +269,7 @@
       <section class="screen" id="resultsScreen">
         <div class="result-hero">
           <div class="result-confetti" aria-hidden="true"><i>✦</i><i>●</i><i>▲</i><i>★</i><i>◆</i></div>
-          <p class="eyebrow">ROUND COMPLETE!</p>
+              <p class="eyebrow" id="resultEyebrow">ROUND COMPLETE!</p>
           <h1>What a rush,<br /><em id="resultName">Player.</em></h1>
           <div class="sudden-death-callout" id="suddenDeathCallout" hidden>
             <span aria-hidden="true">💥</span>
@@ -279,7 +279,7 @@
             </div>
           </div>
           <div class="result-score-burst result">
-            <small>FINAL SCORES</small>
+            <small id="resultScoreLabel">FINAL SCORES</small>
             <div class="result-hero-scores" id="resultHeroScores"></div>
             <span><b id="resultWordCount">0</b> words found</span>
             <strong id="finalScore" hidden>0</strong>
@@ -287,7 +287,7 @@
         </div>
         <div class="result-highlights" aria-label="Round highlights">
           <article><span>🔠</span><div><small>LONGEST WORD</small><b id="resultLongestWord">—</b></div></article>
-          <article><span>👑</span><div><small>ROUND LEADER</small><b id="resultTopPlayer">—</b></div></article>
+          <article><span>👑</span><div><small id="resultTopLabel">ROUND LEADER</small><b id="resultTopPlayer">—</b></div></article>
         </div>
         <div class="results-switcher" aria-label="Results view">
           <button id="staticResultsButton" type="button">🏆 Score party</button
@@ -522,7 +522,7 @@
               class="secondary dialog-action"
               id="sessionLeave"
             >
-              Exit lobby
+              Leave party
             </button>
           </div>
         </form>
