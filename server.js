@@ -32,6 +32,11 @@ const {
   shouldEndOnRejectedWord,
 } = require("./game-config");
 const {
+  createSuddenDeathOutcome,
+  normalizeSuddenDeathOutcome,
+  winnerIds,
+} = require("./sudden-death-outcome");
+const {
   generateQualityRoundBoard,
 } = require("./production-board-generator");
 const PORT = Number(process.env.PORT || 8000),
@@ -956,6 +961,8 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
   clearTimeout(room.round.timer);
   room.status = "finished";
   const recorded = reason !== "skipped";
+  const suddenDeathOutcome = normalizeSuddenDeathOutcome(suddenDeath);
+  const suddenDeathWinnerIds = new Set(winnerIds(suddenDeathOutcome));
   for (const player of room.round.participants.values())
     player.score = playerScore(room, player);
   const participantOrder = new Map(
@@ -969,9 +976,13 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
   if (recorded) {
     rankedPlayers.forEach((player) => {
       player.sessionPoints += player.score;
-      if (room.mode === "coop" || player.score === winningScore)
+      const won = suddenDeathOutcome
+        ? suddenDeathWinnerIds.has(player.id)
+        : room.mode === "coop" || player.score === winningScore;
+      if (won)
         player.sessionWins += 1;
-      else player.sessionLosses += 1;
+      else if (!suddenDeathOutcome || player.id === suddenDeathOutcome.loser.id)
+        player.sessionLosses += 1;
     });
   }
   const gameSeconds = Math.min(
@@ -988,7 +999,7 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
     results: room.results,
     reason,
     ...(recorded ? {} : { recorded: false }),
-    suddenDeath,
+    suddenDeath: suddenDeathOutcome,
     dictionary: room.round.dictionary,
     ranking: rankedPlayers.map((p) => ({
         id: p.id,
@@ -1034,8 +1045,9 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
             ),
             gameSeconds,
             multiplayer: true,
-            multiplayerWin:
-              result.cooperative || rankedPlayer.score === winningScore,
+            multiplayerWin: suddenDeathOutcome
+              ? suddenDeathWinnerIds.has(rankedPlayer.id)
+              : result.cooperative || rankedPlayer.score === winningScore,
           };
         }),
       );
@@ -1699,12 +1711,11 @@ async function handle(ws, message) {
           : {}),
       });
       if (shouldEndOnRejectedWord(config, result.reason))
-        finishRound(room, "invalid_word", {
-          playerId: client.id,
-          playerName: player.name,
-          playerAvatar: player.avatar || "🐈",
+        finishRound(room, "invalid_word", createSuddenDeathOutcome({
+          loser: player,
+          participants: [...room.round.participants.values()],
           word: result.word,
-        });
+        }));
       return;
     }
     // Validation is synchronous today, but keep the scoring boundary
@@ -1790,6 +1801,7 @@ const server = http.createServer((req, res) => {
     "/custom.css",
     "/multiplayer.css",
     "/game-config.js",
+    "/sudden-death-outcome.js",
     "/multiplayer-result-state.js",
     "/board-core.js",
     "/analytics.js",

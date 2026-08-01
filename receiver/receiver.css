@@ -70,6 +70,7 @@ footer { color: #d1c1d8; font-size: clamp(.9rem, 1.35vw, 1.35rem); }
 }
 .sudden-death-banner strong { color: #f6c85f; font-size: clamp(1rem, 1.7vw, 1.8rem); }
 .sudden-death-banner span { color: #fff9f0; font-size: clamp(.8rem, 1.25vw, 1.3rem); font-weight: 800; }
+.sudden-death-banner.no-replay { animation: none; }
 @keyframes receiver-sudden-death {
   0% { opacity: 0; transform: scale(.7) rotate(-3deg); }
   70% { transform: scale(1.04) rotate(1deg); }

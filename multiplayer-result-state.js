@@ -111,11 +111,16 @@
     };
   }
 
+  function shouldReplaySuddenDeath(delivery) {
+    return delivery === "accept" || delivery === "replace";
+  }
+
   return Object.freeze({
     normalizeNextRound,
     normalizeResultAction,
     normalizeAuthoritativeRoundMetadata,
     reconcileResultAction,
     classifyResultDelivery,
+    shouldReplaySuddenDeath,
   });
 });

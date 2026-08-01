@@ -149,6 +149,12 @@ async function startClassicTestRound(host, code) {
   await startedPromise;
   return rooms.get(code);
 }
+async function startSuddenDeathTestRound(host, code) {
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "sudden" });
+  await startedPromise;
+  return rooms.get(code);
+}
 async function startRandomTestRound(host, code) {
   const startedPromise = next(host, "round_started");
   message(host, "start_game", { mode: "random" });
@@ -2856,8 +2862,9 @@ test("custom sudden death lifecycle stores canonical config and ends on non-dupl
   const finished = await finishedPromise;
   assert.equal(finished.reason, "invalid_word");
   assert.ok(finished.suddenDeath);
-  assert.equal(finished.suddenDeath.playerId, "custom-sudden-lifecycle");
-  assert.equal(finished.suddenDeath.word, "XYZZY");
+  assert.equal(finished.suddenDeath.loser.id, "custom-sudden-lifecycle");
+  assert.equal(finished.suddenDeath.rejectedWord, "XYZZY");
+  assert.equal(finished.suddenDeath.outcome, "no_winner");
   ws.close();
   await new Promise((resolve) => setTimeout(resolve, 20));
   const reconnected = await client("custom-sudden-lifecycle");
@@ -2870,5 +2877,130 @@ test("custom sudden death lifecycle stores canonical config and ends on non-dupl
   assert.equal(resumed.config.sudden, true);
   assert.equal(resumed.config.min, 3);
   assert.equal(resumed.config.size, 4);
+  assert.deepEqual(resumed.lastResult.suddenDeath, finished.suddenDeath);
   reconnected.close();
+});
+
+test("Sudden Death uses the rejected player for the two-player outcome and every result surface", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "sudden-two-loser",
+    "sudden-two-winner",
+  ]);
+  const guest = guests[0];
+  const tokenPromise = next(host, "display_token");
+  message(host, "create_display_token");
+  const token = await tokenPromise;
+  const display = await displayClient();
+  const displayConnected = next(display, "display_state");
+  message(display, "display_hello", { token: token.token });
+  await displayConnected;
+
+  const room = await startSuddenDeathTestRound(host, code);
+  room.round.board = ["C", "A", "T", "X", "Y", "Z", "Z", "Y", ...Array(17).fill("X")];
+  await startRoundImmediately(host);
+  const accepted = next(host, "word_accepted");
+  message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  await accepted;
+
+  const finishedLive = next(host, "round_finished");
+  const finishedGuest = next(guest, "round_finished");
+  const finishedDisplay = nextMatching(
+    display,
+    "display_state",
+    (message) => message.event === "round_finished",
+  );
+  message(host, "submit_word", { word: "XYZZY", path: [3, 4, 5, 6, 7] });
+  const [finished, guestResult, displayResult] = await Promise.all([
+    finishedLive,
+    finishedGuest,
+    finishedDisplay,
+  ]);
+  const outcome = {
+    outcome: "sole_winner",
+    loser: { id: "sudden-two-loser", name: "sudden-two-loser", avatar: "🐈" },
+    rejectedWord: "XYZZY",
+    winner: { id: "sudden-two-winner", name: "sudden-two-winner", avatar: "🐈" },
+    survivors: [],
+  };
+  assert.deepEqual(finished.suddenDeath, outcome);
+  assert.deepEqual(guestResult.suddenDeath, outcome);
+  assert.deepEqual(room.lastResult.suddenDeath, outcome);
+  assert.deepEqual(displayResult.state.lastResult.suddenDeath, outcome);
+  const loser = finished.ranking.find((player) => player.id === "sudden-two-loser");
+  const winner = finished.ranking.find((player) => player.id === "sudden-two-winner");
+  assert.equal(loser.score, 9);
+  assert.deepEqual(loser.session, { wins: 0, losses: 1, points: 9 });
+  assert.deepEqual(winner.session, { wins: 1, losses: 0, points: 0 });
+  const board = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE);
+  assert.equal(board.profile("sudden-two-loser").multiplayerWins, 0);
+  assert.equal(board.profile("sudden-two-loser").multiplayerLosses, 1);
+  assert.equal(board.profile("sudden-two-winner").multiplayerWins, 1);
+
+  const reconnectToken = room.players.get("sudden-two-loser").reconnectToken;
+  host.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const resumed = await client("sudden-two-loser");
+  const resumedPromise = next(resumed, "room_resumed");
+  const statePromise = next(resumed, "room_state");
+  message(resumed, "resume_room", { code, reconnectToken });
+  await resumedPromise;
+  const resumedState = await statePromise;
+  assert.deepEqual(resumedState.lastResult.suddenDeath, outcome);
+
+  await closeTestRoom(resumed, [resumed, guest]);
+  display.close();
+});
+
+test("Sudden Death identifies all three-player survivors without ranking by score", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "sudden-three-loser",
+    "sudden-three-first",
+    "sudden-three-second",
+  ]);
+  const room = await startSuddenDeathTestRound(host, code);
+  room.round.board = ["C", "A", "T", "X", "Y", "Z", "Z", "Y", ...Array(17).fill("X")];
+  await startRoundImmediately(host);
+  const accepted = next(host, "word_accepted");
+  message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  await accepted;
+  const finishedPromises = [host, ...guests].map((ws) => next(ws, "round_finished"));
+  message(host, "submit_word", { word: "XYZZY", path: [3, 4, 5, 6, 7] });
+  const [finished, first, second] = await Promise.all(finishedPromises);
+  assert.equal(finished.suddenDeath.outcome, "survivors");
+  assert.equal(finished.suddenDeath.loser.id, "sudden-three-loser");
+  assert.equal(finished.suddenDeath.winner, null);
+  assert.deepEqual(
+    finished.suddenDeath.survivors.map((player) => player.id),
+    ["sudden-three-first", "sudden-three-second"],
+  );
+  assert.deepEqual(first.suddenDeath, finished.suddenDeath);
+  assert.deepEqual(second.suddenDeath, finished.suddenDeath);
+  assert.equal(finished.ranking.find((player) => player.id === "sudden-three-loser").session.losses, 1);
+  assert.equal(finished.ranking.find((player) => player.id === "sudden-three-first").session.wins, 1);
+  assert.equal(finished.ranking.find((player) => player.id === "sudden-three-second").session.wins, 1);
+  const board = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE);
+  assert.equal(board.profile("sudden-three-loser").multiplayerWins, 0);
+  assert.equal(board.profile("sudden-three-first").multiplayerWins, 1);
+  assert.equal(board.profile("sudden-three-second").multiplayerWins, 1);
+  await closeTestRoom(host, [host, ...guests]);
+});
+
+test("single-player Sudden Death has no winner", async () => {
+  const { host, code } = await createRoomWithPlayers(["sudden-one-loser"]);
+  const room = await startSuddenDeathTestRound(host, code);
+  room.round.board = ["X", "Y", "Z", "Z", "Y", ...Array(19).fill("X")];
+  await startRoundImmediately(host);
+  const finishedPromise = next(host, "round_finished");
+  message(host, "submit_word", { word: "XYZZY", path: [0, 1, 2, 3, 4] });
+  const finished = await finishedPromise;
+  assert.equal(finished.suddenDeath.outcome, "no_winner");
+  assert.equal(finished.suddenDeath.loser.id, "sudden-one-loser");
+  assert.equal(finished.suddenDeath.winner, null);
+  assert.deepEqual(finished.suddenDeath.survivors, []);
+  assert.equal(finished.ranking[0].session.wins, 0);
+  assert.equal(finished.ranking[0].session.losses, 1);
+  const board = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE);
+  assert.equal(board.profile("sudden-one-loser").multiplayerWins, 0);
+  assert.equal(board.profile("sudden-one-loser").multiplayerLosses, 1);
+  await closeTestRoom(host, [host]);
 });

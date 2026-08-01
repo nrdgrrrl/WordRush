@@ -12,7 +12,8 @@ const $ = (s) => document.querySelector(s),
   usesAdultLexicon = sharedConfig.usesAdultLexicon,
   isPartyRound = sharedConfig.isPartyRound,
   shouldEndOnRejectedWord = sharedConfig.shouldEndOnRejectedWord,
-  multiplayerResultState = window.WordrushMultiplayerResultState;
+  multiplayerResultState = window.WordrushMultiplayerResultState,
+  suddenDeathOutcome = window.WordrushSuddenDeathOutcome;
 let customAdult = false;
 function emit(name, detail = {}) {
   document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
@@ -476,6 +477,7 @@ function renderResults(
     onlineNextRound = null,
     onlineSourceRoundId = null,
     onlineCreator = false,
+    suddenDeath = null,
   } = {},
 ) {
   const rows = ranking?.length
@@ -505,7 +507,7 @@ function renderResults(
     : nextRushLabel
     ? onlineHeading || "Up next: " + nextRushLabel
     : profile.name + ".";
-  renderHeroScores(rows, skipped);
+  renderHeroScores(rows, skipped, suddenDeath);
   const target = $("#resultPlayers");
   target.replaceChildren();
   rows.forEach((player, index) => {
@@ -545,7 +547,7 @@ function renderOnlineResultAction(resultAction, skipped = false) {
   $("#again").textContent = resultAction.label;
   $("#again").disabled = resultAction.disabled || resultAction.consumed === true;
 }
-function renderHeroScores(players, skipped = false) {
+function renderHeroScores(players, skipped = false, suddenDeath = null) {
   const target = $("#resultHeroScores");
   if (!target) return;
   const ordered = [...players].sort(
@@ -556,10 +558,14 @@ function renderHeroScores(players, skipped = false) {
   const tied = displayed.filter(
     (player) => (Number(player.score) || 0) === winningScore,
   ).length > 1;
+  const suddenDeathData = suddenDeathOutcome.normalizeSuddenDeathOutcome(suddenDeath);
+  const suddenDeathWinnerIds = new Set(suddenDeathOutcome.winnerIds(suddenDeathData));
   target.replaceChildren(
     ...displayed.map((player) => {
       const card = document.createElement("article");
-      const isWinner = !skipped && (Number(player.score) || 0) === winningScore;
+      const isWinner = !skipped && suddenDeathData
+        ? suddenDeathWinnerIds.has(player.id)
+        : !skipped && (Number(player.score) || 0) === winningScore;
       card.className = "result-hero-score-card" +
         (isWinner ? " is-winner" : "") +
         (player.id === window.wordrushGuestId ? " is-you" : "");
@@ -567,6 +573,12 @@ function renderHeroScores(players, skipped = false) {
       badge.className = "hero-score-badge";
       badge.textContent = skipped
         ? "SCORE"
+        : suddenDeathData
+          ? player.id === suddenDeathData.loser.id
+            ? "ELIMINATED"
+            : isWinner
+              ? suddenDeathData.outcome === "sole_winner" ? "WINNER" : "SURVIVOR"
+              : "SCORE"
         : isWinner
           ? (tied ? "LEADER" : "WINNER")
           : "RUNNER-UP";
@@ -589,18 +601,16 @@ function renderSuddenDeath(details) {
   if (!callout) return;
   const title = $("#suddenDeathCalloutTitle");
   const detail = $("#suddenDeathCalloutDetail");
-  const valid = details && details.word && (details.playerName || details.name);
+  const copy = suddenDeathOutcome.formatSuddenDeathOutcome(details);
+  const valid = Boolean(copy);
   callout.hidden = !valid;
   if (!valid) {
     title.textContent = "Sudden death!";
     detail.textContent = "";
     return;
   }
-  title.textContent =
-    (details.playerAvatar || details.avatar || "🐈") + " " +
-    (details.playerName || details.name) + " ended it!";
-  detail.textContent =
-    String(details.word).toUpperCase() + " was the wrong word — boom!";
+  title.textContent = "Sudden death outcome";
+  detail.textContent = copy;
 }
 function clearSuddenDeathPresentation() {
   suddenDeathPresentationGeneration++;
@@ -620,17 +630,15 @@ function clearSuddenDeathPresentation() {
 }
 function triggerSuddenDeathExplosion(details, roundKey = s.suddenDeathRoundKey) {
   const explosion = $("#suddenDeathExplosion");
-  if (!explosion || !details?.word) return;
+  const copy = suddenDeathOutcome.formatSuddenDeathOutcome(details);
+  if (!explosion || !copy) return;
   if (
     roundKey !== s.suddenDeathRoundKey ||
     roundKey !== currentSuddenDeathRoundKey()
   )
     return;
   $("#suddenDeathExplosionTitle").textContent = "💥 SUDDEN DEATH!";
-  $("#suddenDeathExplosionDetail").textContent =
-    (details.playerAvatar || details.avatar || "🐈") + " " +
-    (details.playerName || details.name || "Someone") +
-    " detonated the round with “" + String(details.word).toUpperCase() + "”";
+  $("#suddenDeathExplosionDetail").textContent = copy;
   explosion.hidden = false;
   explosion.classList.remove("is-active");
   void explosion.offsetWidth;
@@ -648,7 +656,7 @@ function triggerSuddenDeathExplosion(details, roundKey = s.suddenDeathRoundKey) 
     explosion.classList.remove("is-active");
     $("#suddenDeathExplosionDetail").textContent = "";
     suddenDeathExplosionTimer = 0;
-  }, 2600);
+  }, 4500);
 }
 function end() {
   if (
@@ -682,7 +690,7 @@ function end() {
   $("#resultWordCount").textContent = s.found.size;
   $("#resultEyebrow").textContent = "ROUND COMPLETE!";
   $("#resultScoreLabel").textContent = "FINAL SCORES";
-  renderResults();
+  renderResults(null, { suddenDeath: s.suddenDeathEvent });
   renderSuddenDeath(s.suddenDeathEvent);
   if (s.suddenDeathEvent)
     triggerSuddenDeathExplosion(s.suddenDeathEvent, s.suddenDeathRoundKey);
@@ -1195,11 +1203,11 @@ async function submit() {
         random_rush: config.randomRush,
       });
       if (shouldEndOnRejectedWord(config, rejectReason)) {
-        s.suddenDeathEvent = {
-          playerName: profile.name,
-          playerAvatar: profile.avatar,
+        s.suddenDeathEvent = suddenDeathOutcome.createSuddenDeathOutcome({
+          loser: { id: "local-player", name: profile.name, avatar: profile.avatar },
+          participants: [{ id: "local-player", name: profile.name, avatar: profile.avatar }],
           word: w,
-        };
+        });
         s.suddenDeathRoundKey = currentSuddenDeathRoundKey();
         const fatalEpoch = invalidateSoloSubmissionQueue();
         const fatalRoundKey = s.suddenDeathRoundKey;
@@ -1735,13 +1743,16 @@ window.wordrushOnlineFinish = (
     onlineNextRound: resultAction.nextRound,
     onlineSourceRoundId: result.roundId || s.onlineRoundKey,
     onlineCreator: Boolean(window.wordrushSessionCreator),
+    suddenDeath,
   });
   renderSuddenDeath(suddenDeath);
-  if (suddenDeath)
+  if (suddenDeath && multiplayerResultState.shouldReplaySuddenDeath(delivery))
     triggerSuddenDeathExplosion(suddenDeath, s.suddenDeathRoundKey);
   $("#resultAchievement").hidden = false;
   $("#resultAchievementTitle").textContent = skipped
     ? "Round skipped"
+    : suddenDeath
+    ? "Sudden Death result"
     : result.cooperative
     ? "Co-op complete"
     : "Multiplayer round";
@@ -1750,6 +1761,8 @@ window.wordrushOnlineFinish = (
   );
   $("#resultAchievementDetail").textContent = skipped
     ? "Scores were not recorded"
+    : suddenDeath
+    ? suddenDeathOutcome.formatSuddenDeathOutcome(suddenDeath)
     : result.cooperative
     ? "Team score: " +
       (result.teamScore || 0) +
@@ -1764,10 +1777,11 @@ window.wordrushOnlineFinish = (
       " word" +
       (ownWords.length === 1 ? "" : "s") +
       " found by you.";
-  const winningScore = normalizedRanking[0]?.score;
   const won =
     result.cooperative ||
-    (ownPlayer && ownPlayer.score === winningScore);
+    (suddenDeath
+      ? suddenDeathOutcome.winnerIds(suddenDeath).includes(ownPlayer?.id)
+      : ownPlayer && ownPlayer.score === normalizedRanking[0]?.score);
   profile.completedMultiplayerRounds = Array.isArray(
     profile.completedMultiplayerRounds,
   ) ? profile.completedMultiplayerRounds : [];

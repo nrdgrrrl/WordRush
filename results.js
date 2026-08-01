@@ -17,6 +17,7 @@
   let revealTimer = null;
   let revealToken = 0;
   let renderedView = null;
+  const suddenDeathOutcome = window.WordrushSuddenDeathOutcome;
 
   function localRow() {
     const profile = window.wordrushProfile?.() || {
@@ -72,7 +73,8 @@
     card.querySelector(".reveal-word-list").append(line);
   }
 
-  function renderHighlights(players, skipped = false) {
+  function renderHighlights(players, skipped = false, suddenDeath = null) {
+    const outcome = suddenDeathOutcome.normalizeSuddenDeathOutcome(suddenDeath);
     const topPlayer = [...players].sort(
       (a, b) => (Number(b.score) || 0) - (Number(a.score) || 0),
     )[0];
@@ -86,7 +88,9 @@
     if ($("#resultTopLabel"))
       $("#resultTopLabel").textContent = skipped
         ? "ROUND RESULT"
-        : "ROUND LEADER";
+        : outcome
+          ? "TOP SCORE · OUTCOME ABOVE"
+          : "ROUND LEADER";
     if ($("#resultTopPlayer"))
       $("#resultTopPlayer").textContent = skipped
         ? "Not recorded"
@@ -274,7 +278,7 @@
       };
     const skipped =
       detail.result?.reason === "skipped" || detail.result?.recorded === false;
-    renderHighlights(rows(), skipped);
+    renderHighlights(rows(), skipped, detail.result?.suddenDeath);
     applyResults(true);
   });
 
