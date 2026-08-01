@@ -154,6 +154,7 @@ const s = {
   done: false,
   drag: false,
   pointerId: null,
+  previousPointer: null,
   trace: [],
   traceFrame: 0,
   startedAt: 0,
@@ -1212,6 +1213,7 @@ function tracePoint(x, y) {
   }
 }
 function clearTrace() {
+  s.previousPointer = null;
   s.trace = [];
   $("#tracePath").removeAttribute("d");
 }
@@ -1779,10 +1781,38 @@ function safeCandidateAt(x, y, target = null, starting = false) {
     ? tile
     : null;
 }
+function traceTileRects() {
+  const grid = $("#grid"),
+    gridRect = grid.getBoundingClientRect();
+  return [...grid.querySelectorAll(".tile")].map((tile) => ({
+    index: +tile.dataset.i,
+    left: gridRect.left + tile.offsetLeft,
+    top: gridRect.top + tile.offsetTop,
+    width: tile.offsetWidth,
+    height: tile.offsetHeight,
+  }));
+}
+function applyTraceSegment(x, y) {
+  const point = { x, y };
+  if (s.previousPointer) {
+    const nextPick = window.WordRushTraceGeometry.applyTraceSegment(
+      s.pick,
+      s.previousPointer,
+      point,
+      traceTileRects(),
+      (from, to) => near(from).includes(to),
+    );
+    nextPick.slice(s.pick.length).forEach((index) => {
+      pick(document.querySelector('.tile[data-i="' + index + '"]'));
+    });
+  }
+  s.previousPointer = point;
+}
 function resetTrace(pointerId = null) {
   if (!s.drag || (pointerId !== null && pointerId !== s.pointerId)) return;
   s.drag = 0;
   s.pointerId = null;
+  s.previousPointer = null;
   clearPick(true);
   if (s.traceFrame) {
     cancelAnimationFrame(s.traceFrame);
@@ -1809,22 +1839,20 @@ $("#grid").onpointerdown = (e) => {
   clearTrace();
   pick(tile);
   tracePoint(e.clientX, e.clientY);
+  s.previousPointer = { x: e.clientX, y: e.clientY };
   e.currentTarget.setPointerCapture?.(e.pointerId);
   e.preventDefault();
 };
 $("#grid").onpointermove = (e) => {
   if (!s.drag || e.pointerId !== s.pointerId) return;
   tracePoint(e.clientX, e.clientY);
-  const tile = safeCandidateAt(e.clientX, e.clientY);
-  if (!tile) return;
-  const index = +tile.dataset.i;
-  if (s.pick.length && !near(index).includes(s.pick.at(-1))) return;
-  pick(tile);
+  applyTraceSegment(e.clientX, e.clientY);
 };
 $("#grid").onpointerup = (e) => {
   if (!s.drag || e.pointerId !== s.pointerId) return;
   s.drag = 0;
   s.pointerId = null;
+  s.previousPointer = null;
   try {
     e.currentTarget.releasePointerCapture(e.pointerId);
   } catch {}
