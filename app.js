@@ -11,7 +11,8 @@ const $ = (s) => document.querySelector(s),
   DEFAULT_DICTIONARY_ID = sharedConfig.DEFAULT_DICTIONARY_ID,
   usesAdultLexicon = sharedConfig.usesAdultLexicon,
   isPartyRound = sharedConfig.isPartyRound,
-  shouldEndOnRejectedWord = sharedConfig.shouldEndOnRejectedWord;
+  shouldEndOnRejectedWord = sharedConfig.shouldEndOnRejectedWord,
+  multiplayerResultState = window.WordrushMultiplayerResultState;
 let customAdult = false;
 function emit(name, detail = {}) {
   document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
@@ -167,6 +168,9 @@ const s = {
   onlineRoundKey: null,
   onlineIntroEndsAt: 0,
   onlineRandomRush: false,
+  onlineResultRoundId: null,
+  onlineNextRound: null,
+  onlineResultAction: null,
   pendingOnlineTrace: null,
   lastAcceptedWord: "",
   requiredLetter: "",
@@ -465,7 +469,15 @@ function renderChainStatus() {
   guidance.hidden = !text;
   guidance.textContent = text;
 }
-function renderResults(ranking, { skipped = false } = {}) {
+function renderResults(
+  ranking,
+  {
+    skipped = false,
+    onlineNextRound = null,
+    onlineSourceRoundId = null,
+    onlineCreator = false,
+  } = {},
+) {
   const rows = ranking?.length
     ? ranking
     : [{
@@ -474,13 +486,24 @@ function renderResults(ranking, { skipped = false } = {}) {
         score: s.score,
         words: [...s.found].map((word) => ({ word, points: word.length ** 2 })),
       }];
-  const nextRushLabel = s.rush && s.nextRushMode
-    ? configForPreset(s.nextRushMode)?.label
+  const onlineHeading = onlineSourceRoundId
+    ? multiplayerResultState.normalizeResultAction({
+        sourceRoundId: onlineSourceRoundId,
+        currentRoundId: onlineSourceRoundId,
+        nextRound: onlineNextRound,
+        isCreator: onlineCreator,
+        configForPreset,
+      }).heading
     : "";
+  const nextRushLabel = onlineSourceRoundId
+    ? onlineHeading
+    : s.rush && s.nextRushMode
+      ? configForPreset(s.nextRushMode)?.label
+      : "";
   $("#resultName").textContent = skipped
-    ? "Round skipped"
+    ? nextRushLabel || "Round skipped"
     : nextRushLabel
-    ? "Up next: " + nextRushLabel
+    ? onlineHeading || "Up next: " + nextRushLabel
     : profile.name + ".";
   renderHeroScores(rows, skipped);
   const target = $("#resultPlayers");
@@ -671,6 +694,7 @@ function end() {
   if (s.score > 0) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
   recordPlayDay();
   updateProfile();
+  $("#again").disabled = false;
   $("#again").textContent = s.rush
     ? "Continue Random Rush →"
     : !s.onlineRoundKey && isPartyRound(s.config)
@@ -859,8 +883,12 @@ function abandonActiveRound() {
 }
 window.wordrushAbandonOnlineRound = () => {
   if (s.onlineRoundKey) abandonActiveRound();
+  cancelSoloRushContinuation();
   s.config = null;
   s.onlineRandomRush = false;
+  s.onlineResultRoundId = null;
+  s.onlineNextRound = null;
+  s.onlineResultAction = null;
   // A host can close the room while another player is still looking at the
   // board. The room shutdown is authoritative, so do not leave that player
   // stranded on a dead game screen.
@@ -970,6 +998,9 @@ async function start(
   s.mode = generationInputs.mode;
   s.rush = generationInputs.rush;
   s.onlineRoundKey = null;
+  s.onlineResultRoundId = null;
+  s.onlineNextRound = null;
+  s.onlineResultAction = null;
   s.pendingOnlineTrace = null;
   if (rush && !wasRush) {
     randomModeQueue = [];
@@ -1277,6 +1308,24 @@ $("#partyForm").addEventListener("submit", (event) => {
   });
 });
 $("#again").onclick = () => {
+  if (s.onlineRoundKey && s.done) {
+    const action = s.onlineResultAction;
+    if (!window.wordrushSessionCreator) return;
+    if (action?.nextRound) {
+      if (action.consumed) return;
+      const requested = window.wordrushStartNextRound?.({
+        sourceRoundId: action.nextRound.sourceRoundId,
+      });
+      if (requested !== false) {
+        action.consumed = true;
+        $("#again").disabled = true;
+        $("#again").textContent = "Starting " +
+          configForPreset(action.nextRound.mode).label + "…";
+      }
+      return;
+    }
+    return start(s.mode, s.config, usesAdultLexicon(s.config), false, s.dictionaryId);
+  }
   if (s.rush) {
     cancelSoloRushContinuation({ stop: false });
     rushContinuationTransition = true;
@@ -1504,6 +1553,8 @@ window.wordrushOnlineRound = (
   dictionaryMetadata = null,
   chain = null,
 ) => {
+  cancelSoloRushContinuation();
+  randomModeQueue = [];
   const roundKey = round.id || round.endsAt + ":" + round.board.join("");
   if (s.onlineRoundKey === roundKey) {
     if (!s.done) applyOnlineChainState(chain);
@@ -1518,6 +1569,9 @@ window.wordrushOnlineRound = (
   s.dictionaryMetadata = round.dictionary || dictionaryMetadata;
   s.dictionaryWords = [];
   s.onlineRandomRush = Boolean(randomRush);
+  s.onlineResultRoundId = null;
+  s.onlineNextRound = null;
+  s.onlineResultAction = null;
   s.pendingOnlineTrace = null;
   s.lastAcceptedWord = "";
   s.requiredLetter = "";
@@ -1573,10 +1627,12 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   if (
     result.roundId &&
     ((s.onlineRoundKey && s.onlineRoundKey !== result.roundId) ||
-      (!s.onlineRoundKey && !s.done && s.startedAt))
+      (!s.onlineRoundKey && !s.done && s.startedAt && !window.wordrushSessionCode))
   )
     return false;
-  if (s.done) return true;
+  if (s.done && (!result.roundId || s.onlineResultRoundId === result.roundId))
+    return true;
+  cancelSoloRushContinuation();
   if (!s.onlineRoundKey && result.roundId) s.onlineRoundKey = result.roundId;
   cancelRoundIntro();
   s.done = 1;
@@ -1600,6 +1656,16 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   const ownWords = ownPlayer?.words || [];
   const suddenDeath =
     result.reason === "invalid_word" ? result.suddenDeath : null;
+  const resultAction = multiplayerResultState.normalizeResultAction({
+    sourceRoundId: result.roundId || s.onlineRoundKey,
+    currentRoundId: s.onlineRoundKey,
+    nextRound: result.nextRound,
+    isCreator: Boolean(window.wordrushSessionCreator),
+    configForPreset,
+  });
+  s.onlineResultRoundId = result.roundId || s.onlineRoundKey;
+  s.onlineNextRound = resultAction.nextRound;
+  s.onlineResultAction = { ...resultAction };
   s.suddenDeathEvent = suddenDeath || null;
   s.suddenDeathRoundKey = suddenDeath ? currentSuddenDeathRoundKey() : null;
   s.dictionaryMetadata = result.dictionary || s.dictionaryMetadata;
@@ -1615,7 +1681,12 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   $("#resultScoreLabel").textContent = skipped
     ? "CURRENT SCORES"
     : "FINAL SCORES";
-  renderResults(normalizedRanking, { skipped });
+  renderResults(normalizedRanking, {
+    skipped,
+    onlineNextRound: resultAction.nextRound,
+    onlineSourceRoundId: result.roundId || s.onlineRoundKey,
+    onlineCreator: Boolean(window.wordrushSessionCreator),
+  });
   renderSuddenDeath(suddenDeath);
   if (suddenDeath)
     triggerSuddenDeathExplosion(suddenDeath, s.suddenDeathRoundKey);
@@ -1673,7 +1744,8 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
     updateProfile();
   }
   show("resultsScreen");
-  $("#again").textContent = "Play again →";
+  $("#again").textContent = resultAction.label;
+  $("#again").disabled = resultAction.disabled;
   $("#exitParty").hidden = true;
   emit("round-complete", {
     ranking: normalizedRanking,

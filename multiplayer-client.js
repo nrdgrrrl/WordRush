@@ -172,6 +172,7 @@
     creator = false;
     creatorId = "";
     roomStatus = "";
+    window.wordrushSessionCreator = false;
     window.wordrushAbandonOnlineRound?.();
     pendingSession = false;
     localStorage.removeItem("wordrush-room");
@@ -275,6 +276,7 @@
   }
   function updateLobbyControls() {
     creator = creatorId === guestId;
+    window.wordrushSessionCreator = creator;
     $("#sessionHostControls").hidden = !creator;
     $("#sessionType").disabled = !creator;
     $("#lobbyStatus").textContent = roomStatus === "playing"
@@ -552,6 +554,9 @@
         }
       }
       if (message.type === "room_state" && message.code !== endedSessionCode) {
+        roomStatus = message.status;
+        creatorId = message.creatorId;
+        window.wordrushSessionCreator = creatorId === guestId;
         const restoredResult =
           message.status === "finished" && message.lastResult?.ranking
             ? message.lastResult
@@ -563,8 +568,6 @@
           );
           if (accepted === false) return;
         }
-        roomStatus = message.status;
-        creatorId = message.creatorId;
         window.wordrushCanSetResultsSettings = creatorId === guestId;
         updateLobbyControls();
         renderPlayers(message.players);
@@ -673,6 +676,7 @@
           suddenDeath: message.suddenDeath,
           results: message.results,
           dictionary: message.dictionary,
+          nextRound: message.nextRound,
         });
         if (accepted === false) return;
         roomStatus = "finished";
@@ -778,6 +782,16 @@
     if (!sessionCode || !socket || socket.readyState !== WebSocket.OPEN)
       return false;
     socket.send(JSON.stringify({ type: "start_round_now" }));
+    return true;
+  };
+  window.wordrushStartNextRound = ({ sourceRoundId } = {}) => {
+    if (!sessionCode || !socket || socket.readyState !== WebSocket.OPEN)
+      return false;
+    if (!creator) {
+      toast("Only the session creator can start the next round");
+      return true;
+    }
+    socket.send(JSON.stringify({ type: "start_next_round", sourceRoundId }));
     return true;
   };
   $("#sessionManage")?.addEventListener("click", () => sessionDialog());

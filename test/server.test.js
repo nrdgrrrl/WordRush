@@ -149,6 +149,12 @@ async function startClassicTestRound(host, code) {
   await startedPromise;
   return rooms.get(code);
 }
+async function startRandomTestRound(host, code) {
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "random" });
+  await startedPromise;
+  return rooms.get(code);
+}
 async function startRoundImmediately(host) {
   const startedPromise = next(host, "round_start_now");
   message(host, "start_round_now");
@@ -1598,6 +1604,252 @@ test("stale round timers cannot finish a replacement round", async () => {
   host.close();
 });
 
+test("Random Rush queues one authoritative transition through result, resume, and Cast state", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "queued-state-host",
+    "queued-state-guest",
+  ]);
+  const guest = guests[0];
+  const tokenPromise = next(host, "display_token");
+  message(host, "create_display_token");
+  const token = await tokenPromise;
+  const display = await displayClient();
+  const connected = next(display, "display_state");
+  message(display, "display_hello", { token: token.token });
+  await connected;
+
+  const room = await startRandomTestRound(host, code);
+  room.randomModeQueue = ["storm"];
+  const finishedHost = next(host, "round_finished");
+  const finishedGuest = next(guest, "round_finished");
+  const finishedDisplay = nextMatching(
+    display,
+    "display_state",
+    (update) => update.event === "round_finished",
+  );
+  message(host, "end_round");
+  const finished = await finishedHost;
+  await finishedGuest;
+  const displayed = await finishedDisplay;
+  const queued = finished.nextRound;
+  assert.deepEqual(queued, {
+    sourceRoundId: finished.roundId,
+    mode: "storm",
+    automaticAt: queued.automaticAt,
+  });
+  assert.deepEqual(room.nextRound, queued);
+  assert.deepEqual(room.lastResult.nextRound, queued);
+  assert.deepEqual(displayed.state.lastResult.nextRound, queued);
+
+  clearTimeout(room.rushTimer);
+  room.rushTimer = null;
+  const guestToken = room.players.get("queued-state-guest").reconnectToken;
+  guest.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const resumed = await client("queued-state-guest");
+  const resumedPromise = next(resumed, "room_resumed");
+  const statePromise = next(resumed, "room_state");
+  message(resumed, "resume_room", { code, reconnectToken: guestToken });
+  await resumedPromise;
+  const restored = await statePromise;
+  assert.deepEqual(restored.lastResult.nextRound, queued);
+
+  await closeTestRoom(host, [host, resumed]);
+  display.close();
+});
+
+test("Random Rush reports each deterministic queued mode at finish", async () => {
+  for (const [index, mode] of ["classic", "race", "chain"].entries()) {
+    const host = await client("queued-mode-" + index);
+    const createdPromise = next(host, "room_created");
+    const lobbyPromise = next(host, "room_state");
+    message(host, "create_room");
+    const created = await createdPromise;
+    await lobbyPromise;
+    const room = await startRandomTestRound(host, created.code);
+    room.randomModeQueue = [mode];
+    const finishedPromise = next(host, "round_finished");
+    message(host, "end_round");
+    const finished = await finishedPromise;
+    assert.equal(finished.nextRound.mode, mode);
+    assert.equal(room.nextRound.mode, mode);
+    clearTimeout(room.rushTimer);
+    room.rushTimer = null;
+    const closed = next(host, "session_closed");
+    message(host, "end_session");
+    await closed;
+    host.close();
+  }
+});
+
+test("automatic Random Rush continuation consumes the stored mode exactly once", async () => {
+  const host = await client("queued-auto-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = await startRandomTestRound(host, created.code);
+  room.randomModeQueue = ["chain"];
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  const finished = await finishedPromise;
+  room.randomModeQueue = ["sudden"];
+  let startedCount = 0;
+  const countStarted = (raw) => {
+    if (JSON.parse(raw).type === "round_started") startedCount += 1;
+  };
+  host.on("message", countStarted);
+  const started = await next(host, "round_started");
+  host.off("message", countStarted);
+  assert.equal(started.mode, finished.nextRound.mode);
+  assert.equal(started.mode, "chain");
+  assert.equal(startedCount, 1);
+  assert.equal(room.nextRound, null);
+  assert.equal(room.lastResult, null);
+  const closed = next(host, "session_closed");
+  message(host, "end_session");
+  await closed;
+  host.close();
+});
+
+test("start_next_round is creator-only, source-bound, and exactly once", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "queued-command-host",
+    "queued-command-guest",
+  ]);
+  const guest = guests[0];
+  const room = await startRandomTestRound(host, code);
+  room.randomModeQueue = ["race"];
+  const finishedPromise = next(host, "round_finished");
+  const guestFinishedPromise = next(guest, "round_finished");
+  message(host, "end_round");
+  const finished = await finishedPromise;
+  await guestFinishedPromise;
+
+  const missingId = next(host, "error");
+  message(host, "start_next_round");
+  assert.equal((await missingId).code, "ROUND_ID_REQUIRED");
+  const stale = next(host, "error");
+  message(host, "start_next_round", { sourceRoundId: "older-round" });
+  assert.equal((await stale).code, "ROUND_STALE");
+  const guestError = next(guest, "error");
+  message(guest, "start_next_round", { sourceRoundId: finished.roundId });
+  assert.equal((await guestError).code, "CREATOR_ONLY");
+
+  let startedCount = 0;
+  const countStarted = (raw) => {
+    if (JSON.parse(raw).type === "round_started") startedCount += 1;
+  };
+  host.on("message", countStarted);
+  const startedPromise = next(host, "round_started");
+  const repeatedError = next(host, "error");
+  message(host, "start_next_round", { sourceRoundId: finished.roundId });
+  message(host, "start_next_round", { sourceRoundId: finished.roundId });
+  const [started, error] = await Promise.all([startedPromise, repeatedError]);
+  host.off("message", countStarted);
+  assert.equal(started.mode, "race");
+  assert.equal(error.code, "NEXT_ROUND_UNAVAILABLE");
+  assert.equal(startedCount, 1);
+
+  const afterStart = next(host, "error");
+  message(host, "start_next_round", { sourceRoundId: finished.roundId });
+  assert.equal((await afterStart).code, "NEXT_ROUND_UNAVAILABLE");
+  await closeTestRoom(host, [host, guest]);
+});
+
+test("manual start_game replaces a queued Random Rush transition and stale callbacks cannot launch", async () => {
+  const host = await client("queued-replacement-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = await startRandomTestRound(host, created.code);
+  room.randomModeQueue = ["storm"];
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  const finished = await finishedPromise;
+  const staleTimer = room.rushTimer;
+  let startedCount = 0;
+  const countStarted = (raw) => {
+    if (JSON.parse(raw).type === "round_started") startedCount += 1;
+  };
+  host.on("message", countStarted);
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  const started = await startedPromise;
+  staleTimer?._onTimeout?.();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  host.off("message", countStarted);
+  assert.equal(started.mode, "classic");
+  assert.equal(room.mode, "classic");
+  assert.equal(room.randomRush, false);
+  assert.equal(room.nextRound, null);
+  assert.equal(room.rushTimer, null);
+  assert.equal(startedCount, 1);
+  assert.equal(finished.nextRound.mode, "storm");
+  const closed = next(host, "session_closed");
+  message(host, "end_session");
+  await closed;
+  host.close();
+});
+
+test("non-Random Rush results do not claim a queued next round", async () => {
+  const host = await client("non-random-result-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = await startClassicTestRound(host, created.code);
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  const finished = await finishedPromise;
+  assert.equal("nextRound" in finished, false);
+  assert.equal("nextRound" in room.lastResult, false);
+  assert.equal(room.nextRound, null);
+  const closed = next(host, "session_closed");
+  message(host, "end_session");
+  await closed;
+  host.close();
+});
+
+test("reconnect after automatic Random Rush transition sees playing state without obsolete result action", async () => {
+  const host = await client("queued-reconnect-auto");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = await startRandomTestRound(host, created.code);
+  room.randomModeQueue = ["blitz"];
+  const reconnectToken = room.players.get("queued-reconnect-auto").reconnectToken;
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  await finishedPromise;
+  const startedPromise = next(host, "round_started");
+  await startedPromise;
+  assert.equal(room.status, "playing");
+  assert.equal(room.lastResult, null);
+  assert.equal(room.nextRound, null);
+  host.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const resumed = await client("queued-reconnect-auto");
+  const resumedPromise = next(resumed, "room_resumed");
+  const statePromise = next(resumed, "room_state");
+  message(resumed, "resume_room", { code: created.code, reconnectToken });
+  await resumedPromise;
+  const state = await statePromise;
+  assert.equal(state.status, "playing");
+  assert.equal(state.lastResult, null);
+  assert.equal(state.round.id, room.round.id);
+  const closed = next(resumed, "session_closed");
+  message(resumed, "end_session");
+  await closed;
+  resumed.close();
+});
+
 test("skipping Random Rush continues at most once", async () => {
   const host = await client("skip-random-rush");
   const createdPromise = next(host, "room_created");
@@ -1610,6 +1862,7 @@ test("skipping Random Rush continues at most once", async () => {
   await startedPromise;
   const room = rooms.get(created.code);
   const skippedRoundId = room.round.id;
+  room.randomModeQueue = ["scoreattack"];
   let continuationCount = 0;
   const countContinuations = (raw) => {
     const payload = JSON.parse(raw);
@@ -1621,7 +1874,9 @@ test("skipping Random Rush continues at most once", async () => {
   const finished = await finishedPromise;
   assert.equal(finished.reason, "skipped");
   assert.equal(finished.randomRush, true);
-  await next(host, "round_started");
+  const continued = await next(host, "round_started");
+  assert.equal(finished.nextRound.mode, "scoreattack");
+  assert.equal(continued.mode, "scoreattack");
   await new Promise((resolve) => setTimeout(resolve, 100));
   host.off("message", countContinuations);
   assert.equal(continuationCount, 1);
