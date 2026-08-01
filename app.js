@@ -444,9 +444,7 @@ function renderChainStatus() {
   $("#chainRequiredLetter").textContent = s.requiredLetter || "Any";
   const guidance = $("#chainGuidance");
   let text = "";
-  if (s.chainResetLetter) {
-    text = "No unused " + s.chainResetLetter + " words remain. Chain reset.";
-  } else if (s.rejectedAttempt) {
+  if (s.rejectedAttempt) {
     const reasons = {
       minimum: "need at least " + s.config.min + " letters",
       path: "tiles must connect",
@@ -457,6 +455,8 @@ function renderChainStatus() {
       ? "Rejected: " + s.rejectedAttempt + ", must start with " + s.requiredLetter
       : "Rejected: " + s.rejectedAttempt + ", " +
         (reasons[s.rejectionReason] || "not accepted");
+  } else if (s.chainResetLetter) {
+    text = "No unused " + s.chainResetLetter + " words remain. Chain reset.";
   }
   guidance.hidden = !text;
   guidance.textContent = text;
@@ -1314,10 +1314,17 @@ document.addEventListener("click", (event) => {
 
 function applyOnlineChainState(chain, clearRejection = false) {
   if (!requiresChain(s.config) || !chain) return;
-  s.lastAcceptedWord = String(chain.lastAcceptedWord || "").toUpperCase();
-  s.requiredLetter = String(chain.requiredLetter || "").toUpperCase();
-  s.chainResetLetter = String(chain.chainResetLetter || "").toUpperCase();
-  if (clearRejection) {
+  const lastAcceptedWord = String(chain.lastAcceptedWord || "").toUpperCase();
+  const requiredLetter = String(chain.requiredLetter || "").toUpperCase();
+  const chainResetLetter = String(chain.chainResetLetter || "").toUpperCase();
+  const acceptedChainChanged =
+    lastAcceptedWord !== s.lastAcceptedWord ||
+    requiredLetter !== s.requiredLetter ||
+    chainResetLetter !== s.chainResetLetter;
+  s.lastAcceptedWord = lastAcceptedWord;
+  s.requiredLetter = requiredLetter;
+  s.chainResetLetter = chainResetLetter;
+  if (clearRejection || acceptedChainChanged) {
     s.rejectedAttempt = "";
     s.rejectionReason = "";
   }
@@ -1419,7 +1426,7 @@ window.wordrushOnlineRound = (
 ) => {
   const roundKey = round.id || round.endsAt + ":" + round.board.join("");
   if (s.onlineRoundKey === roundKey && !s.done) {
-    applyOnlineChainState(chain, true);
+    applyOnlineChainState(chain);
     return;
   }
   activeOnlineRoundKey = null;
