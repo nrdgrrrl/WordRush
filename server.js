@@ -340,18 +340,20 @@ function recordedScore(player) {
     0,
   );
 }
+const ROUND_PARTICIPANT_RESERVED = "ROUND_PARTICIPANT_RESERVED";
+function isDetachedRoundParticipant(room, playerId) {
+  return Boolean(
+    room.status === "playing" &&
+      room.round?.participants?.has(playerId) &&
+      !room.players.has(playerId),
+  );
+}
+function rejectDetachedRoundParticipant(room, client, ws) {
+  if (!isDetachedRoundParticipant(room, client.id)) return false;
+  send(ws, { type: "error", code: ROUND_PARTICIPANT_RESERVED });
+  return true;
+}
 function createPlayer(room, client, ws) {
-  const roundParticipant =
-    room.status === "playing" ? room.round?.participants.get(client.id) : null;
-  if (roundParticipant) {
-    roundParticipant.roomCode = room.code;
-    roundParticipant.name = client.name;
-    roundParticipant.avatar = client.avatar;
-    roundParticipant.ws = ws;
-    roundParticipant.reconnectToken = crypto.randomBytes(32).toString("base64url");
-    roundParticipant.disconnectTimer = null;
-    return roundParticipant;
-  }
   return {
     ...client,
     ws,
@@ -366,6 +368,7 @@ function createPlayer(room, client, ws) {
   };
 }
 function admitPlayerToRoom(room, client, ws) {
+  if (rejectDetachedRoundParticipant(room, client, ws)) return null;
   const player = createPlayer(room, client, ws);
   room.players.set(client.id, player);
   if (room.status === "playing" && room.round)
@@ -1278,6 +1281,7 @@ async function handle(ws, message) {
       });
       return broadcast(room, state(room));
     }
+    if (rejectDetachedRoundParticipant(room, client, ws)) return;
     if (room.players.size >= MAX_PLAYERS)
       return send(ws, { type: "error", code: "ROOM_FULL" });
     if (roomExposesAdultContent(room)) {
@@ -1329,6 +1333,7 @@ async function handle(ws, message) {
 
       function admitPlayer() {
         if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
+        if (rejectDetachedRoundParticipant(targetRoom, challengeClient, ws)) return null;
         if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
         challengeClient.roomCode = targetRoom.code;
         const player = admitPlayerToRoom(targetRoom, challengeClient, ws);
@@ -1381,6 +1386,7 @@ async function handle(ws, message) {
 
       function admitNormalJoin() {
         if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
+        if (rejectDetachedRoundParticipant(targetRoom, challengeClient, ws)) return null;
         if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
         challengeClient.roomCode = targetRoom.code;
         const player = admitPlayerToRoom(targetRoom, challengeClient, ws);
@@ -1881,6 +1887,7 @@ module.exports = {
   prunePreAdmissionChallenges,
   CONSENT_TIMEOUT_MS,
   CHALLENGE_TIMEOUT_MS,
+  ROUND_PARTICIPANT_RESERVED,
 };
 
 const { Leaderboard } = require("./leaderboard");
