@@ -6,6 +6,7 @@ const {
   normalizeAuthoritativeRoundMetadata,
   reconcileResultAction,
   classifyResultDelivery,
+  shouldReplaySuddenDeath,
 } = require("../multiplayer-result-state");
 
 const configs = {
@@ -266,6 +267,13 @@ test("authoritative replacement starts with a fresh next action", () => {
   });
   assert.equal(replacement.consumed, false);
   assert.equal(replacement.heading, "Up next: CLASSIC");
+});
+
+test("duplicate finished-result delivery does not replay Sudden Death", () => {
+  assert.equal(shouldReplaySuddenDeath("accept"), true);
+  assert.equal(shouldReplaySuddenDeath("replace"), true);
+  assert.equal(shouldReplaySuddenDeath("refresh"), false);
+  assert.equal(shouldReplaySuddenDeath("stale"), false);
 });
 
 test("authoritative replacement normalizes the snapshot mode and grid size", () => {

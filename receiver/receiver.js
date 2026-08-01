@@ -12,6 +12,8 @@
   let activeRoomCode = "";
   let targetRoomCode = "";
   const reconnectStorageKey = "wordrush-display-reconnect";
+  const suddenDeathOutcome = window.WordrushSuddenDeathOutcome;
+  let renderedFinishedRoundId = null;
 
   const savedReconnectCredential = () => {
     try {
@@ -50,6 +52,7 @@
   };
   const renderFinished = (state) => {
     const result = state.lastResult || {};
+    const replaySuddenDeath = renderedFinishedRoundId !== result.roundId;
     const ranking = [...(result.ranking || state.players || [])]
       .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
     const wordEntries = ranking.flatMap((player) =>
@@ -66,7 +69,14 @@
     const leaders = winner
       ? ranking.filter((player) => Number(player.score || 0) === Number(winner.score || 0))
       : [];
-    const headline = result.cooperative
+    const suddenDeath = suddenDeathOutcome.normalizeSuddenDeathOutcome(result.suddenDeath);
+    const headline = suddenDeath
+      ? suddenDeath.outcome === "sole_winner"
+        ? escape(suddenDeath.winner.avatar) + " " + escape(suddenDeath.winner.name) + " wins Sudden Death!"
+        : suddenDeath.outcome === "survivors"
+          ? "Sudden Death survivors!"
+          : "Sudden Death — no winner"
+      : result.cooperative
       ? "Team word power!"
       : leaders.length > 1
         ? `${leaders.map((player) => `${escape(player.avatar || "🐈")} ${escape(player.name)}`).join(" & ")} tie for the crown!`
@@ -77,7 +87,8 @@
       ? `<div class="longest-banner"><span>🏆 LONGEST WORD</span><strong>${escape(longest.item.word)}</strong><b>${escape(longest.player.avatar || "🐈")} ${escape(longest.player.name)} · ${longestLength} letters · ${Number(longest.item.points || 0).toLocaleString()} pts</b></div>`
       : `<div class="longest-banner empty"><span>✨ NEXT ROUND</span><strong>No words yet</strong><b>A fresh board is waiting.</b></div>`;
     const suddenDeathBanner = result.suddenDeath
-      ? `<div class="sudden-death-banner"><strong>💥 SUDDEN DEATH!</strong><span>${escape(result.suddenDeath.playerAvatar || "🐈")} ${escape(result.suddenDeath.playerName || "Someone")} ended it with “${escape(result.suddenDeath.word)}”</span></div>`
+      ? "<div class=\"sudden-death-banner" + (replaySuddenDeath ? "" : " no-replay") + "\"><strong>💥 SUDDEN DEATH!</strong><span>" +
+        escape(suddenDeathOutcome.formatSuddenDeathOutcome(result.suddenDeath)) + "</span></div>"
       : "";
     const playerCards = ranking.map((player, index) => {
       const words = player.words || [];
@@ -88,20 +99,27 @@
       const sessionRecord = player.session
         ? `<span class="tv-session-record">${Number(player.session.wins || 0)}W · ${Number(player.session.losses || 0)}L · ${Number(player.session.points || 0).toLocaleString()} SESSION PTS</span>`
         : "";
-      return `<article class="final-player-card rank-${Math.min(index + 1, 4)}"><header><span class="final-rank">${["👑", "🥈", "🥉"][index] || index + 1}</span><div><strong>${escape(player.avatar || "🐈")} ${escape(player.name)}</strong><small>${words.length} word${words.length === 1 ? "" : "s"}</small>${sessionRecord}</div><b class="final-score">${Number(player.score || 0).toLocaleString()}</b></header><div class="tv-word-list${density}">${wordChips}</div></article>`;
+      const outcomeBadge = suddenDeathOutcome.badgeForPlayer(suddenDeath, player);
+      const cardClass = "final-player-card rank-" + Math.min(index + 1, 4) +
+        (outcomeBadge ? " sudden-death-result-card" : "");
+      const rankBadge = outcomeBadge || (["👑", "🥈", "🥉"][index] || index + 1);
+      return `<article class="${cardClass}"><header><span class="final-rank"${outcomeBadge ? ` data-outcome="${outcomeBadge.toLowerCase()}"` : ""}>${rankBadge}</span><div><strong>${escape(player.avatar || "🐈")} ${escape(player.name)}</strong><small>${words.length} word${words.length === 1 ? "" : "s"}</small>${sessionRecord}</div><b class="final-score">${Number(player.score || 0).toLocaleString()}</b></header><div class="tv-word-list${density}">${wordChips}</div></article>`;
     }).join("");
     eyebrow.textContent = "FINAL RESULTS";
     screen.className = "screen finished results-party";
     screen.innerHTML = `<div class="finish-title"><p class="kicker">ROUND COMPLETE!</p><h1>${headline}</h1></div>${longestBanner}${suddenDeathBanner}<div class="final-player-grid players-${Math.min(ranking.length, 4)}">${playerCards}</div><div class="word-color-key"><span class="length-short">3–4 letters</span><span class="length-medium">5–6 letters</span><span class="length-long">7+ letters</span></div>`;
     connection.textContent = "Final scores · live room connection";
+    renderedFinishedRoundId = result.roundId || null;
   };
   const render = (state) => {
     if (!state || state.status === "closed") {
+      renderedFinishedRoundId = null;
       renderIdle("This room has closed. Cast another room when you are ready.");
       connection.textContent = "Room closed";
       return;
     }
     const players = [...(state.players || [])].sort((a, b) => b.score - a.score);
+    if (state.status !== "finished") renderedFinishedRoundId = null;
     const cards = players.map((player) => `<article class="score-card"><span class="name">${escape(player.avatar || "🐈")} ${escape(player.name)}</span><strong class="score">${Number(player.score || 0).toLocaleString()}</strong></article>`).join("");
     eyebrow.textContent = state.status === "playing" ? "LIVE SCOREBOARD" : state.status === "finished" ? "FINAL RESULTS" : "ROOM LOBBY";
     if (state.status === "finished") return renderFinished(state);
