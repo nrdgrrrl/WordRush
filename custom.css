@@ -361,6 +361,17 @@ html[data-theme="dark"] #partyDialog {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.reveal-player header .reveal-outcome-badge {
+  flex: none;
+  padding: 2px 4px;
+  border-radius: 999px;
+  background: #f6c85f;
+  color: #2c1c37;
+  font-size: .55rem;
+  letter-spacing: .04em;
+}
+.reveal-player.sudden-death-result-card .reveal-outcome-badge[data-outcome="eliminated"] { background: #f7b2a8; }
+.reveal-player.sudden-death-result-card .reveal-outcome-badge[data-outcome="survivor"] { background: #eaf9d2; }
 .reveal-player header b {
   font: 12px monospace;
   color: var(--coral);
@@ -655,6 +666,17 @@ html[data-theme="dark"] .reveal-word {
 .result-player-card.rank-1 { --card-color: #f6c85f; transform: scale(1.02); }
 .result-player-card.rank-2 { --card-color: #b7f5ff; }
 .result-player-card.rank-3 { --card-color: #f7b2a8; }
+.result-player-card.sudden-death-result-card {
+  --card-color: #efe2ff;
+  transform: none;
+}
+.result-player-card.sudden-death-result-card .result-rank {
+  font-size: .7rem;
+  letter-spacing: .04em;
+}
+.result-player-card.sudden-death-result-card .result-rank[data-outcome="eliminated"] { color: #b33b36; }
+.result-player-card.sudden-death-result-card .result-rank[data-outcome="winner"] { color: #7d5600; }
+.result-player-card.sudden-death-result-card .result-rank[data-outcome="survivor"] { color: #23716d; }
 .result-rank { text-align: center; font-size: 1.6rem; font-weight: 950; }
 .result-player-card > div { min-width: 0; }
 .result-player-card > div b,

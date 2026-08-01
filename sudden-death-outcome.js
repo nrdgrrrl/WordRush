@@ -85,6 +85,28 @@
       : outcome.survivors.map((player) => player.id);
   }
 
+  function matchesPlayer(player, target) {
+    if (!player || !target) return false;
+    const playerId = String(player.id || "").trim();
+    return playerId
+      ? playerId === target.id
+      : String(player.name || "").trim() === target.name;
+  }
+
+  function badgeForPlayer(details, player) {
+    const outcome = normalizeSuddenDeathOutcome(details);
+    if (!outcome) return "";
+    if (matchesPlayer(player, outcome.loser)) return "ELIMINATED";
+    if (outcome.outcome === "sole_winner" && matchesPlayer(player, outcome.winner))
+      return "WINNER";
+    if (
+      outcome.outcome === "survivors" &&
+      outcome.survivors.some((survivor) => matchesPlayer(player, survivor))
+    )
+      return "SURVIVOR";
+    return "PARTICIPANT";
+  }
+
   function identityLabel(player) {
     return `${player.avatar || "🐈"} ${player.name}`;
   }
@@ -103,6 +125,7 @@
 
   return Object.freeze({
     createSuddenDeathOutcome,
+    badgeForPlayer,
     formatSuddenDeathOutcome,
     normalizeSuddenDeathOutcome,
     winnerIds,

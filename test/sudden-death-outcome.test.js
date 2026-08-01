@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const {
+  badgeForPlayer,
   createSuddenDeathOutcome,
   formatSuddenDeathOutcome,
   normalizeSuddenDeathOutcome,
@@ -29,6 +30,9 @@ test("Sudden Death makes the other two-player participant the sole winner", () =
     survivors: [],
   });
   assert.deepEqual(winnerIds(outcome), ["alpha"]);
+  assert.equal(badgeForPlayer(outcome, { ...players[0], score: 99 }), "ELIMINATED");
+  assert.notEqual(badgeForPlayer(outcome, { ...players[0], score: 99 }), "WINNER");
+  assert.equal(badgeForPlayer(outcome, { ...players[1], score: 1 }), "WINNER");
   assert.match(formatSuddenDeathOutcome(outcome), /Loser.*rejected word “XYZZY”/);
   assert.match(formatSuddenDeathOutcome(outcome), /Alpha.*winner/);
 });
@@ -43,6 +47,11 @@ test("Sudden Death represents every three-player survivor without a sole winner"
   assert.equal(outcome.winner, null);
   assert.deepEqual(outcome.survivors, players.slice(1));
   assert.deepEqual(winnerIds(outcome), ["alpha", "beta"]);
+  assert.deepEqual(
+    players.slice(1).map((player) => badgeForPlayer(outcome, { ...player, score: 0 })),
+    ["SURVIVOR", "SURVIVOR"],
+  );
+  assert.equal(badgeForPlayer(outcome, { ...players[0], score: 100 }), "ELIMINATED");
   assert.match(formatSuddenDeathOutcome(outcome), /Survivors\/winners:.*Alpha.*Beta/);
   assert.doesNotMatch(formatSuddenDeathOutcome(outcome), /is the winner/);
 });
@@ -57,6 +66,7 @@ test("single-player Sudden Death records a loser and no winner", () => {
   assert.equal(outcome.winner, null);
   assert.deepEqual(outcome.survivors, []);
   assert.deepEqual(winnerIds(outcome), []);
+  assert.equal(badgeForPlayer(outcome, { ...players[0], score: 100 }), "ELIMINATED");
   assert.match(formatSuddenDeathOutcome(outcome), /Loser.*rejected word “NOPE”/);
   assert.match(formatSuddenDeathOutcome(outcome), /No winner/);
   assert.deepEqual(normalizeSuddenDeathOutcome(outcome), outcome);

@@ -99,7 +99,11 @@
       const sessionRecord = player.session
         ? `<span class="tv-session-record">${Number(player.session.wins || 0)}W · ${Number(player.session.losses || 0)}L · ${Number(player.session.points || 0).toLocaleString()} SESSION PTS</span>`
         : "";
-      return `<article class="final-player-card rank-${Math.min(index + 1, 4)}"><header><span class="final-rank">${["👑", "🥈", "🥉"][index] || index + 1}</span><div><strong>${escape(player.avatar || "🐈")} ${escape(player.name)}</strong><small>${words.length} word${words.length === 1 ? "" : "s"}</small>${sessionRecord}</div><b class="final-score">${Number(player.score || 0).toLocaleString()}</b></header><div class="tv-word-list${density}">${wordChips}</div></article>`;
+      const outcomeBadge = suddenDeathOutcome.badgeForPlayer(suddenDeath, player);
+      const cardClass = "final-player-card rank-" + Math.min(index + 1, 4) +
+        (outcomeBadge ? " sudden-death-result-card" : "");
+      const rankBadge = outcomeBadge || (["👑", "🥈", "🥉"][index] || index + 1);
+      return `<article class="${cardClass}"><header><span class="final-rank"${outcomeBadge ? ` data-outcome="${outcomeBadge.toLowerCase()}"` : ""}>${rankBadge}</span><div><strong>${escape(player.avatar || "🐈")} ${escape(player.name)}</strong><small>${words.length} word${words.length === 1 ? "" : "s"}</small>${sessionRecord}</div><b class="final-score">${Number(player.score || 0).toLocaleString()}</b></header><div class="tv-word-list${density}">${wordChips}</div></article>`;
     }).join("");
     eyebrow.textContent = "FINAL RESULTS";
     screen.className = "screen finished results-party";

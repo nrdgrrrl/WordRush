@@ -483,6 +483,7 @@ function renderResults(
   const rows = ranking?.length
     ? ranking
     : [{
+        id: "local-player",
         name: profile.name,
         avatar: profile.avatar,
         score: s.score,
@@ -508,16 +509,20 @@ function renderResults(
     ? onlineHeading || "Up next: " + nextRushLabel
     : profile.name + ".";
   renderHeroScores(rows, skipped, suddenDeath);
+  const suddenDeathData = suddenDeathOutcome.normalizeSuddenDeathOutcome(suddenDeath);
   const target = $("#resultPlayers");
   target.replaceChildren();
   rows.forEach((player, index) => {
     const row = document.createElement("article");
-    row.className = "result-player-card rank-" + Math.min(index + 1, 4);
+    const outcomeBadge = suddenDeathOutcome.badgeForPlayer(suddenDeathData, player);
+    row.className = "result-player-card rank-" + Math.min(index + 1, 4) +
+      (suddenDeathData ? " sudden-death-result-card" : "");
     const rank = document.createElement("span");
     rank.className = "result-rank";
     rank.textContent = skipped
       ? "•"
-      : (["👑", "🥈", "🥉"][index] || String(index + 1));
+      : outcomeBadge || (["👑", "🥈", "🥉"][index] || String(index + 1));
+    if (outcomeBadge) rank.dataset.outcome = outcomeBadge.toLowerCase();
     const identity = document.createElement("div");
     const name = document.createElement("b");
     name.textContent = (player.avatar || "🐈") + " " + player.name;
@@ -574,12 +579,8 @@ function renderHeroScores(players, skipped = false, suddenDeath = null) {
       badge.textContent = skipped
         ? "SCORE"
         : suddenDeathData
-          ? player.id === suddenDeathData.loser.id
-            ? "ELIMINATED"
-            : isWinner
-              ? suddenDeathData.outcome === "sole_winner" ? "WINNER" : "SURVIVOR"
-              : "SCORE"
-        : isWinner
+          ? suddenDeathOutcome.badgeForPlayer(suddenDeathData, player)
+          : isWinner
           ? (tied ? "LEADER" : "WINNER")
           : "RUNNER-UP";
       const name = document.createElement("b");

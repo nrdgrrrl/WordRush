@@ -17,6 +17,7 @@
   let revealTimer = null;
   let revealToken = 0;
   let renderedView = null;
+  let currentSuddenDeath = null;
   const suddenDeathOutcome = window.WordrushSuddenDeathOutcome;
 
   function localRow() {
@@ -35,16 +36,26 @@
     return resultRows.length ? resultRows : [localRow()];
   }
 
-  function makePlayerCard(player) {
+  function makePlayerCard(player, suddenDeath = currentSuddenDeath) {
     const card = document.createElement("article");
     card.className = "reveal-player";
     const heading = document.createElement("header");
     const identity = document.createElement("span");
+    identity.className = "reveal-player-name";
     identity.textContent = (player.avatar || "🐈") + " " + player.name;
     const score = document.createElement("b");
     score.className = "reveal-player-total";
     score.textContent = "0";
     heading.append(identity, score);
+    const outcomeBadge = suddenDeathOutcome.badgeForPlayer(suddenDeath, player);
+    if (outcomeBadge) {
+      const badge = document.createElement("small");
+      badge.className = "reveal-outcome-badge";
+      badge.dataset.outcome = outcomeBadge.toLowerCase();
+      badge.textContent = outcomeBadge;
+      heading.insertBefore(badge, score);
+      card.classList.add("sudden-death-result-card");
+    }
     if (player.session) {
       const sessionRecord = document.createElement("p");
       sessionRecord.className = "reveal-session-record";
@@ -111,7 +122,7 @@
     revealToken++;
     const token = revealToken;
     const players = rows();
-    const cards = players.map(makePlayerCard);
+    const cards = players.map((player) => makePlayerCard(player, currentSuddenDeath));
     host.replaceChildren(...cards);
     $("#revealTotal").textContent = "0";
     const playerTotals = players.map(() => 0);
@@ -248,6 +259,7 @@
   document.addEventListener("wordrush:round-started", () => {
     localWords = [];
     resultRows = [];
+    currentSuddenDeath = null;
     renderedView = null;
     revealToken++;
     clearTimeout(revealTimer);
@@ -278,7 +290,10 @@
       };
     const skipped =
       detail.result?.reason === "skipped" || detail.result?.recorded === false;
-    renderHighlights(rows(), skipped, detail.result?.suddenDeath);
+    currentSuddenDeath = suddenDeathOutcome.normalizeSuddenDeathOutcome(
+      detail.suddenDeath || detail.result?.suddenDeath,
+    );
+    renderHighlights(rows(), skipped, currentSuddenDeath);
     applyResults(true);
   });
 
