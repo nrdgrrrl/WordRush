@@ -174,6 +174,7 @@ const s = {
   rejectedAttempt: "",
   rejectionReason: "",
   suddenDeathEvent: null,
+  suddenDeathRoundKey: null,
   acceptingSoloSubmissions: false,
   config: null,
   dictionaryId: DEFAULT_DICTIONARY_ID,
@@ -186,6 +187,8 @@ let soloSubmissionTail = Promise.resolve();
 let soloSubmissionErrorCount = 0;
 let rushContinuationGeneration = 0;
 let rushContinuationTransition = false;
+let suddenDeathPresentationGeneration = 0;
+let suddenDeathExplosionTimer = 0;
 function logSoloSubmissionError(error) {
   if (soloSubmissionErrorCount < 3) {
     console.error("WordRush solo submission commit failed", error);
@@ -538,21 +541,52 @@ function renderHeroScores(players) {
     }),
   );
 }
+function currentSuddenDeathRoundKey() {
+  if (s.onlineRoundKey) return "online:" + s.onlineRoundKey;
+  return s.startedAt ? "solo:" + s.startedAt : null;
+}
 function renderSuddenDeath(details) {
   const callout = $("#suddenDeathCallout");
   if (!callout) return;
+  const title = $("#suddenDeathCalloutTitle");
+  const detail = $("#suddenDeathCalloutDetail");
   const valid = details && details.word && (details.playerName || details.name);
   callout.hidden = !valid;
-  if (!valid) return;
-  $("#suddenDeathCalloutTitle").textContent =
+  if (!valid) {
+    title.textContent = "Sudden death!";
+    detail.textContent = "";
+    return;
+  }
+  title.textContent =
     (details.playerAvatar || details.avatar || "🐈") + " " +
     (details.playerName || details.name) + " ended it!";
-  $("#suddenDeathCalloutDetail").textContent =
+  detail.textContent =
     String(details.word).toUpperCase() + " was the wrong word — boom!";
 }
-function triggerSuddenDeathExplosion(details) {
+function clearSuddenDeathPresentation() {
+  suddenDeathPresentationGeneration++;
+  clearTimeout(suddenDeathExplosionTimer);
+  suddenDeathExplosionTimer = 0;
+  s.suddenDeathEvent = null;
+  s.suddenDeathRoundKey = null;
+  s.rejectedAttempt = "";
+  s.rejectionReason = "";
+  renderSuddenDeath(null);
+  const explosion = $("#suddenDeathExplosion");
+  if (!explosion) return;
+  explosion.hidden = true;
+  explosion.classList.remove("is-active");
+  $("#suddenDeathExplosionTitle").textContent = "💥 SUDDEN DEATH!";
+  $("#suddenDeathExplosionDetail").textContent = "";
+}
+function triggerSuddenDeathExplosion(details, roundKey = s.suddenDeathRoundKey) {
   const explosion = $("#suddenDeathExplosion");
   if (!explosion || !details?.word) return;
+  if (
+    roundKey !== s.suddenDeathRoundKey ||
+    roundKey !== currentSuddenDeathRoundKey()
+  )
+    return;
   $("#suddenDeathExplosionTitle").textContent = "💥 SUDDEN DEATH!";
   $("#suddenDeathExplosionDetail").textContent =
     (details.playerAvatar || details.avatar || "🐈") + " " +
@@ -562,10 +596,19 @@ function triggerSuddenDeathExplosion(details) {
   explosion.classList.remove("is-active");
   void explosion.offsetWidth;
   explosion.classList.add("is-active");
-  clearTimeout(triggerSuddenDeathExplosion.timer);
-  triggerSuddenDeathExplosion.timer = setTimeout(() => {
+  clearTimeout(suddenDeathExplosionTimer);
+  const presentationGeneration = suddenDeathPresentationGeneration;
+  suddenDeathExplosionTimer = setTimeout(() => {
+    if (
+      presentationGeneration !== suddenDeathPresentationGeneration ||
+      roundKey !== s.suddenDeathRoundKey ||
+      roundKey !== currentSuddenDeathRoundKey()
+    )
+      return;
     explosion.hidden = true;
     explosion.classList.remove("is-active");
+    $("#suddenDeathExplosionDetail").textContent = "";
+    suddenDeathExplosionTimer = 0;
   }, 2600);
 }
 function end() {
@@ -593,7 +636,8 @@ function end() {
   $("#resultWordCount").textContent = s.found.size;
   renderResults();
   renderSuddenDeath(s.suddenDeathEvent);
-  if (s.suddenDeathEvent) triggerSuddenDeathExplosion(s.suddenDeathEvent);
+  if (s.suddenDeathEvent)
+    triggerSuddenDeathExplosion(s.suddenDeathEvent, s.suddenDeathRoundKey);
   $("#resultAchievement").hidden = !s.found.size;
   $("#resultAchievementTitle").textContent = s.found.size
     ? "Round complete"
@@ -702,12 +746,12 @@ function show(
   }
   if (
     currentScreen === "resultsScreen" &&
-    id !== currentScreen &&
-    !preserveRushContinuation &&
-    s.rush &&
-    !s.onlineRoundKey
-  )
-    cancelSoloRushContinuation();
+    id !== currentScreen
+  ) {
+    clearSuddenDeathPresentation();
+    if (!preserveRushContinuation && s.rush && !s.onlineRoundKey)
+      cancelSoloRushContinuation();
+  }
   if (id === "homeScreen") soloGenerationRequest++;
   document
     .querySelectorAll(".screen")
@@ -780,6 +824,7 @@ $("#introStart")?.addEventListener("click", () => {
   finishRoundIntro();
 });
 function abandonActiveRound() {
+  clearSuddenDeathPresentation();
   soloGenerationRequest++;
   if (!s.onlineRoundKey) invalidateSoloSubmissionQueue();
   clearInterval(s.timer);
@@ -895,6 +940,7 @@ async function start(
   }
   if (generationRequest !== soloGenerationRequest) return;
   const config = generated.config;
+  clearSuddenDeathPresentation();
   invalidateSoloSubmissionQueue();
   s.config = config;
   s.dictionaryId = generated.dictionary.dictionaryId;
@@ -903,7 +949,6 @@ async function start(
   customAdult = generationInputs.adultMode;
   s.mode = generationInputs.mode;
   s.rush = generationInputs.rush;
-  s.suddenDeathEvent = null;
   s.onlineRoundKey = null;
   s.pendingOnlineTrace = null;
   if (rush && !wasRush) {
@@ -1094,13 +1139,16 @@ async function submit() {
           playerAvatar: profile.avatar,
           word: w,
         };
+        s.suddenDeathRoundKey = currentSuddenDeathRoundKey();
         const fatalEpoch = invalidateSoloSubmissionQueue();
-        triggerSuddenDeathExplosion(s.suddenDeathEvent);
+        const fatalRoundKey = s.suddenDeathRoundKey;
+        triggerSuddenDeathExplosion(s.suddenDeathEvent, fatalRoundKey);
         setTimeout(() => {
           if (
             soloSubmissionEpoch !== fatalEpoch ||
             s.done ||
-            s.startedAt !== roundStartedAt
+            s.startedAt !== roundStartedAt ||
+            s.suddenDeathRoundKey !== fatalRoundKey
           )
             return;
           end();
@@ -1425,10 +1473,11 @@ window.wordrushOnlineRound = (
   chain = null,
 ) => {
   const roundKey = round.id || round.endsAt + ":" + round.board.join("");
-  if (s.onlineRoundKey === roundKey && !s.done) {
-    applyOnlineChainState(chain);
+  if (s.onlineRoundKey === roundKey) {
+    if (!s.done) applyOnlineChainState(chain);
     return;
   }
+  clearSuddenDeathPresentation();
   activeOnlineRoundKey = null;
   s.onlineRoundKey = roundKey;
   s.onlineIntroEndsAt = round.introEndsAt || Date.now() + 4000;
@@ -1438,7 +1487,6 @@ window.wordrushOnlineRound = (
   s.dictionaryWords = [];
   s.onlineRandomRush = Boolean(randomRush);
   s.pendingOnlineTrace = null;
-  s.suddenDeathEvent = null;
   s.lastAcceptedWord = "";
   s.requiredLetter = "";
   s.chainResetLetter = "";
@@ -1490,7 +1538,14 @@ window.wordrushRoundStartNow = (timing = {}) => {
   else activateOnlineRound();
 };
 window.wordrushOnlineFinish = (ranking, result = {}) => {
-  if (s.done) return;
+  if (
+    result.roundId &&
+    ((s.onlineRoundKey && s.onlineRoundKey !== result.roundId) ||
+      (!s.onlineRoundKey && !s.done && s.startedAt))
+  )
+    return false;
+  if (s.done) return true;
+  if (!s.onlineRoundKey && result.roundId) s.onlineRoundKey = result.roundId;
   cancelRoundIntro();
   s.done = 1;
   activeOnlineRoundKey = null;
@@ -1510,8 +1565,10 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   const ownPlayer = normalizedRanking.find((player) => player.id === guestId);
   const mine = ownPlayer?.score ?? s.score;
   const ownWords = ownPlayer?.words || [];
-    const suddenDeath = result.reason === "invalid_word" ? result.suddenDeath : null;
+  const suddenDeath =
+    result.reason === "invalid_word" ? result.suddenDeath : null;
   s.suddenDeathEvent = suddenDeath || null;
+  s.suddenDeathRoundKey = suddenDeath ? currentSuddenDeathRoundKey() : null;
   s.dictionaryMetadata = result.dictionary || s.dictionaryMetadata;
   s.dictionaryId = s.dictionaryMetadata?.dictionaryId || s.dictionaryId;
   s.score = mine;
@@ -1521,7 +1578,8 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   $("#resultWordCount").textContent = ownWords.length;
   renderResults(normalizedRanking);
   renderSuddenDeath(suddenDeath);
-  if (suddenDeath) triggerSuddenDeathExplosion(suddenDeath);
+  if (suddenDeath)
+    triggerSuddenDeathExplosion(suddenDeath, s.suddenDeathRoundKey);
   $("#resultAchievement").hidden = false;
   $("#resultAchievementTitle").textContent = result.cooperative
     ? "Co-op complete"
@@ -1583,6 +1641,7 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
     result,
     dictionary: s.dictionaryMetadata,
   });
+  return true;
 };
 
 const themePreference = localStorage.getItem("wordrush-theme");
