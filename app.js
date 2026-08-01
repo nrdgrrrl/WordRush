@@ -464,7 +464,7 @@ function renderChainStatus() {
   guidance.hidden = !text;
   guidance.textContent = text;
 }
-function renderResults(ranking) {
+function renderResults(ranking, { skipped = false } = {}) {
   const rows = ranking?.length
     ? ranking
     : [{
@@ -476,10 +476,12 @@ function renderResults(ranking) {
   const nextRushLabel = s.rush && s.nextRushMode
     ? configForPreset(s.nextRushMode)?.label
     : "";
-  $("#resultName").textContent = nextRushLabel
+  $("#resultName").textContent = skipped
+    ? "Round skipped"
+    : nextRushLabel
     ? "Up next: " + nextRushLabel
     : profile.name + ".";
-  renderHeroScores(rows);
+  renderHeroScores(rows, skipped);
   const target = $("#resultPlayers");
   target.replaceChildren();
   rows.forEach((player, index) => {
@@ -487,7 +489,9 @@ function renderResults(ranking) {
     row.className = "result-player-card rank-" + Math.min(index + 1, 4);
     const rank = document.createElement("span");
     rank.className = "result-rank";
-    rank.textContent = ["👑", "🥈", "🥉"][index] || String(index + 1);
+    rank.textContent = skipped
+      ? "•"
+      : (["👑", "🥈", "🥉"][index] || String(index + 1));
     const identity = document.createElement("div");
     const name = document.createElement("b");
     name.textContent = (player.avatar || "🐈") + " " + player.name;
@@ -510,7 +514,7 @@ function renderResults(ranking) {
     target.append(row);
   });
 }
-function renderHeroScores(players) {
+function renderHeroScores(players, skipped = false) {
   const target = $("#resultHeroScores");
   if (!target) return;
   const ordered = [...players].sort(
@@ -524,13 +528,17 @@ function renderHeroScores(players) {
   target.replaceChildren(
     ...displayed.map((player) => {
       const card = document.createElement("article");
-      const isWinner = (Number(player.score) || 0) === winningScore;
+      const isWinner = !skipped && (Number(player.score) || 0) === winningScore;
       card.className = "result-hero-score-card" +
         (isWinner ? " is-winner" : "") +
         (player.id === window.wordrushGuestId ? " is-you" : "");
       const badge = document.createElement("small");
       badge.className = "hero-score-badge";
-      badge.textContent = isWinner ? (tied ? "LEADER" : "WINNER") : "RUNNER-UP";
+      badge.textContent = skipped
+        ? "SCORE"
+        : isWinner
+          ? (tied ? "LEADER" : "WINNER")
+          : "RUNNER-UP";
       const name = document.createElement("b");
       name.className = "hero-score-name";
       name.textContent = (player.avatar || "🐈") + " " + player.name;
@@ -617,7 +625,14 @@ function end() {
     window.wordrushSessionCode &&
     !s.done
   ) {
-    window.wordrushSocket.send(JSON.stringify({ type: "end_round" }));
+    if (!s.onlineRoundKey) {
+      toast("There is no active multiplayer round to skip");
+      return;
+    }
+    window.wordrushSocket.send(JSON.stringify({
+      type: "skip_round",
+      roundId: s.onlineRoundKey,
+    }));
     return;
   }
   if (s.done) return;
@@ -634,6 +649,8 @@ function end() {
   }
   $("#finalScore").textContent = s.score;
   $("#resultWordCount").textContent = s.found.size;
+  $("#resultEyebrow").textContent = "ROUND COMPLETE!";
+  $("#resultScoreLabel").textContent = "FINAL SCORES";
   renderResults();
   renderSuddenDeath(s.suddenDeathEvent);
   if (s.suddenDeathEvent)
@@ -653,12 +670,12 @@ function end() {
   if (s.score > 0) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
   recordPlayDay();
   updateProfile();
-    $("#again").textContent = s.rush
+  $("#again").textContent = s.rush
     ? "Continue Random Rush →"
-    : isPartyRound(s.config)
+    : !s.onlineRoundKey && isPartyRound(s.config)
       ? "Continue party mode →"
       : "Play again →";
-  $("#exitParty").hidden = !isPartyRound(s.config);
+  $("#exitParty").hidden = Boolean(s.onlineRoundKey) || !isPartyRound(s.config);
   show("resultsScreen");
   emit("round-complete", {
     ranking: [
@@ -841,6 +858,8 @@ function abandonActiveRound() {
 }
 window.wordrushAbandonOnlineRound = () => {
   if (s.onlineRoundKey) abandonActiveRound();
+  s.config = null;
+  s.onlineRandomRush = false;
   // A host can close the room while another player is still looking at the
   // board. The room shutdown is authoritative, so do not leave that player
   // stranded on a dead game screen.
@@ -983,6 +1002,9 @@ async function start(
   $("#timer").textContent = formatTimer(s.time);
   $("#stopRush").hidden = !s.rush;
   $("#endGame").hidden = false;
+  $("#endGame").textContent = "End round";
+  $("#endGame").setAttribute("aria-label", "End round");
+  $("#gameBack").setAttribute("aria-label", "Back to home");
   $("#stopRushResults").hidden = true;
   render();
   showRoundIntro({
@@ -1259,10 +1281,18 @@ $("#again").onclick = () => {
     emit("random-rush", { action: "continue", upcoming_mode: s.nextRushMode });
     return start(consumeNextRushMode(), null, false, true, s.dictionaryId);
   }
-  if (isPartyRound(s.config)) return openParty();
+  if (!window.wordrushSessionCode && !s.onlineRoundKey && isPartyRound(s.config))
+    return openParty();
   start(s.mode, s.config, usesAdultLexicon(s.config), false, s.dictionaryId);
 };
-$("#exitParty").onclick = () => { s.config = null; $("#exitParty").hidden = true; $("#again").textContent = "Play again →"; show("homeScreen"); };
+$("#exitParty").onclick = () => {
+  if (window.wordrushSessionCode || s.onlineRoundKey || !isPartyRound(s.config))
+    return;
+  s.config = null;
+  $("#exitParty").hidden = true;
+  $("#again").textContent = "Play again →";
+  show("homeScreen");
+};
 $("#endGame").onclick = end;
 document
   .querySelectorAll("[data-mode]")
@@ -1552,6 +1582,7 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   s.onlineIntroEndsAt = 0;
   clearInterval(s.timer);
   const guestId = window.wordrushGuestId;
+  const skipped = result.reason === "skipped" || result.recorded === false;
   const normalizedRanking = (ranking || []).map((player) => ({
     ...player,
     score: Number(player.score) || 0,
@@ -1576,18 +1607,28 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   ownWords.forEach((item) => s.found.add(item.word));
   $("#finalScore").textContent = mine;
   $("#resultWordCount").textContent = ownWords.length;
-  renderResults(normalizedRanking);
+  $("#resultEyebrow").textContent = skipped
+    ? "ROUND SKIPPED"
+    : "ROUND COMPLETE!";
+  $("#resultScoreLabel").textContent = skipped
+    ? "CURRENT SCORES"
+    : "FINAL SCORES";
+  renderResults(normalizedRanking, { skipped });
   renderSuddenDeath(suddenDeath);
   if (suddenDeath)
     triggerSuddenDeathExplosion(suddenDeath, s.suddenDeathRoundKey);
   $("#resultAchievement").hidden = false;
-  $("#resultAchievementTitle").textContent = result.cooperative
+  $("#resultAchievementTitle").textContent = skipped
+    ? "Round skipped"
+    : result.cooperative
     ? "Co-op complete"
     : "Multiplayer round";
   const leaders = normalizedRanking.filter(
     (player) => player.score === normalizedRanking[0]?.score,
   );
-  $("#resultAchievementDetail").textContent = result.cooperative
+  $("#resultAchievementDetail").textContent = skipped
+    ? "Scores were not recorded"
+    : result.cooperative
     ? "Team score: " +
       (result.teamScore || 0) +
       " · " +
@@ -1610,7 +1651,7 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   ) ? profile.completedMultiplayerRounds : [];
   const alreadyRecorded =
     result.roundId && profile.completedMultiplayerRounds.includes(result.roundId);
-  if (!alreadyRecorded) {
+  if (!skipped && !alreadyRecorded) {
     profile.score += mine;
     profile.rounds++;
     profile.totalGameSeconds += s.startedAt
@@ -1630,8 +1671,8 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
     updateProfile();
   }
   show("resultsScreen");
-  $("#again").textContent = s.party ? "Continue party mode →" : "Play again →";
-  $("#exitParty").hidden = !s.party;
+  $("#again").textContent = "Play again →";
+  $("#exitParty").hidden = true;
   emit("round-complete", {
     ranking: normalizedRanking,
     multiplayer: true,

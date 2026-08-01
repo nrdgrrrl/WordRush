@@ -72,7 +72,7 @@
     card.querySelector(".reveal-word-list").append(line);
   }
 
-  function renderHighlights(players) {
+  function renderHighlights(players, skipped = false) {
     const topPlayer = [...players].sort(
       (a, b) => (Number(b.score) || 0) - (Number(a.score) || 0),
     )[0];
@@ -83,10 +83,16 @@
       String(b.word || "").length - String(a.word || "").length ||
       (Number(b.points) || 0) - (Number(a.points) || 0),
     )[0];
+    if ($("#resultTopLabel"))
+      $("#resultTopLabel").textContent = skipped
+        ? "ROUND RESULT"
+        : "ROUND LEADER";
     if ($("#resultTopPlayer"))
-      $("#resultTopPlayer").textContent = topPlayer
-        ? (topPlayer.avatar || "🐈") + " " + topPlayer.name
-        : "—";
+      $("#resultTopPlayer").textContent = skipped
+        ? "Not recorded"
+        : topPlayer
+          ? (topPlayer.avatar || "🐈") + " " + topPlayer.name
+          : "—";
     if ($("#resultLongestWord"))
       $("#resultLongestWord").textContent = longest
       ? String(longest.word).toUpperCase() + " · " + longest.points +
@@ -266,7 +272,9 @@
         ...detail.result.results,
         view: detail.result.results.view === "static" ? "static" : "reveal",
       };
-    renderHighlights(rows());
+    const skipped =
+      detail.result?.reason === "skipped" || detail.result?.recorded === false;
+    renderHighlights(rows(), skipped);
     applyResults(true);
   });
 

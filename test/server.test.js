@@ -713,7 +713,7 @@ test("display tokens grant a room-scoped connection that can resume independentl
   assert.equal(startedDisplay.state.round.quality, undefined);
 
   const closed = next(display, "session_closed");
-  message(host, "leave_session");
+  message(host, "end_session");
   assert.equal((await closed).code, created.code);
   host.close();
   display.close();
@@ -766,7 +766,7 @@ test("an active cast keeps its room alive while the host phone sleeps", async ()
   });
   await resumed;
   const closed = next(resumedHost, "session_closed");
-  message(resumedHost, "leave_session");
+  message(resumedHost, "end_session");
   await closed;
   resumedHost.close();
   display.close();
@@ -1416,6 +1416,183 @@ test("CUSTOM_WORDS_REJECTED fires before adult consent flow", async () => {
   ws.close();
 });
 
+test("skip_round is non-scoring, identity-bound, and restorable", async () => {
+  const host = await client("skip-round-host");
+  const guest = await client("skip-round-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+  const room = rooms.get(created.code);
+
+  const noActiveError = next(host, "error");
+  message(host, "skip_round", { roundId: "not-active" });
+  assert.equal((await noActiveError).code, "ROUND_NOT_PLAYING");
+
+  const guestError = next(guest, "error");
+  message(guest, "skip_round", { roundId: "not-active" });
+  assert.equal((await guestError).code, "CREATOR_ONLY");
+
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  await startedPromise;
+  room.round.board = ["C", "A", "T", ...Array(13).fill("X")];
+
+  const missingIdError = next(host, "error");
+  message(host, "skip_round", { roundId: "" });
+  assert.equal((await missingIdError).code, "ROUND_ID_REQUIRED");
+
+  const staleIdError = next(host, "error");
+  message(host, "skip_round", { roundId: "stale-round-id" });
+  assert.equal((await staleIdError).code, "ROUND_STALE");
+
+  const startNowPromise = next(host, "round_start_now");
+  message(host, "start_round_now");
+  await startNowPromise;
+  const acceptedPromise = next(host, "word_accepted");
+  message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  await acceptedPromise;
+
+  const sessionBefore = new Map(
+    [...room.players.values()].map((player) => [player.id, {
+      wins: player.sessionWins,
+      losses: player.sessionLosses,
+      points: player.sessionPoints,
+    }]),
+  );
+  const leaderboardBefore = fs.existsSync(process.env.WORDRUSH_LEADERBOARD_FILE)
+    ? fs.readFileSync(process.env.WORDRUSH_LEADERBOARD_FILE, "utf8")
+    : null;
+  const skippedRoundId = room.round.id;
+  let resultCount = 0;
+  const countResults = (raw) => {
+    if (JSON.parse(raw).type === "round_finished") resultCount += 1;
+  };
+  host.on("message", countResults);
+  const finishedPromise = next(host, "round_finished");
+  const guestFinishedPromise = next(guest, "round_finished");
+  message(host, "skip_round", { roundId: skippedRoundId });
+  const finished = await finishedPromise;
+  await guestFinishedPromise;
+
+  assert.equal(finished.roundId, skippedRoundId);
+  assert.equal(finished.reason, "skipped");
+  assert.equal(finished.recorded, false);
+  assert.equal(finished.ranking.find((player) => player.id === "skip-round-host").score, 9);
+  assert.deepEqual(
+    finished.ranking.find((player) => player.id === "skip-round-host").words,
+    [{ word: "CAT", points: 9 }],
+  );
+  assert.equal(room.status, "finished");
+  const { type: _resultType, ...storedResult } = finished;
+  assert.deepEqual(room.lastResult, storedResult);
+  for (const [id, before] of sessionBefore) {
+    const player = room.players.get(id);
+    assert.deepEqual({
+      wins: player.sessionWins,
+      losses: player.sessionLosses,
+      points: player.sessionPoints,
+    }, before);
+  }
+  const leaderboardAfter = fs.existsSync(process.env.WORDRUSH_LEADERBOARD_FILE)
+    ? fs.readFileSync(process.env.WORDRUSH_LEADERBOARD_FILE, "utf8")
+    : null;
+  assert.equal(leaderboardAfter, leaderboardBefore);
+
+  const duplicateError = next(host, "error");
+  message(host, "skip_round", { roundId: skippedRoundId });
+  assert.equal((await duplicateError).code, "ROUND_NOT_PLAYING");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  host.off("message", countResults);
+  assert.equal(resultCount, 1);
+
+  const reconnectToken = room.players.get("skip-round-host").reconnectToken;
+  host.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const resumedHost = await client("skip-round-host");
+  const resumedPromise = next(resumedHost, "room_resumed");
+  const statePromise = next(resumedHost, "room_state");
+  message(resumedHost, "resume_room", {
+    code: created.code,
+    reconnectToken,
+  });
+  await resumedPromise;
+  const restored = await statePromise;
+  assert.equal(restored.status, "finished");
+  assert.equal(restored.lastResult.roundId, skippedRoundId);
+  assert.equal(restored.lastResult.reason, "skipped");
+  assert.equal(restored.lastResult.recorded, false);
+
+  const guestClosed = next(guest, "session_closed");
+  const hostClosed = next(resumedHost, "session_closed");
+  message(resumedHost, "end_session");
+  await Promise.all([guestClosed, hostClosed]);
+  host.close();
+  resumedHost.close();
+  guest.close();
+});
+
+test("stale round timers cannot finish a replacement round", async () => {
+  const host = await client("stale-round-timer");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  await startedPromise;
+  const room = rooms.get(created.code);
+  const staleTimer = room.round.timer;
+  room.round = { ...room.round, id: "replacement-round", timer: null };
+  staleTimer._onTimeout();
+  assert.equal(room.status, "playing");
+  clearTimeout(staleTimer);
+  const closed = next(host, "session_closed");
+  message(host, "end_session");
+  await closed;
+  host.close();
+});
+
+test("skipping Random Rush continues at most once", async () => {
+  const host = await client("skip-random-rush");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "random" });
+  await startedPromise;
+  const room = rooms.get(created.code);
+  const skippedRoundId = room.round.id;
+  let continuationCount = 0;
+  const countContinuations = (raw) => {
+    const payload = JSON.parse(raw);
+    if (payload.type === "round_started") continuationCount += 1;
+  };
+  host.on("message", countContinuations);
+  const finishedPromise = next(host, "round_finished");
+  message(host, "skip_round", { roundId: skippedRoundId });
+  const finished = await finishedPromise;
+  assert.equal(finished.reason, "skipped");
+  assert.equal(finished.randomRush, true);
+  await next(host, "round_started");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  host.off("message", countContinuations);
+  assert.equal(continuationCount, 1);
+  assert.equal(room.status, "playing");
+  assert.notEqual(room.round.id, skippedRoundId);
+  const closed = next(host, "session_closed");
+  message(host, "end_session");
+  await closed;
+  host.close();
+});
+
 test("authoritative multiplayer results populate trusted leaderboard persistence", async () => {
   const host = await client("leaderboard-winner");
   const guest = await client("leaderboard-loser");
@@ -1498,7 +1675,7 @@ test("a disconnected guest needs its private token to reclaim a room seat", asyn
   assert.equal(rooms.get(created.code).players.size, 2);
 
   const closedGuest = next(resumedGuest, "session_closed");
-  message(host, "leave_session");
+  message(host, "end_session");
   await closedGuest;
   host.close();
   resumedGuest.close();
@@ -1516,7 +1693,7 @@ test("room cleanup releases guests so they can create a new session", async () =
   message(guest, "join_room", { code: created.code });
   await joinedPromise;
   const closedPromise = next(guest, "session_closed");
-  message(host, "leave_session");
+  message(host, "end_session");
   await closedPromise;
   const replacementPromise = next(guest, "room_created");
   message(guest, "create_room");
@@ -1524,6 +1701,109 @@ test("room cleanup releases guests so they can create a new session", async () =
   assert.equal(replacement.code.length, 5);
   guest.close();
   host.close();
+});
+
+test("host leave_session is rejected before consent mutation", async () => {
+  const host = await client("host-leave-rejected");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const consentPromise = next(host, "adult_consent_request");
+  message(host, "start_game", { mode: "dirty" });
+  await consentPromise;
+  const room = rooms.get(created.code);
+  const errorPromise = next(host, "error");
+  message(host, "leave_session");
+  assert.equal((await errorPromise).code, "CREATOR_MUST_END_SESSION");
+  assert.ok(room.pendingConsent);
+  assert.equal(rooms.has(created.code), true);
+  const closed = next(host, "session_closed");
+  message(host, "end_session");
+  await closed;
+  assert.equal(rooms.has(created.code), false);
+  host.close();
+});
+
+test("end_session is creator-only and invalidates room reconnect", async () => {
+  const host = await client("end-session-host");
+  const guest = await client("end-session-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+
+  const guestError = next(guest, "error");
+  message(guest, "end_session");
+  assert.equal((await guestError).code, "CREATOR_ONLY");
+  assert.equal(rooms.has(created.code), true);
+
+  const hostClosed = next(host, "session_closed");
+  const guestClosed = next(guest, "session_closed");
+  message(host, "end_session");
+  await Promise.all([hostClosed, guestClosed]);
+  assert.equal(rooms.has(created.code), false);
+
+  const resumed = await client("end-session-host");
+  const resumeError = next(resumed, "error");
+  message(resumed, "resume_room", {
+    code: created.code,
+    reconnectToken: created.reconnectToken,
+  });
+  assert.equal((await resumeError).code, "RESUME_FAILED");
+  host.close();
+  guest.close();
+  resumed.close();
+});
+
+test("end_session closes pre-admission challenges without timeout or admission", async () => {
+  const host = await client("pre-close-host");
+  const guest = await client("pre-close-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const consentPromise = next(host, "adult_consent_request");
+  message(host, "start_game", { mode: "dirty" });
+  await consentPromise;
+  const challengePromise = next(guest, "adult_pre_admission_challenge");
+  message(guest, "join_room", { code: created.code });
+  const challenge = await challengePromise;
+  assert.equal(preAdmissionChallenges.has(challenge.challengeId), true);
+
+  const hostClosed = next(host, "session_closed");
+  const challengeClosed = next(guest, "session_closed");
+  message(host, "end_session");
+  assert.deepEqual(await challengeClosed, {
+    type: "session_closed",
+    code: created.code,
+    reason: "creator_ended",
+  });
+  await hostClosed;
+  assert.equal(preAdmissionChallenges.has(challenge.challengeId), false);
+  assert.equal(rooms.has(created.code), false);
+
+  let lateAdmission = false;
+  const observeLateAdmission = (raw) => {
+    if (JSON.parse(raw).type === "joined_room") lateAdmission = true;
+  };
+  guest.on("message", observeLateAdmission);
+  message(guest, "adult_consent_response", {
+    challengeId: challenge.challengeId,
+    accepted: true,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  guest.off("message", observeLateAdmission);
+  assert.equal(lateAdmission, false);
+  assert.equal(rooms.has(created.code), false);
+  host.close();
+  guest.close();
 });
 
 test("leave_session while consent pending removes player and clears request", async () => {

@@ -188,6 +188,16 @@
     $("#lobbyPlayers").replaceChildren();
     $("#sessionHostControls").hidden = true;
     $("#sessionType").disabled = false;
+    $("#endGame").hidden = false;
+    $("#endGame").textContent = "End round";
+    $("#endGame").setAttribute("aria-label", "End round");
+    $("#gameBack").setAttribute("aria-label", "Back to home");
+    $("#exitMultiplayer").hidden = true;
+    $("#exitMultiplayer").textContent = "Leave party";
+    $("#exitMultiplayer").setAttribute("aria-label", "Leave party");
+    $("#sessionLeave").hidden = true;
+    $("#sessionLeave").textContent = "Leave party";
+    $("#exitParty").hidden = true;
     window.dispatchEvent(new CustomEvent("wordrush:room-change"));
   }
   function playerIdentity(player) {
@@ -272,7 +282,30 @@
       : creator
         ? "You’re the host — pick a game and start when everybody’s ready!"
         : "Waiting for the host to start. Get your fingers ready!";
-    $("#endGame").hidden = !creator;
+    const inSession = Boolean(sessionCode);
+    const playing = roomStatus === "playing";
+    $("#endGame").hidden = inSession
+      ? !creator || !playing
+      : false;
+    $("#endGame").textContent = inSession ? "Skip round" : "End round";
+    $("#endGame").setAttribute(
+      "aria-label",
+      inSession ? "Skip round" : "End round",
+    );
+    $("#gameBack").setAttribute(
+      "aria-label",
+      inSession
+        ? "Back to home; you remain in the party"
+        : "Back to home",
+    );
+    $("#exitMultiplayer").hidden = !inSession;
+    $("#exitMultiplayer").textContent = creator ? "End session" : "Leave party";
+    $("#exitMultiplayer").setAttribute(
+      "aria-label",
+      creator ? "End session" : "Leave party",
+    );
+    $("#sessionLeave").hidden = !inSession || Boolean(pendingChallengeId);
+    $("#sessionLeave").textContent = creator ? "End session" : "Leave party";
     $("#resumeMultiplayer").hidden = roomStatus !== "playing";
   }
   function sessionDialog(open = true) {
@@ -473,6 +506,8 @@
         pendingConsentRequestId = "";
         pendingChallengeId = message.challengeId;
         showLobbyView();
+        $("#endGame").hidden = true;
+        $("#sessionLeave").hidden = true;
         const prePanel = $("#preAdmissionPanel");
         const consentPanel = $("#consentPanel");
         const actions = $("#consentActions");
@@ -634,14 +669,22 @@
           teamScore: message.teamScore,
           stats: message.stats,
           reason: message.reason,
+          recorded: message.recorded,
           suddenDeath: message.suddenDeath,
           results: message.results,
           dictionary: message.dictionary,
         });
         if (accepted === false) return;
         roomStatus = "finished";
+        updateLobbyControls();
         sessionDialog(false);
-        toast(message.cooperative ? "Team round complete" : "Round complete");
+        toast(
+          message.reason === "skipped"
+            ? "Round skipped"
+            : message.cooperative
+              ? "Team round complete"
+              : "Round complete",
+        );
       }
       if (message.type === "results_settings")
         window.wordrushResultsSettings?.(message.results);
@@ -819,7 +862,7 @@
     trackMultiplayer("leave_requested", { creator });
     intentionalLeave = true;
     if (socket?.readyState === 1 && sessionCode)
-      sendWhenReady({ type: "leave_session" });
+      sendWhenReady({ type: creator ? "end_session" : "leave_session" });
     else {
       intentionalLeave = false;
       clearSession();
