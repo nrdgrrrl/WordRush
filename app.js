@@ -1633,7 +1633,7 @@ window.wordrushRoundStartNow = (timing = {}) => {
 window.wordrushOnlineFinish = (
   ranking,
   result = {},
-  { authoritativeSnapshot = false } = {},
+  { authoritativeSnapshot = false, roomMetadata = null } = {},
 ) => {
   const delivery = multiplayerResultState.classifyResultDelivery({
     localRoundId: s.onlineRoundKey,
@@ -1662,6 +1662,17 @@ window.wordrushOnlineFinish = (
   if (s.done && !result.roundId)
     return true;
   if (delivery === "replace") {
+    if (authoritativeSnapshot) {
+      const metadata = multiplayerResultState.normalizeAuthoritativeRoundMetadata(
+        roomMetadata,
+      );
+      if (metadata) {
+        s.mode = metadata.mode;
+        s.config = metadata.config;
+        s.n = metadata.size;
+        document.body.dataset.mode = s.mode;
+      }
+    }
     s.onlineRoundKey = result.roundId;
     s.onlineResultRoundId = null;
     s.onlineNextRound = null;

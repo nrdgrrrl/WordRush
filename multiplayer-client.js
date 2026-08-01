@@ -565,7 +565,14 @@
           const accepted = window.wordrushOnlineFinish?.(
             restoredResult.ranking,
             restoredResult,
-            { authoritativeSnapshot: true },
+            {
+              authoritativeSnapshot: true,
+              roomMetadata: {
+                mode: message.mode,
+                config: message.config,
+                round: message.round,
+              },
+            },
           );
           if (accepted === false) return;
         }

@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   normalizeNextRound,
   normalizeResultAction,
+  normalizeAuthoritativeRoundMetadata,
   reconcileResultAction,
   classifyResultDelivery,
 } = require("../multiplayer-result-state");
@@ -265,4 +266,31 @@ test("authoritative replacement starts with a fresh next action", () => {
   });
   assert.equal(replacement.consumed, false);
   assert.equal(replacement.heading, "Up next: CLASSIC");
+});
+
+test("authoritative replacement normalizes the snapshot mode and grid size", () => {
+  assert.deepEqual(
+    normalizeAuthoritativeRoundMetadata({
+      mode: "race",
+      config: { label: "RACE MODE", size: 5, min: 4 },
+      round: { size: 6 },
+    }),
+    {
+      mode: "race",
+      config: { label: "RACE MODE", size: 5, min: 4 },
+      size: 6,
+    },
+  );
+  assert.deepEqual(
+    normalizeAuthoritativeRoundMetadata({
+      mode: "race",
+      config: { label: "RACE MODE", size: 5 },
+      round: null,
+    }),
+    {
+      mode: "race",
+      config: { label: "RACE MODE", size: 5 },
+      size: 5,
+    },
+  );
 });

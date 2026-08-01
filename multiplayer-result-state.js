@@ -53,6 +53,22 @@
     };
   }
 
+  function normalizeAuthoritativeRoundMetadata({ mode, config, round } = {}) {
+    if (
+      typeof mode !== "string" ||
+      !mode ||
+      !config ||
+      typeof config !== "object" ||
+      Array.isArray(config)
+    )
+      return null;
+    const size = [round?.size, config.size].find(
+      (value) => Number.isInteger(value) && value > 0,
+    );
+    if (!size) return null;
+    return { mode, config: { ...config }, size };
+  }
+
   function sameNextRound(first, second) {
     return Boolean(
       first &&
@@ -98,6 +114,7 @@
   return Object.freeze({
     normalizeNextRound,
     normalizeResultAction,
+    normalizeAuthoritativeRoundMetadata,
     reconcileResultAction,
     classifyResultDelivery,
   });
