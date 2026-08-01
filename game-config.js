@@ -40,6 +40,19 @@
       adult: false,
       party: false,
     },
+    sudden_series: {
+      label: "SUDDEN DEATH SERIES",
+      min: 3,
+      size: 4,
+      seconds: 30,
+      rule: "10 rounds · first rejected word gives a strike",
+      target: null,
+      sudden: true,
+      chain: false,
+      adult: false,
+      party: false,
+      series: true,
+    },
     race: {
       label: "RACE MODE",
       min: 3,
@@ -149,7 +162,7 @@
     "EEEEEEEEEEEEAAAAAAAARRRRRRIIIIIIIIOOOOOOOONNNNNNTTTTTTLLLLSSSSUUUUDDDDGGGBBCCMMPPHHFFVVWWYYKJXQZ";
   Object.values(MODE_CONFIG).forEach(Object.freeze);
   Object.freeze(MODE_CONFIG);
-  const RANDOM_RUSH_EXCLUDED_MODES = Object.freeze(["coop", "dirty"]);
+  const RANDOM_RUSH_EXCLUDED_MODES = Object.freeze(["coop", "dirty", "sudden_series"]);
   const RANDOM_RUSH_MODES = Object.freeze(
     Object.keys(MODE_CONFIG).filter(
       (mode) => !RANDOM_RUSH_EXCLUDED_MODES.includes(mode),
@@ -207,6 +220,9 @@
   function isSuddenDeath(config) {
     return config?.sudden === true;
   }
+  function isSuddenDeathSeries(config) {
+    return config?.series === true;
+  }
   function requiresChain(config) {
     return config?.chain === true;
   }
@@ -259,6 +275,7 @@
     configForPreset,
     validateCustomConfig,
     isSuddenDeath,
+    isSuddenDeathSeries,
     requiresChain,
     chainWordMatches,
     advanceChainFields,

@@ -23,7 +23,7 @@ const {
 const boardCore = require("../board-core");
 const { DEFAULT_DICTIONARY_ID } = require("../dictionary-registry");
 test("Random Rush includes every eligible built-in game mode", () => {
-  assert.deepEqual(RANDOM_RUSH_EXCLUDED_MODES, ["coop", "dirty"]);
+  assert.deepEqual(RANDOM_RUSH_EXCLUDED_MODES, ["coop", "dirty", "sudden_series"]);
   assert.deepEqual(
     RANDOM_RUSH_MODES,
     Object.keys(MODE_CONFIG).filter(
@@ -312,6 +312,7 @@ test("canonical config matches expected shape and validates correctly", () => {
     classic: { sudden: false, chain: false, adult: false, party: false, target: null },
     minimum: { sudden: false, chain: false, adult: false, party: false, target: null },
     sudden: { sudden: true, chain: false, adult: false, party: false, target: null },
+    sudden_series: { sudden: true, chain: false, adult: false, party: false, target: null, series: true },
     race: { sudden: false, chain: false, adult: false, party: false, target: 500 },
     dirty: { sudden: false, chain: false, adult: true, party: false, target: null },
     chain: { sudden: false, chain: true, adult: false, party: false, target: null },
@@ -327,6 +328,7 @@ test("canonical config matches expected shape and validates correctly", () => {
       assert.equal(config[field], value, `${mode}.${field}`);
   }
   assert.equal(configForPreset("nonexistent"), null);
+  assert.equal(validateCustomConfig({ label: "S", min: 3, size: 4, seconds: 30, rule: "R", series: true }).config.series, undefined);
   const valid = validateCustomConfig({ label: "X", min: 5, size: 6, seconds: 60, rule: "Y", sudden: true });
   assert.equal(valid.valid, true);
   assert.equal(valid.config.sudden, true);

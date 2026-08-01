@@ -13,6 +13,7 @@
   let targetRoomCode = "";
   const reconnectStorageKey = "wordrush-display-reconnect";
   const suddenDeathOutcome = window.WordrushSuddenDeathOutcome;
+  const suddenDeathSeries = window.WordrushSuddenDeathSeries;
   let renderedFinishedRoundId = null;
 
   const savedReconnectCredential = () => {
@@ -50,8 +51,88 @@
     const length = String(word || "").length;
     return length >= 7 ? "long" : length >= 5 ? "medium" : "short";
   };
+  const seriesReason = (entry) => entry?.reason === "invalid_word"
+    ? escape(entry.loserName || entry.loser?.name || "A player") +
+      " rejected " + escape(entry.rejectedWord || "a word") + " · 1 strike"
+    : entry?.reason === "timeout"
+      ? "Timeout · no strike"
+      : entry?.reason === "host_skip"
+        ? "Host skip · no strike"
+        : "Round ended · no strike";
+  const seriesStandings = (series) =>
+    suddenDeathSeries.rankParticipants(series?.participants || []).map((player) =>
+      "<div class=\"series-tv-standing" +
+      (player.status === "withdrawn" ? " is-withdrawn" : "") +
+      "\"><strong>" + escape(player.avatar || "🐈") + " " +
+      escape(player.name) + "</strong><span>" +
+      (player.status === "withdrawn"
+        ? "WITHDRAWN"
+        : (Number(player.strikes || 0) + " STRIKE" +
+          (Number(player.strikes || 0) === 1 ? "" : "S"))) +
+      "</span></div>",
+    ).join("");
+  const renderSeriesInterstitial = (state) => {
+    const series = state.series;
+    const entry = series?.history?.at(-1);
+    const roundNumber = Number(entry?.roundNumber) ||
+      Math.max(1, Number(series?.currentRoundNumber || 1) - 1);
+    eyebrow.textContent = "SUDDEN DEATH SERIES";
+    screen.className = "screen series-interstitial";
+    screen.innerHTML =
+      "<p class=\"kicker\">ROUND " + roundNumber + " OF " +
+      (series?.totalRounds || 10) + "</p><h1>Next board loading.</h1>" +
+      "<div class=\"series-tv-outcome\">" + seriesReason(entry) + "</div>" +
+      "<div class=\"series-tv-standings\">" + seriesStandings(series) +
+      "</div><p class=\"series-tv-next\">Next board will start after the readable transition.</p>";
+    connection.textContent = "Sudden Death Series · interstitial";
+  };
+  const renderSeriesFinished = (state, result) => {
+    const series = result.series || state.series;
+    const ranking = suddenDeathSeries.rankParticipants(
+      result.ranking || series?.participants || [],
+    );
+    const winners = ranking.filter((player) =>
+      (player.series?.status || player.status) !== "withdrawn" &&
+      series?.winnerIds?.includes(player.id),
+    );
+    const headline = winners.length
+      ? winners.map((player) => escape(player.avatar || "🐈") + " " +
+          escape(player.name)).join(" & ") +
+        (winners.length > 1 ? " share" : " wins") + " the series!"
+      : "Sudden Death Series cancelled";
+    const cards = ranking.map((player) => {
+      const seriesPlayer = player.series || player;
+      return "<article class=\"series-tv-final-card" +
+        (series?.winnerIds?.includes(player.id) ? " is-winner" : "") +
+        (seriesPlayer.status === "withdrawn" ? " is-withdrawn" : "") +
+        "\"><header><strong>" + escape(player.avatar || "🐈") + " " +
+        escape(player.name) + "</strong><b>" + Number(seriesPlayer.strikes || 0) +
+        " strike" + (Number(seriesPlayer.strikes || 0) === 1 ? "" : "s") +
+        "</b></header><p>" +
+        (seriesPlayer.status === "withdrawn"
+          ? "WITHDRAWN · cannot win"
+          : Number(player.score || 0).toLocaleString() + " aggregate pts · " +
+            (player.words || []).length + " accepted words") +
+        "</p></article>";
+    }).join("");
+    const history = (series?.history || []).map((entry) =>
+      "<li>Round " + entry.roundNumber + ": " + seriesReason(entry) + "</li>",
+    ).join("");
+    eyebrow.textContent = "FINAL RESULTS";
+    screen.className = "screen finished results-party series-results";
+    screen.innerHTML =
+      "<div class=\"finish-title\"><p class=\"kicker\">SUDDEN DEATH SERIES · " +
+      (series?.totalRounds || 10) + " ROUNDS</p><h1>" + headline +
+      "</h1></div><div class=\"series-tv-final-grid\">" + cards +
+      "</div><div class=\"series-tv-history\"><h2>Round losses</h2><ol>" +
+      history + "</ol></div>";
+    connection.textContent = "Final series standings · live room connection";
+    renderedFinishedRoundId = result.accountingId || result.roundId || null;
+  };
   const renderFinished = (state) => {
     const result = state.lastResult || {};
+    if (result.series?.id || state.series?.phase === "finished")
+      return renderSeriesFinished(state, result);
     const replaySuddenDeath = renderedFinishedRoundId !== result.roundId;
     const ranking = [...(result.ranking || state.players || [])]
       .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
@@ -118,9 +199,29 @@
       connection.textContent = "Room closed";
       return;
     }
-    const players = [...(state.players || [])].sort((a, b) => b.score - a.score);
+    if (
+      state.status === "playing" &&
+      state.series?.phase === "interstitial"
+    )
+      return renderSeriesInterstitial(state);
+    const players = state.series
+      ? suddenDeathSeries.rankParticipants(state.series.participants || [])
+      : [...(state.players || [])].sort((a, b) => b.score - a.score);
     if (state.status !== "finished") renderedFinishedRoundId = null;
-    const cards = players.map((player) => `<article class="score-card"><span class="name">${escape(player.avatar || "🐈")} ${escape(player.name)}</span><strong class="score">${Number(player.score || 0).toLocaleString()}</strong></article>`).join("");
+    const cards = players.map((player) => state.series
+      ? '<article class="score-card' +
+        (player.status === "withdrawn" ? " is-withdrawn" : "") +
+        '"><span class="name">' + escape(player.avatar || "🐈") + " " +
+        escape(player.name) + '</span><strong class="score">' +
+        (player.status === "withdrawn"
+          ? "WITHDRAWN"
+          : Number(player.strikes || 0) + " STRIKES") +
+        "</strong></article>"
+      : '<article class="score-card"><span class="name">' +
+        escape(player.avatar || "🐈") + " " + escape(player.name) +
+        '</span><strong class="score">' +
+        Number(player.score || 0).toLocaleString() +
+        "</strong></article>").join("");
     eyebrow.textContent = state.status === "playing" ? "LIVE SCOREBOARD" : state.status === "finished" ? "FINAL RESULTS" : "ROOM LOBBY";
     if (state.status === "finished") return renderFinished(state);
     if (state.status === "lobby") {
@@ -130,7 +231,14 @@
       screen.innerHTML = `<p class="kicker">JOIN ROOM</p><div class="lobby-join"><img class="join-qr" src="/qr.svg?join=${encodeURIComponent(state.code)}" alt="QR code to join Wordrush room ${escape(state.code)}"><div class="lobby-details"><div class="room-code">${escape(state.code)}</div><p class="join-url">Scan to open Wordrush and join this room.</p><div class="scoreboard">${cards}</div></div></div>`;
     } else {
       screen.className = "screen playing";
-      screen.innerHTML = `<p class="kicker">${escape(state.config?.label || "WORDRUSH")}</p><h1>${escape(state.code)}</h1><div class="scoreboard">${cards}</div>`;
+      screen.innerHTML =
+        "<p class=\"kicker\">" +
+        escape(state.series
+          ? "SUDDEN DEATH SERIES · ROUND " +
+            state.series.currentRoundNumber + " OF " + state.series.totalRounds
+          : state.config?.label || "WORDRUSH") +
+        "</p><h1>" + escape(state.code) +
+        "</h1><div class=\"scoreboard\">" + cards + "</div>";
     }
     connection.textContent = "Live room connection";
   };

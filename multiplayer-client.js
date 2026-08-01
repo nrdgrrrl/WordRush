@@ -15,7 +15,8 @@
     endedSessionCode = "",
     creator = false,
     creatorId = "",
-    roomStatus = "";
+    roomStatus = "",
+    roomSeries = null;
   let reconnectTimer = null,
     reconnectAttempts = 0,
     intentionalLeave = false,
@@ -209,6 +210,7 @@
     creator = false;
     creatorId = "";
     roomStatus = "";
+    roomSeries = null;
     window.wordrushSessionCreator = false;
     window.wordrushAbandonOnlineRound?.();
     pendingSession = false;
@@ -224,12 +226,16 @@
     $("#roomSubtitle").textContent = "Create or join a multiplayer session";
     $("#sessionPlayersText").textContent = "1 player connected";
     $("#livePlayers").replaceChildren();
+    $("#seriesLiveStandings").replaceChildren();
+    $("#seriesLiveStandings").hidden = true;
     $("#lobbyPlayers").replaceChildren();
     $("#sessionHostControls").hidden = true;
     $("#sessionType").disabled = false;
     $("#endGame").hidden = false;
     $("#endGame").textContent = "End round";
     $("#endGame").setAttribute("aria-label", "End round");
+    $("#cancelSeries").hidden = true;
+    $("#cancelSeriesTransition").hidden = true;
     $("#gameBack").setAttribute("aria-label", "Back to home");
     $("#exitMultiplayer").hidden = true;
     $("#exitMultiplayer").textContent = "Leave party";
@@ -251,8 +257,29 @@
     fragment.append(avatar, name);
     return fragment;
   }
-  function renderPlayers(players) {
+  function renderPlayers(players, series = roomSeries) {
     const list = players || [];
+    const seriesLive = $("#seriesLiveStandings");
+    if (seriesLive) {
+      seriesLive.hidden = !series;
+      seriesLive.replaceChildren(
+        ...(series?.participants || []).map((participant) => {
+          const row = document.createElement("span");
+          row.className = participant.status === "withdrawn"
+            ? "is-withdrawn"
+            : participant.id === guestId
+              ? "is-you"
+              : "";
+          row.textContent = (participant.avatar || "🐈") + " " +
+            participant.name + " · " +
+            (participant.status === "withdrawn"
+              ? "withdrawn"
+              : (Number(participant.strikes) || 0) + " strike" +
+                (Number(participant.strikes) === 1 ? "" : "s"));
+          return row;
+        }),
+      );
+    }
     const livePlayers = $("#livePlayers");
     livePlayers?.replaceChildren();
     list.filter((player) => player.id !== guestId).forEach((player) => {
@@ -260,7 +287,9 @@
         const row = document.createElement("div");
         row.className = "live-player is-opponent";
         const score = document.createElement("b");
-        score.textContent = Number(player.score || 0).toLocaleString();
+        score.textContent = series
+          ? (Number(player.strikes ?? player.series?.strikes) || 0) + " strikes"
+          : Number(player.score || 0).toLocaleString();
         row.append(playerIdentity(player), score);
         livePlayers.append(row);
       }
@@ -288,6 +317,17 @@
         host.className = "lobby-player-role";
         host.textContent = "♛ Host";
         badges.append(host);
+      }
+      const seriesParticipant = series?.participants?.find((item) => item.id === player.id);
+      if (seriesParticipant) {
+        const seriesBadge = document.createElement("span");
+        seriesBadge.className = "lobby-player-role series-player-status";
+        seriesBadge.textContent = seriesParticipant.status === "withdrawn"
+          ? "Withdrawn"
+          : (Number(seriesParticipant.strikes) || 0) + " strike" +
+            (Number(seriesParticipant.strikes) === 1 ? "" : "s");
+        badges.append(seriesBadge);
+        if (seriesParticipant.status === "withdrawn") row.classList.add("is-withdrawn");
       }
       row.append(badges);
       lobbyPlayers.append(row);
@@ -317,21 +357,29 @@
     window.wordrushSessionCreator = creator;
     $("#sessionHostControls").hidden = !creator;
     $("#sessionType").disabled = !creator;
-    $("#lobbyStatus").textContent = roomStatus === "playing"
-      ? "Round in progress — new players can scan this QR code and jump in!"
+    $("#lobbyStatus").textContent = roomStatus === "playing" && roomSeries?.phase === "interstitial"
+      ? "Sudden Death Series transition — the roster is frozen."
+      : roomStatus === "playing"
+      ? roomSeries
+        ? "Sudden Death Series in progress — the roster is frozen."
+        : "Round in progress — new players can scan this QR code and jump in!"
       : creator
         ? "You’re the host — pick a game and start when everybody’s ready!"
         : "Waiting for the host to start. Get your fingers ready!";
     const inSession = Boolean(sessionCode);
     const playing = roomStatus === "playing";
+    const seriesPlaying = inSession && creator && playing && roomSeries?.phase === "playing";
+    const seriesInterstitial = inSession && creator && playing && roomSeries?.phase === "interstitial";
     $("#endGame").hidden = inSession
-      ? !creator || !playing
+      ? !creator || !playing || Boolean(seriesInterstitial)
       : false;
     $("#endGame").textContent = inSession ? "Skip round" : "End round";
     $("#endGame").setAttribute(
       "aria-label",
       inSession ? "Skip round" : "End round",
     );
+    $("#cancelSeries").hidden = !seriesPlaying;
+    $("#cancelSeriesTransition").hidden = !seriesInterstitial;
     $("#gameBack").setAttribute(
       "aria-label",
       inSession
@@ -593,6 +641,7 @@
       }
       if (message.type === "room_state" && message.code !== endedSessionCode) {
         roomStatus = message.status;
+        roomSeries = message.series || null;
         creatorId = message.creatorId;
         window.wordrushSessionCreator = creatorId === guestId;
         const restoredResult =
@@ -616,7 +665,7 @@
         }
         window.wordrushCanSetResultsSettings = creatorId === guestId;
         updateLobbyControls();
-        renderPlayers(message.players);
+        renderPlayers(message.players, roomSeries);
         if (message.code && !sessionCode)
           showLobby(message.code, message.creatorId === guestId);
         else
@@ -642,7 +691,16 @@
             message.randomRush,
             message.dictionary,
             message.chain,
+            message.series,
           );
+          sessionDialog(false);
+        }
+        if (
+          message.status === "playing" &&
+          roomSeries?.phase === "interstitial" &&
+          !message.round
+        ) {
+          window.wordrushSeriesState?.(roomSeries);
           sessionDialog(false);
         }
         if (message.status === "finished" && message.results)
@@ -658,8 +716,9 @@
         clearConsentUi();
         roomStatus = "playing";
         creatorId = message.creatorId || creatorId;
+        roomSeries = message.series || null;
         updateLobbyControls();
-        renderPlayers(message.players);
+        renderPlayers(message.players, roomSeries);
         window.wordrushOnlineRound?.(
           message.round,
           message.config,
@@ -667,18 +726,40 @@
           message.randomRush,
           message.dictionary,
           message.chain,
+          message.series,
         );
         sessionDialog(false);
         toast("Round started · " + message.players.length + " players");
       }
       if (message.type === "round_start_now")
         window.wordrushRoundStartNow?.(message);
+      if (message.type === "series_round_finished") {
+        roomStatus = "playing";
+        roomSeries = message.series || roomSeries;
+        renderPlayers(message.series?.participants || message.players, roomSeries);
+        updateLobbyControls();
+        window.wordrushSeriesRoundFinished?.(message);
+        sessionDialog(false);
+      }
+      if (message.type === "series_participant_withdrawn") {
+        roomSeries = message.series || roomSeries;
+        renderPlayers(message.series?.participants || [], roomSeries);
+        updateLobbyControls();
+      }
+      if (message.type === "series_cancelled") {
+        roomSeries = null;
+        roomStatus = "lobby";
+        window.wordrushSeriesCancelled?.(message);
+        updateLobbyControls();
+        showLobbyView();
+        toast("Sudden Death Series cancelled");
+      }
       if (message.type === "word_accepted") {
         if (message.playerId === guestId)
           window.wordrushRecordOnlineWord?.(message.word, message.points, message.chain);
         else
           window.wordrushUpdateOnlineChain?.(message.chain, true);
-        renderPlayers(message.scores);
+        renderPlayers(message.scores, roomSeries);
         const own = message.scores.find((score) => score.id === guestId);
         if (own && $("#gameScore")) $("#gameScore").textContent = own.score;
       }
@@ -710,6 +791,7 @@
         request.resolve(message);
       }
       if (message.type === "round_finished") {
+        roomSeries = message.series || null;
         const accepted = window.wordrushOnlineFinish?.(message.ranking, {
           roundId: message.roundId,
           gameSeconds: message.gameSeconds,
@@ -723,6 +805,10 @@
           results: message.results,
           dictionary: message.dictionary,
           nextRound: message.nextRound,
+          series: message.series,
+          seriesComplete: message.seriesComplete,
+          accountingId: message.accountingId,
+          resultId: message.resultId,
         });
         if (accepted === false) return;
         roomStatus = "finished";
@@ -919,7 +1005,16 @@
       return;
     leaveSession();
   }
+  function requestCancelSeries() {
+    if (!creator || !roomSeries?.id || !sessionCode || !socket || socket.readyState !== WebSocket.OPEN)
+      return;
+    if (!confirm("End this Sudden Death Series and return to the room lobby?")) return;
+    trackMultiplayer("series_cancel_requested", { series_id: roomSeries.id });
+    sendWhenReady({ type: "cancel_series", seriesId: roomSeries.id });
+  }
   $("#sessionLeave")?.addEventListener("click", requestLeave);
+  $("#cancelSeries")?.addEventListener("click", requestCancelSeries);
+  $("#cancelSeriesTransition")?.addEventListener("click", requestCancelSeries);
   $("#exitMultiplayer")?.addEventListener("click", () => {
     if (!creator || confirm("Close this multiplayer session for everyone?"))
       leaveSession();

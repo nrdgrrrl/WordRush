@@ -29,6 +29,7 @@ const {
   hasScoreTarget,
   usesAdultLexicon,
   isPartyRound,
+  isSuddenDeathSeries,
   shouldEndOnRejectedWord,
   RANDOM_RUSH_MODES,
 } = require("./game-config");
@@ -37,6 +38,7 @@ const {
   normalizeSuddenDeathOutcome,
   winnerIds,
 } = require("./sudden-death-outcome");
+const suddenDeathSeries = require("./sudden-death-series");
 const {
   generateQualityRoundBoard,
 } = require("./production-board-generator");
@@ -93,6 +95,7 @@ const generationTestHooks = {
   onResult: null,
   onCancellation: null,
 };
+const SUDDEN_SERIES_MODE = "sudden_series";
 const nodeGenerationScheduler = () =>
   new Promise((resolve) => setImmediate(resolve));
 
@@ -304,6 +307,8 @@ function validateSoloBoardRequest(body) {
     config = configForPreset(mode);
     if (!config) return { valid: false, code: "UNKNOWN_MODE" };
   }
+  if (isSuddenDeathSeries(config))
+    return { valid: false, code: "MULTIPLAYER_ONLY_MODE" };
   if (body.adult !== undefined && typeof body.adult !== "boolean")
     return { valid: false, code: "ADULT_INTENT_INVALID" };
   const adult = usesAdultLexicon(config);
@@ -563,7 +568,18 @@ function publicChainState(round) {
     chainResetLetter: round.chainResetLetter,
   };
 }
+function publicSeriesState(room) {
+  return suddenDeathSeries.publicSeries(room.suddenDeathSeries);
+}
+function publicRoomPlayers(room) {
+  const series = room.suddenDeathSeries;
+  if (!series || !["playing", "interstitial"].includes(series.phase))
+    return [...room.players.values()];
+  const activeIds = new Set(activeSeriesParticipants(room).map((player) => player.id));
+  return [...room.players.values()].filter((player) => activeIds.has(player.id));
+}
 function state(room) {
+  const publicPlayers = publicRoomPlayers(room);
   return {
     type: "room_state",
     code: room.code,
@@ -574,11 +590,12 @@ function state(room) {
     status: room.status,
     results: room.results,
     config: roomConfig(room),
+    series: publicSeriesState(room),
     lastResult: room.status === "finished" ? room.lastResult : null,
     ...(room.status === "playing" && room.round?.config?.chain
       ? { chain: publicChainState(room.round) }
       : {}),
-    players: [...room.players.values()].map((p) => ({
+    players: publicPlayers.map((p) => ({
       id: p.id,
       name: p.name,
       avatar: p.avatar || "🐈",
@@ -598,12 +615,15 @@ function state(room) {
           startsAt: room.round.startedAt,
           introEndsAt: room.round.introEndsAt,
           endsAt: room.round.endsAt,
+          seriesId: room.round.seriesId || null,
+          seriesRoundNumber: room.round.seriesRoundNumber || null,
           dictionary: room.round.dictionary,
         }
       : null,
   };
 }
 function displayState(room) {
+  const publicPlayers = publicRoomPlayers(room);
   return {
     code: room.code,
     mode: room.mode,
@@ -611,8 +631,9 @@ function displayState(room) {
     status: room.status,
     results: room.results,
     config: roomConfig(room),
+    series: publicSeriesState(room),
     lastResult: room.status === "finished" ? room.lastResult : null,
-    players: [...room.players.values()].map((p) => ({
+    players: publicPlayers.map((p) => ({
       name: p.name,
       avatar: p.avatar || "🐈",
       score: playerScore(room, p),
@@ -630,6 +651,8 @@ function displayState(room) {
           startsAt: room.round.startedAt,
           introEndsAt: room.round.introEndsAt,
           endsAt: room.round.endsAt,
+          seriesId: room.round.seriesId || null,
+          seriesRoundNumber: room.round.seriesRoundNumber || null,
           dictionary: room.round.dictionary,
         }
       : null,
@@ -654,10 +677,14 @@ function clearRoomTimer(room) {
 }
 function closeRoom(room, reason) {
   clearRoomTimer(room);
-  if (room.generation) room.generation.cancelled = true;
+  if (room.generation) {
+    room.generation.cancelled = true;
+    releaseSeriesGenerationWait(room.generation);
+  }
   room.generation = null;
   if (room.pendingConsent) cancelPendingConsent(room, "room_closed");
   resetRandomRush(room);
+  room.suddenDeathSeries = null;
   for (const [id, challenge] of preAdmissionChallenges) {
     if (challenge.roomCode === room.code) {
       preAdmissionChallenges.delete(id);
@@ -725,6 +752,302 @@ function resetRandomRush(room) {
   room.randomModeQueue = [];
   room.randomRushEpoch += 1;
 }
+function seriesParticipant(room, playerId) {
+  return suddenDeathSeries.participant(room.suddenDeathSeries, playerId);
+}
+function activeSeriesParticipants(room) {
+  return suddenDeathSeries.activeParticipants(room.suddenDeathSeries);
+}
+function connectedSeriesRoster(room) {
+  return [...room.players.values()]
+    .filter((player) => player.ws?.readyState === 1)
+    .map((player) => ({
+      id: player.id,
+      name: player.name,
+      avatar: player.avatar || "🐈",
+      session: {
+        wins: player.sessionWins,
+        losses: player.sessionLosses,
+        points: player.sessionPoints,
+      },
+    }));
+}
+function removeExcludedSeriesSeats(room, roster) {
+  const rosterIds = new Set(roster.map((player) => player.id));
+  for (const [id, player] of room.players) {
+    if (rosterIds.has(id) || player.ws?.readyState === 1) continue;
+    clearTimeout(player.disconnectTimer);
+    player.disconnectTimer = null;
+    for (const client of clients.values()) {
+      if (client.id === id && client.roomCode === room.code)
+        client.roomCode = null;
+    }
+    room.players.delete(id);
+  }
+}
+function releaseSeriesGenerationWait(generation) {
+  generation?.transitionWaitResolve?.();
+}
+function seriesGenerationMatches(room, generation) {
+  const series = room.suddenDeathSeries;
+  if (!generation?.seriesId) return true;
+  return Boolean(
+    series &&
+    series.id === generation.seriesId &&
+    (series.currentRoundNumber === 1
+      ? series.phase === "playing"
+      : series.phase === "interstitial" &&
+        series.transitionId === generation.seriesTransitionId),
+  );
+}
+function waitForSeriesDeadline(room, generation) {
+  const series = room.suddenDeathSeries;
+  const delay = Math.max(0, Number(series?.nextRoundAt || 0) - Date.now());
+  if (!delay) return Promise.resolve();
+  return new Promise((resolve) => {
+    const release = () => {
+      clearTimeout(generation.transitionWaitTimer);
+      generation.transitionWaitTimer = null;
+      generation.transitionWaitResolve = null;
+      resolve();
+    };
+    generation.transitionWaitResolve = release;
+    generation.transitionWaitTimer = setTimeout(release, delay);
+    generation.transitionWaitTimer.unref?.();
+  });
+}
+function resetPlayersForLobby(room) {
+  for (const player of room.players.values()) {
+    player.score = 0;
+    player.words = [];
+    player.found = new Set();
+  }
+}
+function cancelSuddenDeathSeries(room, reason) {
+  const series = room.suddenDeathSeries;
+  if (!series) return false;
+  suddenDeathSeries.cancelSeries(series, reason);
+  if (room.generation?.seriesId === series.id) {
+    room.generation.cancelled = true;
+    releaseSeriesGenerationWait(room.generation);
+  }
+  clearTimeout(room.round?.timer);
+  room.round = null;
+  room.generation = null;
+  room.suddenDeathSeries = null;
+  room.status = "lobby";
+  room.mode = "classic";
+  room.config = MODE_CONFIG.classic;
+  room.lastResult = null;
+  room.results = { view: "static", speed: "medium" };
+  room.teamScore = 0;
+  resetPlayersForLobby(room);
+  broadcast(room, {
+    type: "series_cancelled",
+    seriesId: series.id,
+    reason: String(reason || "cancelled"),
+  });
+  broadcast(room, state(room));
+  return true;
+}
+function withdrawSeriesParticipant(room, playerId, reason = "withdrawn") {
+  const series = room.suddenDeathSeries;
+  if (!series || series.phase === "finished") return false;
+  if (!suddenDeathSeries.withdrawParticipant(series, playerId)) return false;
+  const player = room.players.get(playerId);
+  clearTimeout(player?.disconnectTimer);
+  if (player) {
+    const playerClient = clients.get(player.ws);
+    if (playerClient) playerClient.roomCode = null;
+  }
+  room.players.delete(playerId);
+  if (activeSeriesParticipants(room).length < suddenDeathSeries.MIN_PLAYERS)
+    return cancelSuddenDeathSeries(room, "insufficient_players");
+  broadcast(room, {
+    type: "series_participant_withdrawn",
+    seriesId: series.id,
+    participantId: playerId,
+    reason,
+    series: publicSeriesState(room),
+  });
+  broadcast(room, state(room));
+  return true;
+}
+function seriesRankedParticipants(series) {
+  return suddenDeathSeries.rankParticipants(series.participants);
+}
+function seriesSessionSnapshot(room, participant) {
+  const player = room.players.get(participant.id);
+  const session = player
+    ? {
+        wins: player.sessionWins,
+        losses: player.sessionLosses,
+        points: player.sessionPoints,
+      }
+    : participant.session;
+  return {
+    wins: Math.max(0, Math.floor(Number(session?.wins) || 0)),
+    losses: Math.max(0, Math.floor(Number(session?.losses) || 0)),
+    points: Math.max(0, Number(session?.points) || 0),
+  };
+}
+function recordSuddenDeathSeriesAccounting(room, series) {
+  if (series.accountingRecorded) return false;
+  series.accountingRecorded = true;
+  const winners = new Set(series.winnerIds);
+  const entries = [];
+  for (const participant of series.participants) {
+    if (participant.status !== "active") continue;
+    const player = room.players.get(participant.id);
+    if (!player) continue;
+    player.sessionPoints += participant.aggregateScore;
+    if (winners.has(participant.id)) player.sessionWins += 1;
+    else player.sessionLosses += 1;
+    const words = participant.acceptedWords || [];
+    entries.push({
+      id: participant.id,
+      name: participant.name,
+      avatar: participant.avatar,
+      score: participant.aggregateScore,
+      words: participant.acceptedWordCount,
+      correct: participant.acceptedWordCount,
+      incorrect: participant.strikes,
+      longest: Math.max(0, ...words.map((item) => item.word.length)),
+      totalWordLength: words.reduce((sum, item) => sum + item.word.length, 0),
+      gameSeconds: participant.gameplaySeconds,
+      multiplayer: true,
+      multiplayerWin: winners.has(participant.id),
+    });
+  }
+  if (entries.length) {
+    try {
+      leaderboard.recordScores(entries);
+    } catch {
+      // Preserve the authoritative one-time guard if persistence is unavailable.
+    }
+  }
+  return true;
+}
+function seriesResultRanking(room, series) {
+  return seriesRankedParticipants(series).map((participant) => ({
+    id: participant.id,
+    name: participant.name,
+    avatar: participant.avatar,
+    score: participant.aggregateScore,
+    words: participant.acceptedWords.map((word) => ({ ...word })),
+    session: seriesSessionSnapshot(room, participant),
+    series: {
+      status: participant.status,
+      strikes: participant.strikes,
+      acceptedWordCount: participant.acceptedWordCount,
+      gameplaySeconds: participant.gameplaySeconds,
+    },
+  }));
+}
+function completeSuddenDeathSeries(room, series, lastRound) {
+  suddenDeathSeries.finalizeSeries(series);
+  recordSuddenDeathSeriesAccounting(room, series);
+  room.status = "finished";
+  room.round = null;
+  const active = activeSeriesParticipants(room);
+  const result = {
+    roundId: lastRound.roundId,
+    seriesId: series.id,
+    accountingId: series.accountingId,
+    resultId: series.resultId,
+    seriesComplete: true,
+    gameSeconds: active.length
+      ? Math.max(...active.map((player) => player.gameplaySeconds))
+      : 0,
+    cooperative: false,
+    randomRush: false,
+    teamScore: 0,
+    stats: {
+      wordsFound: series.participants.reduce(
+        (total, player) => total + player.acceptedWordCount,
+        0,
+      ),
+      rounds: series.totalRounds,
+    },
+    results: room.results,
+    reason: "series_complete",
+    suddenDeath: null,
+    dictionary: roomDictionaryMetadata(room),
+    series: publicSeriesState(room),
+    ranking: seriesResultRanking(room, series),
+  };
+  room.lastResult = result;
+  broadcast(room, { type: "round_finished", ...result });
+  return result;
+}
+function settleSuddenDeathSeriesRound(
+  room,
+  reason = "complete",
+  loserId = null,
+  rejectedWord = "",
+) {
+  const series = room.suddenDeathSeries;
+  const round = room.round;
+  if (
+    !series ||
+    series.phase !== "playing" ||
+    !round ||
+    round.seriesId !== series.id
+  )
+    return false;
+  const transitionId = crypto.randomUUID();
+  const nextRoundAt = Date.now() + suddenDeathSeries.INTERSTITIAL_MS;
+  const recorded = suddenDeathSeries.recordRound(series, {
+    roundNumber: round.seriesRoundNumber,
+    roundId: round.id,
+    reason,
+    loserId,
+    rejectedWord,
+    gameplaySeconds: Math.min(
+      round.config.seconds,
+      Math.max(0, (Date.now() - round.startedAt) / 1000),
+    ),
+    participantIds: round.seriesParticipantIds,
+    transitionId,
+    nextRoundAt,
+  });
+  if (!recorded) return false;
+  clearTimeout(round.timer);
+  const completedRound = series.history.at(-1);
+  room.round = null;
+  if (series.phase === "finished")
+    return completeSuddenDeathSeries(room, series, completedRound);
+  series.currentRoundNumber = round.seriesRoundNumber + 1;
+  if (activeSeriesParticipants(room).length < suddenDeathSeries.MIN_PLAYERS)
+    return cancelSuddenDeathSeries(room, "insufficient_players");
+  broadcast(room, {
+    type: "series_round_finished",
+    seriesId: series.id,
+    roundId: round.id,
+    roundNumber: round.seriesRoundNumber,
+    nextRoundNumber: series.currentRoundNumber,
+    totalRounds: series.totalRounds,
+    reason,
+    loser: loserId
+      ? (() => {
+          const loser = seriesParticipant(room, loserId);
+          return loser ? { id: loser.id, name: loser.name, avatar: loser.avatar } : null;
+        })()
+      : null,
+    rejectedWord: completedRound.rejectedWord,
+    nextRoundAt,
+    series: publicSeriesState(room),
+  });
+  void startRound(
+    room,
+    SUDDEN_SERIES_MODE,
+    configForPreset(SUDDEN_SERIES_MODE),
+    null,
+    null,
+    room.dictionaryId,
+  );
+  return true;
+}
 function retireFinishedRoundForReplacement(room) {
   if (room.status !== "finished") return false;
   clearRoomTimer(room);
@@ -732,6 +1055,7 @@ function retireFinishedRoundForReplacement(room) {
   else resetRandomRush(room);
   room.round = null;
   room.lastResult = null;
+  room.suddenDeathSeries = null;
   room.status = "lobby";
   room.mode = "classic";
   room.config = MODE_CONFIG.classic;
@@ -747,6 +1071,7 @@ function retireFinishedRoundForReplacement(room) {
 function generationFailure(room, generation, result) {
   if (room.generation !== generation) return false;
   room.generation = null;
+  releaseSeriesGenerationWait(generation);
   if (
     room.randomRush &&
     !generation.consentRequestId &&
@@ -769,6 +1094,8 @@ function generationFailure(room, generation, result) {
     failureCode,
     diagnostics,
   });
+  if (generation.seriesId && room.suddenDeathSeries?.id === generation.seriesId)
+    return cancelSuddenDeathSeries(room, "generation_failed");
   broadcast(room, state(room));
   return false;
 }
@@ -868,6 +1195,14 @@ async function startRound(
   dictionaryId = room.dictionaryId || DEFAULT_DICTIONARY_ID,
 ) {
   if (room.generation) return false;
+  const series = room.suddenDeathSeries;
+  const seriesRoundNumber = series?.currentRoundNumber || null;
+  const seriesTransitionId = series?.transitionId || null;
+  if (series && !seriesGenerationMatches(room, {
+    seriesId: series.id,
+    seriesTransitionId,
+  }))
+    return false;
   const pendingConsent = consentRequestId
     ? room.pendingConsent?.requestId === consentRequestId
       ? room.pendingConsent
@@ -899,6 +1234,8 @@ async function startRound(
     token: crypto.randomUUID(),
     consentRequestId,
     randomRushEpoch: room.randomRushEpoch,
+    seriesId: series?.id || null,
+    seriesTransitionId,
     requestedSeed: crypto.randomInt(0x100000000),
     cancelled: false,
     dictionary: dictionary.metadata,
@@ -909,10 +1246,14 @@ async function startRound(
     isCancelled: () => generation.cancelled,
   });
   if (generation.cancelled) {
-    room.generation = null;
+    if (room.generation === generation) room.generation = null;
     return false;
   }
   if (room.generation !== generation) return false;
+  if (!seriesGenerationMatches(room, generation)) {
+    generation.cancelled = true;
+    return false;
+  }
   if (
     consentRequestId &&
     (!pendingConsentContextIsCurrent(room, room.pendingConsent) ||
@@ -940,6 +1281,17 @@ async function startRound(
       diagnostics: result?.diagnostics,
     });
   if (!result.ok) return generationFailure(room, generation, result);
+  if (generation.seriesId && generation.seriesTransitionId) {
+    await waitForSeriesDeadline(room, generation);
+    if (
+      generation.cancelled ||
+      room.generation !== generation ||
+      !seriesGenerationMatches(room, generation)
+    ) {
+      room.generation = null;
+      return false;
+    }
+  }
   room.generation = null;
   if (consentRequestId && room.pendingConsent?.requestId === consentRequestId) {
     clearTimeout(room.pendingConsent.timer);
@@ -948,7 +1300,19 @@ async function startRound(
   room.mode = selected;
   room.config = config;
   room.dictionaryId = dictionary.id;
-  const introEndsAt = Date.now() + ROUND_INTRO_MS;
+  const introDuration = series ? seriesRoundNumber === 1 ? ROUND_INTRO_MS : 0 : ROUND_INTRO_MS;
+  if (series && seriesTransitionId) {
+    series.phase = "playing";
+    series.transitionId = null;
+    series.nextRoundAt = null;
+  }
+  const seriesRoundPlayers = series
+    ? series.participants
+      .filter((participant) => participant.status === "active")
+      .map((participant) => [participant.id, room.players.get(participant.id)])
+      .filter(([, player]) => player)
+    : null;
+  const introEndsAt = Date.now() + introDuration;
   const startedAt = introEndsAt;
   room.round = {
     id: crypto.randomUUID(),
@@ -974,7 +1338,12 @@ async function startRound(
     quality: result.compactDiagnostics || null,
     adultConsentRequestId: consentRequestId,
     consentedPlayerIds,
-    participants: new Map(room.players),
+    participants: series ? new Map(seriesRoundPlayers) : new Map(room.players),
+    seriesId: series?.id || null,
+    seriesRoundNumber,
+    seriesParticipantIds: series
+      ? seriesRoundPlayers.map(([id]) => id)
+      : [],
   };
   room.status = "playing";
   room.teamScore = 0;
@@ -994,7 +1363,7 @@ async function startRound(
     )
       return;
     finishRound(room, "timeout");
-  }, ROUND_INTRO_MS + config.seconds * 1000);
+  }, introDuration + config.seconds * 1000);
   room.round.timer.unref?.();
   broadcast(room, { ...state(room), type: "round_started", config });
   return true;
@@ -1076,6 +1445,13 @@ function scheduleQueuedNextRound(room, nextRound) {
 }
 function finishRound(room, reason = "complete", suddenDeath = null) {
   if (!room.round || room.status !== "playing") return;
+  if (room.suddenDeathSeries?.phase === "playing")
+    return settleSuddenDeathSeriesRound(
+      room,
+      reason === "skipped" ? "host_skip" : reason,
+      suddenDeath?.loser?.id || null,
+      suddenDeath?.rejectedWord || "",
+    );
   clearTimeout(room.round.timer);
   room.status = "finished";
   const recorded = reason !== "skipped";
@@ -1255,6 +1631,13 @@ function expireDisconnectedPlayer(room, player, ws) {
     return schedulePlayerExpiry(room, player, ws);
   if (player.id === room.creatorId)
     return closeRoom(room, "creator_reconnect_timeout");
+  if (
+    room.suddenDeathSeries &&
+    ["playing", "interstitial"].includes(room.suddenDeathSeries.phase)
+  ) {
+    withdrawSeriesParticipant(room, player.id, "expired");
+    return;
+  }
   room.players.delete(player.id);
   if (!room.players.size) {
     clearRoomTimer(room);
@@ -1349,9 +1732,23 @@ async function handle(ws, message) {
       rooms.has(client.roomCode)
     )
       return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
+    const frozenIdentity = room?.suddenDeathSeries
+      ? seriesParticipant(room, client.id)
+      : null;
     const player = room?.players.get(client.id);
-    if (!room || !player || player.reconnectToken !== message.reconnectToken)
+    if (!room)
       return send(ws, { type: "error", code: "RESUME_FAILED" });
+    if (frozenIdentity?.status === "withdrawn")
+      return send(ws, { type: "error", code: "SERIES_PARTICIPANT_WITHDRAWN" });
+    if (!player || player.reconnectToken !== message.reconnectToken)
+      return send(ws, {
+        type: "error",
+        code: room.suddenDeathSeries &&
+          ["playing", "interstitial"].includes(room.suddenDeathSeries.phase) &&
+          !frozenIdentity
+          ? "SERIES_ROSTER_FROZEN"
+          : "RESUME_FAILED",
+      });
     if (
       roomExposesAdultContent(room) &&
       !room.round?.consentedPlayerIds?.includes(client.id)
@@ -1363,6 +1760,10 @@ async function handle(ws, message) {
     client.roomCode = room.code;
     client.name = cleanText(message.name, player.name);
     client.avatar = cleanText(message.avatar, player.avatar || "🐈", 2);
+    if (frozenIdentity) {
+      client.name = frozenIdentity.name;
+      client.avatar = frozenIdentity.avatar;
+    }
     player.name = client.name;
     player.avatar = client.avatar;
     player.ws = ws;
@@ -1392,6 +1793,7 @@ async function handle(ws, message) {
       randomRushIncludeDirty: false,
       randomRushEpoch: 0,
       randomModeQueue: [],
+      suddenDeathSeries: null,
       teamScore: 0,
       players: new Map(),
       displays: new Set(),
@@ -1424,7 +1826,16 @@ async function handle(ws, message) {
     const room = rooms.get(String(message.code || "").toUpperCase());
     if (!room) return send(ws, { type: "error", code: "ROOM_NOT_FOUND" });
     const existingPlayer = room.players.get(client.id);
+    const activeSeries = room.suddenDeathSeries &&
+      ["playing", "interstitial"].includes(room.suddenDeathSeries.phase);
+    const frozenIdentity = room.suddenDeathSeries
+      ? seriesParticipant(room, client.id)
+      : null;
+    if (activeSeries && !frozenIdentity)
+      return send(ws, { type: "error", code: "SERIES_ROSTER_FROZEN" });
     if (existingPlayer) {
+      if (room.suddenDeathSeries && seriesParticipant(room, client.id)?.status === "withdrawn")
+        return send(ws, { type: "error", code: "SERIES_PARTICIPANT_WITHDRAWN" });
       if (existingPlayer.ws?.readyState === 1)
         return send(ws, { type: "error", code: "ALREADY_JOINED" });
       if (existingPlayer.reconnectToken !== message.reconnectToken)
@@ -1445,6 +1856,10 @@ async function handle(ws, message) {
         existingPlayer.avatar || "🐈",
         2,
       );
+      if (frozenIdentity) {
+        client.name = frozenIdentity.name;
+        client.avatar = frozenIdentity.avatar;
+      }
       existingPlayer.name = client.name;
       existingPlayer.avatar = client.avatar;
       existingPlayer.ws = ws;
@@ -1457,6 +1872,17 @@ async function handle(ws, message) {
         reconnectToken: existingPlayer.reconnectToken,
       });
       return broadcast(room, state(room));
+    }
+    if (
+      room.suddenDeathSeries &&
+      ["playing", "interstitial"].includes(room.suddenDeathSeries.phase)
+    ) {
+      return send(ws, {
+        type: "error",
+        code: seriesParticipant(room, client.id)?.status === "withdrawn"
+          ? "SERIES_PARTICIPANT_WITHDRAWN"
+          : "SERIES_ROSTER_FROZEN",
+      });
     }
     if (rejectDetachedRoundParticipant(room, client, ws)) return;
     if (room.players.size >= MAX_PLAYERS)
@@ -1510,6 +1936,19 @@ async function handle(ws, message) {
 
       function admitPlayer() {
         if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
+        if (
+          targetRoom.suddenDeathSeries &&
+          ["playing", "interstitial"].includes(targetRoom.suddenDeathSeries.phase)
+        ) {
+          const frozenIdentity = seriesParticipant(targetRoom, challengeClient.id);
+          send(ws, {
+            type: "error",
+            code: frozenIdentity?.status === "withdrawn"
+              ? "SERIES_PARTICIPANT_WITHDRAWN"
+              : "SERIES_ROSTER_FROZEN",
+          });
+          return null;
+        }
         if (rejectDetachedRoundParticipant(targetRoom, challengeClient, ws)) return null;
         if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
         challengeClient.roomCode = targetRoom.code;
@@ -1638,6 +2077,11 @@ async function handle(ws, message) {
     const identityRoom = rooms.get(client.roomCode);
     if (identityRoom && identityRoom.players.has(client.id)) {
       const player = identityRoom.players.get(client.id);
+      if (
+        identityRoom.suddenDeathSeries &&
+        ["playing", "interstitial"].includes(identityRoom.suddenDeathSeries.phase)
+      )
+        return broadcast(identityRoom, state(identityRoom));
       player.name = client.name;
       player.avatar = client.avatar;
       broadcast(identityRoom, state(identityRoom));
@@ -1649,6 +2093,15 @@ async function handle(ws, message) {
     if (!leavingRoom) return send(ws, { type: "error", code: "NOT_IN_ROOM" });
     if (client.id === leavingRoom.creatorId)
       return send(ws, { type: "error", code: "CREATOR_MUST_END_SESSION" });
+    if (
+      leavingRoom.suddenDeathSeries &&
+      ["playing", "interstitial"].includes(leavingRoom.suddenDeathSeries.phase)
+    ) {
+      withdrawSeriesParticipant(leavingRoom, client.id, "left");
+      client.roomCode = null;
+      send(ws, { type: "session_left" });
+      return;
+    }
     if (
       leavingRoom.pendingConsent &&
       leavingRoom.pendingConsent.requiredPlayerIds.includes(client.id)
@@ -1665,6 +2118,19 @@ async function handle(ws, message) {
     if (client.id !== room.creatorId)
       return send(ws, { type: "error", code: "CREATOR_ONLY" });
     closeRoom(room, "creator_ended");
+    return;
+  }
+  if (type === "cancel_series") {
+    if (client.id !== room.creatorId)
+      return send(ws, { type: "error", code: "CREATOR_ONLY" });
+    const series = room.suddenDeathSeries;
+    if (!series || !["playing", "interstitial"].includes(series.phase))
+      return send(ws, { type: "error", code: "SERIES_NOT_ACTIVE" });
+    if (typeof message.seriesId !== "string" || !message.seriesId)
+      return send(ws, { type: "error", code: "SERIES_ID_REQUIRED" });
+    if (message.seriesId !== series.id)
+      return send(ws, { type: "error", code: "SERIES_STALE" });
+    cancelSuddenDeathSeries(room, "host_cancelled");
     return;
   }
   if (type === "start_game") {
@@ -1709,6 +2175,42 @@ async function handle(ws, message) {
     }
     if (Object.keys(message).some((field) => SERVER_GENERATION_POLICY_FIELDS.has(field)))
       return send(ws, { type: "error", code: "ROUND_GENERATION_POLICY_NOT_ALLOWED" });
+    if (requested === SUDDEN_SERIES_MODE) {
+      const roster = connectedSeriesRoster(room);
+      if (roster.length < suddenDeathSeries.MIN_PLAYERS)
+        return send(ws, {
+          type: "error",
+          code: "SERIES_REQUIRES_MULTIPLAYER",
+          minimumPlayers: suddenDeathSeries.MIN_PLAYERS,
+        });
+      if (room.status === "finished") {
+        retireFinishedRoundForReplacement(room);
+        broadcast(room, state(room));
+      }
+      removeExcludedSeriesSeats(room, roster);
+      if (room.pendingConsent) cancelPendingConsent(room, "configuration_changed");
+      clearQueuedNextRound(room);
+      room.randomRush = false;
+      room.randomRushIncludeDirty = false;
+      room.randomRushEpoch += 1;
+      room.randomModeQueue = [];
+      const seriesId = crypto.randomUUID();
+      room.suddenDeathSeries = suddenDeathSeries.createSuddenDeathSeries(roster, {
+        id: seriesId,
+        accountingId: seriesId,
+      });
+      const started = await startRound(
+        room,
+        SUDDEN_SERIES_MODE,
+        configForPreset(SUDDEN_SERIES_MODE),
+        null,
+        null,
+        requestedDictionaryId,
+      );
+      if (!started && room.suddenDeathSeries?.id === seriesId)
+        cancelSuddenDeathSeries(room, "generation_failed");
+      return started;
+    }
     if (requested === "random") {
       const includeDirty = message.randomRushIncludeDirty === true;
       const previousMode = room.mode;
@@ -1749,6 +2251,10 @@ async function handle(ws, message) {
         return;
       }
       return startRound(room, selected, null, null, null, requestedDictionaryId);
+    }
+    if (room.status === "finished" && room.suddenDeathSeries) {
+      retireFinishedRoundForReplacement(room);
+      broadcast(room, state(room));
     }
     let config;
     if (requested === "custom") {
@@ -1841,13 +2347,29 @@ async function handle(ws, message) {
     return broadcast(room, { type: "results_settings", results: room.results });
   }
   if (type === "submit_word") {
-    if (room.status !== "playing" || !room.round)
+    if (room.status !== "playing" || !room.round) {
+      if (
+        room.suddenDeathSeries &&
+        room.suddenDeathSeries.phase === "interstitial"
+      )
+        return send(ws, { type: "error", code: "ROUND_STALE" });
       return send(ws, { type: "error", code: "ROUND_NOT_PLAYING" });
+    }
+    if (
+      room.suddenDeathSeries &&
+      (room.round.seriesId !== room.suddenDeathSeries.id ||
+        room.suddenDeathSeries.phase !== "playing" ||
+        message.roundId !== room.round.id)
+    )
+      return send(ws, { type: "error", code: "ROUND_STALE" });
     const now = Date.now();
     if (now < room.round.startedAt)
       return send(ws, { type: "error", code: "ROUND_NOT_STARTED" });
     if (now >= room.round.endsAt) return finishRound(room, "timeout");
     const player = room.players.get(client.id);
+    if (!player) return send(ws, { type: "error", code: "SERIES_PARTICIPANT_WITHDRAWN" });
+    if (room.suddenDeathSeries && seriesParticipant(room, client.id)?.status !== "active")
+      return send(ws, { type: "error", code: "SERIES_PARTICIPANT_WITHDRAWN" });
     let result = validateSubmission({
       word: message.word,
       path: message.path,
@@ -1884,12 +2406,16 @@ async function handle(ws, message) {
             }
           : {}),
       });
-      if (shouldEndOnRejectedWord(config, result.reason))
-        finishRound(room, "invalid_word", createSuddenDeathOutcome({
-          loser: player,
-          participants: [...room.round.participants.values()],
-          word: result.word,
-        }));
+      if (shouldEndOnRejectedWord(config, result.reason)) {
+        if (room.suddenDeathSeries)
+          settleSuddenDeathSeriesRound(room, "invalid_word", player.id, result.word);
+        else
+          finishRound(room, "invalid_word", createSuddenDeathOutcome({
+            loser: player,
+            participants: [...room.round.participants.values()],
+            word: result.word,
+          }));
+      }
       return;
     }
     // Validation is synchronous today, but keep the scoring boundary
@@ -1900,6 +2426,13 @@ async function handle(ws, message) {
     if (requiresChain(config))
       advanceChainFields(room.round, result.word);
     player.found.add(result.word);
+    if (room.suddenDeathSeries)
+      suddenDeathSeries.recordAcceptedWord(
+        room.suddenDeathSeries,
+        player.id,
+        result.word,
+        result.points,
+      );
     if (room.mode === "coop") {
       room.teamScore += result.points;
       for (const teammate of room.players.values())
@@ -1919,6 +2452,9 @@ async function handle(ws, message) {
         avatar: p.avatar || "🐈",
         score: playerScore(room, p),
       })),
+      ...(room.suddenDeathSeries
+        ? { series: publicSeriesState(room) }
+        : {}),
       ...(requiresChain(config) ? { chain: publicChainState(room.round) } : {}),
     });
     if (hasScoreTarget(roomConfig(room)) && player.score >= roomConfig(room).target)
@@ -1930,6 +2466,11 @@ async function handle(ws, message) {
       return send(ws, { type: "error", code: "CREATOR_ONLY" });
     if (typeof message.roundId !== "string" || !message.roundId.trim())
       return send(ws, { type: "error", code: "ROUND_ID_REQUIRED" });
+    if (
+      room.suddenDeathSeries &&
+      room.suddenDeathSeries.phase === "interstitial"
+    )
+      return send(ws, { type: "error", code: "ROUND_STALE" });
     if (room.status !== "playing" || !room.round)
       return send(ws, { type: "error", code: "ROUND_NOT_PLAYING" });
     if (message.roundId !== room.round.id)
@@ -1976,6 +2517,7 @@ const server = http.createServer((req, res) => {
     "/multiplayer.css",
     "/game-config.js",
     "/sudden-death-outcome.js",
+    "/sudden-death-series.js",
     "/multiplayer-result-state.js",
     "/board-core.js",
     "/analytics.js",
@@ -2137,6 +2679,10 @@ module.exports = {
   CONSENT_TIMEOUT_MS,
   CHALLENGE_TIMEOUT_MS,
   ROUND_PARTICIPANT_RESERVED,
+  SUDDEN_SERIES_MODE,
+  cancelSuddenDeathSeries,
+  settleSuddenDeathSeriesRound,
+  completeSuddenDeathSeries,
 };
 
 const { Leaderboard } = require("./leaderboard");

@@ -240,6 +240,12 @@
             class="live-players"
             aria-label="Players and scores"
           ></div>
+          <div
+            id="seriesLiveStandings"
+            class="series-live-standings"
+            aria-label="Sudden Death Series strike standings"
+            hidden
+          ></div>
         </div>
         <div class="preview" id="preview">Trace a word</div>
         <div class="chain-status" id="chainStatus" hidden aria-live="polite">
@@ -263,7 +269,18 @@
           <small id="gameHint">Minimum 3 letters</small
           ><button id="gameCastButton" class="game-cast-button" type="button" data-cast-action hidden>📺 Re-cast TV</button
           ><button id="stopRush" hidden>Stop rush</button
+          ><button id="cancelSeries" class="secondary" type="button" hidden>End series</button
           ><button id="endGame">End round</button>
+        </div>
+      </section>
+      <section class="screen" id="seriesTransitionScreen" aria-live="polite">
+        <div class="series-transition-card">
+          <p class="eyebrow">SUDDEN DEATH SERIES</p>
+          <h1 id="seriesTransitionTitle">Round 1 of 10</h1>
+          <p class="series-transition-outcome" id="seriesTransitionOutcome"></p>
+          <div class="series-standings" id="seriesTransitionStandings" aria-label="Series standings"></div>
+          <p class="series-transition-next" id="seriesTransitionNext">Preparing the next board…</p>
+          <button id="cancelSeriesTransition" class="secondary" type="button" hidden>End series</button>
         </div>
       </section>
       <section class="screen" id="resultsScreen">
@@ -289,6 +306,12 @@
           <article><span>🔠</span><div><small>LONGEST WORD</small><b id="resultLongestWord">—</b></div></article>
           <article><span>👑</span><div><small id="resultTopLabel">ROUND LEADER</small><b id="resultTopPlayer">—</b></div></article>
         </div>
+        <section class="series-final-panel" id="seriesFinalPanel" hidden aria-label="Sudden Death Series final results">
+          <p class="eyebrow">SUDDEN DEATH SERIES · 10 ROUNDS</p>
+          <div class="series-final-standings" id="seriesFinalStandings"></div>
+          <h2>Round losses</h2>
+          <ol class="series-history" id="seriesRoundHistory"></ol>
+        </section>
         <div class="results-switcher" aria-label="Results view">
           <button id="staticResultsButton" type="button">🏆 Score party</button
           ><button class="active" id="animatedResultsButton" type="button">✨ Word Party · everyone’s invited</button>
@@ -460,6 +483,7 @@
                 <option value="classic">Classic</option>
                 <option value="minimum">Minimum word</option>
                 <option value="sudden">Sudden death</option>
+                <option value="sudden_series">Sudden Death Series</option>
                 <option value="race">Race mode</option>
                 <option value="coop">Co-op</option>
                 <option value="dirty">Dirty Mode</option>
@@ -714,6 +738,7 @@
     <div id="toast"></div>
     <script src="game-config.js"></script>
     <script src="sudden-death-outcome.js"></script>
+    <script src="sudden-death-series.js"></script>
     <script src="multiplayer-result-state.js"></script>
     <script src="board-core.js"></script>
     <script src="analytics.js"></script>
