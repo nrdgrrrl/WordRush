@@ -1736,6 +1736,7 @@ const server = http.createServer((req, res) => {
     "/game-config.js",
     "/board-core.js",
     "/analytics.js",
+    "/trace-geometry.js",
     "/app.js",
     "/stats.js",
     "/achievements.js",
