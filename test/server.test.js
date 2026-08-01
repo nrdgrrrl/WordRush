@@ -5,7 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
 const WebSocket = require("ws");
-const { COMMON_WORDS, ADULT_WORDS } = require("../game-config");
+const { COMMON_WORDS, ADULT_WORDS, configForPreset } = require("../game-config");
 const { neighbors } = require("../game-core");
 const { DEFAULT_DICTIONARY_ID } = require("../dictionary-registry");
 const { Leaderboard } = require("../leaderboard");
@@ -1707,6 +1707,122 @@ test("automatic Random Rush continuation consumes the stored mode exactly once",
   assert.equal(startedCount, 1);
   assert.equal(room.nextRound, null);
   assert.equal(room.lastResult, null);
+  const closed = next(host, "session_closed");
+  message(host, "end_session");
+  await closed;
+  host.close();
+});
+
+test("queued generation failure leaves an ordinary finished-result recovery path", async () => {
+  const host = await client("queued-generation-failure-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = await startRandomTestRound(host, created.code);
+  room.randomModeQueue = ["storm"];
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  const finished = await finishedPromise;
+  const queued = finished.nextRound;
+  const staleTimer = room.rushTimer;
+  const contracts = [];
+  generationTestHooks.onContract = (contract) => contracts.push(contract);
+  generationTestHooks.selectorLimits = {
+    totalGenerationAttempts: 1,
+    totalPlacementOperations: 1,
+    totalGenerationBacktracks: 1,
+    totalAnalysisOperations: 1,
+    totalYields: 1,
+    operationsPerYield: 1,
+  };
+  const failurePromise = next(host, "error");
+  const statePromise = nextMatching(
+    host,
+    "room_state",
+    (state) =>
+      state.status === "finished" &&
+      state.lastResult?.roundId === finished.roundId &&
+      !state.lastResult?.nextRound,
+  );
+  message(host, "start_next_round", { sourceRoundId: finished.roundId });
+  const [failure, state] = await Promise.all([failurePromise, statePromise]);
+  assert.equal(failure.code, "BOARD_GENERATION_FAILED");
+  assert.equal(contracts.length, 1);
+  assert.equal(contracts[0].size, configForPreset(queued.mode).size);
+  assert.equal(contracts[0].minimum, configForPreset(queued.mode).min);
+  assert.equal(room.status, "finished");
+  assert.equal(room.generation, null);
+  assert.equal(room.nextRound, null);
+  assert.equal(room.lastResult.nextRound, undefined);
+  assert.equal(room.rushTimer, null);
+  assert.equal(state.lastResult.roundId, finished.roundId);
+  assert.equal(state.lastResult.nextRound, undefined);
+  staleTimer?._onTimeout?.();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(room.status, "finished");
+  assert.equal(room.round.id, finished.roundId);
+
+  generationTestHooks.selectorLimits = { operationsPerYield: 2_048 };
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  const started = await startedPromise;
+  assert.equal(started.mode, "classic");
+  assert.equal(room.status, "playing");
+  const closed = next(host, "session_closed");
+  message(host, "end_session");
+  await closed;
+  host.close();
+});
+
+test("failed manual replacement clears an old queue and remains recoverable", async () => {
+  const host = await client("failed-replacement-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = await startRandomTestRound(host, created.code);
+  room.randomModeQueue = ["storm"];
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  const finished = await finishedPromise;
+  const staleTimer = room.rushTimer;
+  generationTestHooks.selectorLimits = {
+    totalGenerationAttempts: 1,
+    totalPlacementOperations: 1,
+    totalGenerationBacktracks: 1,
+    totalAnalysisOperations: 1,
+    totalYields: 1,
+    operationsPerYield: 1,
+  };
+  const failurePromise = next(host, "error");
+  const statePromise = nextMatching(
+    host,
+    "room_state",
+    (state) =>
+      state.status === "finished" &&
+      state.lastResult?.roundId === finished.roundId &&
+      !state.lastResult?.nextRound,
+  );
+  message(host, "start_game", { mode: "classic" });
+  const [failure, state] = await Promise.all([failurePromise, statePromise]);
+  assert.equal(failure.code, "BOARD_GENERATION_FAILED");
+  assert.equal(state.lastResult.nextRound, undefined);
+  assert.equal(room.randomRush, false);
+  assert.equal(room.nextRound, null);
+  assert.equal(room.rushTimer, null);
+  staleTimer?._onTimeout?.();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(room.status, "finished");
+  assert.equal(room.round.id, finished.roundId);
+
+  generationTestHooks.selectorLimits = { operationsPerYield: 2_048 };
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  const started = await startedPromise;
+  assert.equal(started.mode, "classic");
   const closed = next(host, "session_closed");
   message(host, "end_session");
   await closed;

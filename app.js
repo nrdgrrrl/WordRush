@@ -538,6 +538,13 @@ function renderResults(
     target.append(row);
   });
 }
+function renderOnlineResultAction(resultAction, skipped = false) {
+  $("#resultName").textContent = skipped
+    ? resultAction.heading || "Round skipped"
+    : resultAction.heading || profile.name + ".";
+  $("#again").textContent = resultAction.label;
+  $("#again").disabled = resultAction.disabled || resultAction.consumed === true;
+}
 function renderHeroScores(players, skipped = false) {
   const target = $("#resultHeroScores");
   if (!target) return;
@@ -1630,7 +1637,21 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
       (!s.onlineRoundKey && !s.done && s.startedAt && !window.wordrushSessionCode))
   )
     return false;
-  if (s.done && (!result.roundId || s.onlineResultRoundId === result.roundId))
+  if (s.done && result.roundId && s.onlineResultRoundId === result.roundId) {
+    const resultAction = multiplayerResultState.reconcileResultAction({
+      sourceRoundId: result.roundId,
+      currentRoundId: s.onlineRoundKey,
+      nextRound: result.nextRound,
+      isCreator: Boolean(window.wordrushSessionCreator),
+      configForPreset,
+      previousAction: s.onlineResultAction,
+    });
+    s.onlineNextRound = resultAction.nextRound;
+    s.onlineResultAction = resultAction;
+    renderOnlineResultAction(resultAction, result.reason === "skipped");
+    return true;
+  }
+  if (s.done && !result.roundId)
     return true;
   cancelSoloRushContinuation();
   if (!s.onlineRoundKey && result.roundId) s.onlineRoundKey = result.roundId;
@@ -1656,12 +1677,13 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   const ownWords = ownPlayer?.words || [];
   const suddenDeath =
     result.reason === "invalid_word" ? result.suddenDeath : null;
-  const resultAction = multiplayerResultState.normalizeResultAction({
+  const resultAction = multiplayerResultState.reconcileResultAction({
     sourceRoundId: result.roundId || s.onlineRoundKey,
     currentRoundId: s.onlineRoundKey,
     nextRound: result.nextRound,
     isCreator: Boolean(window.wordrushSessionCreator),
     configForPreset,
+    previousAction: s.onlineResultAction,
   });
   s.onlineResultRoundId = result.roundId || s.onlineRoundKey;
   s.onlineNextRound = resultAction.nextRound;
@@ -1744,8 +1766,7 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
     updateProfile();
   }
   show("resultsScreen");
-  $("#again").textContent = resultAction.label;
-  $("#again").disabled = resultAction.disabled;
+  renderOnlineResultAction(resultAction, skipped);
   $("#exitParty").hidden = true;
   emit("round-complete", {
     ranking: normalizedRanking,

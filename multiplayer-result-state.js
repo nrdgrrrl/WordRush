@@ -53,5 +53,30 @@
     };
   }
 
-  return Object.freeze({ normalizeNextRound, normalizeResultAction });
+  function sameNextRound(first, second) {
+    return Boolean(
+      first &&
+      second &&
+      first.sourceRoundId === second.sourceRoundId &&
+      first.mode === second.mode &&
+      first.automaticAt === second.automaticAt,
+    );
+  }
+
+  function reconcileResultAction({ previousAction = null, ...options }) {
+    const action = normalizeResultAction(options);
+    if (!action.nextRound) return action;
+    return {
+      ...action,
+      consumed:
+        sameNextRound(previousAction?.nextRound, action.nextRound) &&
+        previousAction?.consumed === true,
+    };
+  }
+
+  return Object.freeze({
+    normalizeNextRound,
+    normalizeResultAction,
+    reconcileResultAction,
+  });
 });
