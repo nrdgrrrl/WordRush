@@ -527,6 +527,34 @@
           </div>
         </form>
       </dialog>
+      <dialog id="randomRushChoiceDialog">
+        <form method="dialog" id="randomRushChoiceForm" class="random-rush-choice">
+          <div class="dialog-head">
+            <div>
+              <p class="eyebrow">Random Rush</p>
+              <h2>Choose your rush</h2>
+            </div>
+            <button value="cancel" aria-label="Close">×</button>
+          </div>
+          <div class="random-rush-choice-art" aria-hidden="true">
+            <span>🎲</span><b>+</b><span>✦</span>
+          </div>
+          <p class="random-rush-choice-copy">
+            Decide whether Dirty Mode may appear during this room’s current Random Rush run.
+            Every Dirty round still asks everyone to consent before it starts.
+          </p>
+          <div class="random-rush-choice-actions">
+            <button type="button" class="primary" id="randomRushKeepClean">
+              Keep it clean
+              <small>Use the standard Random Rush pool</small>
+            </button>
+            <button type="button" class="secondary" id="randomRushIncludeDirty">
+              Include Dirty Mode
+              <small>Make it eligible for this run</small>
+            </button>
+          </div>
+        </form>
+      </dialog>
       <dialog id="customDialog">
         <form method="dialog" id="customForm" class="rush-builder">
           <div class="dialog-head">

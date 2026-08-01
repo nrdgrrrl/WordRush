@@ -30,6 +30,7 @@ const {
   usesAdultLexicon,
   isPartyRound,
   shouldEndOnRejectedWord,
+  RANDOM_RUSH_MODES,
 } = require("./game-config");
 const {
   createSuddenDeathOutcome,
@@ -86,6 +87,7 @@ const generationTestHooks = {
   limits: null,
   selectorLimits: null,
   lexicon: null,
+  randomMode: null,
   yieldScheduler: null,
   onContract: null,
   onResult: null,
@@ -380,20 +382,30 @@ function admitPlayerToRoom(room, client, ws) {
     room.round.participants.set(client.id, player);
   return player;
 }
-function createPendingConsent(room, mode, config, dictionaryId = room.dictionaryId || DEFAULT_DICTIONARY_ID) {
-  if (!config) return;
+function createPendingConsent(
+  room,
+  mode,
+  config,
+  dictionaryId = room.dictionaryId || DEFAULT_DICTIONARY_ID,
+  options = {},
+) {
+  if (!config) return null;
   const adultConfig = { ...config, adult: true };
   const requestId = crypto.randomUUID();
   const expiresAt = Date.now() + CONSENT_TIMEOUT_MS;
   const connectedIds = [...room.players.values()]
     .filter((p) => p.ws?.readyState === 1)
     .map((p) => p.id);
-  if (!connectedIds.length) return;
+  if (!connectedIds.length) return null;
   room.pendingConsent = {
     requestId,
     mode,
     config: adultConfig,
     dictionaryId,
+    randomRush: options.randomRush === true,
+    randomRushIncludeDirty: options.randomRushIncludeDirty === true,
+    randomRushEpoch: options.randomRushEpoch ?? room.randomRushEpoch,
+    sourceRoundId: options.sourceRoundId || null,
     requiredPlayerIds: connectedIds,
     acceptedPlayerIds: [],
     expiresAt,
@@ -412,6 +424,25 @@ function createPendingConsent(room, mode, config, dictionaryId = room.dictionary
     acceptedPlayerIds: [],
     expiresAt,
   });
+  return room.pendingConsent;
+}
+function pendingConsentContextIsCurrent(room, pending) {
+  if (!pending) return false;
+  if (!pending.randomRush)
+    return room.status === "lobby" && room.round === null;
+  if (
+    !room.randomRush ||
+    room.randomRushEpoch !== pending.randomRushEpoch
+  )
+    return false;
+  if (!pending.sourceRoundId)
+    return room.status === "lobby" && room.round === null;
+  return Boolean(
+    room.status === "finished" &&
+      room.round?.id === pending.sourceRoundId &&
+      room.lastResult?.roundId === pending.sourceRoundId &&
+      !room.nextRound
+  );
 }
 function cancelPendingConsent(room, reason) {
   const pending = room.pendingConsent;
@@ -423,19 +454,21 @@ function cancelPendingConsent(room, reason) {
     room.generation.cancelled = true;
   clearTimeout(pending.timer);
   room.pendingConsent = null;
+  if (pending.randomRush) resetRandomRush(room);
   broadcast(room, {
     type: "adult_consent_cancelled",
     requestId: pending.requestId,
     reason,
   });
+  if (pending.randomRush) broadcast(room, state(room));
 }
 async function completeAdultConsent(room, requestId) {
   const pending = room.pendingConsent;
   if (
     !pending ||
     pending.requestId !== requestId ||
-    room.status !== "lobby" ||
-    room.round !== null
+    !pendingConsentContextIsCurrent(room, pending) ||
+    pending.generating
   )
     return false;
   if (pending.acceptedPlayerIds.length !== pending.requiredPlayerIds.length)
@@ -624,6 +657,7 @@ function closeRoom(room, reason) {
   if (room.generation) room.generation.cancelled = true;
   room.generation = null;
   if (room.pendingConsent) cancelPendingConsent(room, "room_closed");
+  resetRandomRush(room);
   for (const [id, challenge] of preAdmissionChallenges) {
     if (challenge.roomCode === room.code) {
       preAdmissionChallenges.delete(id);
@@ -656,35 +690,69 @@ function closeRoom(room, reason) {
   room.round = null;
   room.status = "closed";
 }
-const RANDOM_MODES = [
-  "classic",
-  "minimum",
-  "sudden",
-  "race",
-  "blitz",
-  "longhaul",
-  "storm",
-  "scoreattack",
-  "chain",
-];
 const ROUND_INTRO_MS = 4000;
-function shuffledModes(previous) {
-  const modes = RANDOM_MODES.filter((mode) => mode !== previous);
+function randomRushModes(room) {
+  return room.randomRushIncludeDirty
+    ? [...RANDOM_RUSH_MODES, "dirty"]
+    : [...RANDOM_RUSH_MODES];
+}
+function shuffledModes(room, previous = room.mode) {
+  const modes = randomRushModes(room).filter((mode) => mode !== previous);
   for (let index = modes.length - 1; index > 0; index--) {
     const swap = crypto.randomInt(index + 1);
     [modes[index], modes[swap]] = [modes[swap], modes[index]];
   }
-  if (RANDOM_MODES.includes(previous)) modes.push(previous);
+  if (randomRushModes(room).includes(previous)) modes.push(previous);
   return modes;
 }
-function randomMode(room) {
-  if (!room.randomModeQueue.length)
-    room.randomModeQueue = shuffledModes(room.mode);
+function randomMode(room, previous = room.mode) {
+  if (!room.randomModeQueue.length) {
+    const forced = generationTestHooks.randomMode?.({
+      pool: randomRushModes(room),
+      previous,
+      room,
+    });
+    room.randomModeQueue = forced && randomRushModes(room).includes(forced)
+      ? [forced]
+      : shuffledModes(room, previous);
+  }
   return room.randomModeQueue.shift();
+}
+function resetRandomRush(room) {
+  clearQueuedNextRound(room);
+  room.randomRush = false;
+  room.randomRushIncludeDirty = false;
+  room.randomModeQueue = [];
+  room.randomRushEpoch += 1;
+}
+function retireFinishedRoundForReplacement(room) {
+  if (room.status !== "finished") return false;
+  clearRoomTimer(room);
+  if (room.pendingConsent) cancelPendingConsent(room, "configuration_changed");
+  else resetRandomRush(room);
+  room.round = null;
+  room.lastResult = null;
+  room.status = "lobby";
+  room.mode = "classic";
+  room.config = MODE_CONFIG.classic;
+  room.results = { view: "static", speed: "medium" };
+  room.teamScore = 0;
+  for (const player of room.players.values()) {
+    player.score = 0;
+    player.words = [];
+    player.found = new Set();
+  }
+  return true;
 }
 function generationFailure(room, generation, result) {
   if (room.generation !== generation) return false;
   room.generation = null;
+  if (
+    room.randomRush &&
+    !generation.consentRequestId &&
+    generation.randomRushEpoch === room.randomRushEpoch
+  )
+    resetRandomRush(room);
   const failureCode = result?.error?.code || "GENERATION_FAILED";
   const creator = room.players.get(room.creatorId);
   const diagnostics = result?.diagnostics
@@ -800,6 +868,13 @@ async function startRound(
   dictionaryId = room.dictionaryId || DEFAULT_DICTIONARY_ID,
 ) {
   if (room.generation) return false;
+  const pendingConsent = consentRequestId
+    ? room.pendingConsent?.requestId === consentRequestId
+      ? room.pendingConsent
+      : null
+    : null;
+  if (consentRequestId && !pendingConsentContextIsCurrent(room, pendingConsent))
+    return false;
   let config = configArg;
   if (!config) {
     const preset = configForPreset(selected);
@@ -823,6 +898,7 @@ async function startRound(
   const generation = {
     token: crypto.randomUUID(),
     consentRequestId,
+    randomRushEpoch: room.randomRushEpoch,
     requestedSeed: crypto.randomInt(0x100000000),
     cancelled: false,
     dictionary: dictionary.metadata,
@@ -837,6 +913,16 @@ async function startRound(
     return false;
   }
   if (room.generation !== generation) return false;
+  if (
+    consentRequestId &&
+    (!pendingConsentContextIsCurrent(room, room.pendingConsent) ||
+      room.pendingConsent?.requestId !== consentRequestId)
+  )
+    return generationFailure(room, generation, {
+      ok: false,
+      error: { code: "CONSENT_INVALIDATED" },
+      diagnostics: result?.diagnostics,
+    });
   const consentedPlayerIds =
     consentRequestId && room.pendingConsent?.requestId === consentRequestId
       ? [...room.pendingConsent.acceptedPlayerIds]
@@ -913,7 +999,7 @@ async function startRound(
   broadcast(room, { ...state(room), type: "round_started", config });
   return true;
 }
-function queuedNextRoundError(room, sourceRoundId) {
+function queuedNextRoundError(room, sourceRoundId, expectedRandomRushEpoch = null) {
   if (typeof sourceRoundId !== "string" || !sourceRoundId.trim())
     return "ROUND_ID_REQUIRED";
   if (
@@ -935,13 +1021,44 @@ function queuedNextRoundError(room, sourceRoundId) {
     room.lastResult.nextRound?.automaticAt !== room.nextRound.automaticAt
   )
     return "ROUND_STALE";
+  if (
+    expectedRandomRushEpoch !== null &&
+    expectedRandomRushEpoch !== room.randomRushEpoch
+  )
+    return "ROUND_STALE";
   if (room.generation) return "BOARD_GENERATING";
   return null;
 }
-async function startQueuedNextRound(room, sourceRoundId) {
-  if (queuedNextRoundError(room, sourceRoundId)) return false;
+async function startQueuedNextRound(
+  room,
+  sourceRoundId,
+  expectedRandomRushEpoch = null,
+) {
+  if (queuedNextRoundError(room, sourceRoundId, expectedRandomRushEpoch))
+    return false;
   const queued = room.nextRound;
+  const randomRushEpoch = room.randomRushEpoch;
   clearQueuedNextRound(room);
+  if (queued.mode === "dirty") {
+    broadcast(room, state(room));
+    const pending = createPendingConsent(
+      room,
+      queued.mode,
+      configForPreset(queued.mode),
+      room.dictionaryId,
+      {
+        randomRush: true,
+        randomRushIncludeDirty: room.randomRushIncludeDirty,
+        randomRushEpoch,
+        sourceRoundId: queued.sourceRoundId,
+      },
+    );
+    if (!pending) {
+      resetRandomRush(room);
+      broadcast(room, state(room));
+    }
+    return Boolean(pending);
+  }
   const started = await startRound(room, queued.mode);
   if (!started && rooms.get(room.code) === room && room.status === "finished")
     broadcast(room, state(room));
@@ -950,9 +1067,10 @@ async function startQueuedNextRound(room, sourceRoundId) {
 function scheduleQueuedNextRound(room, nextRound) {
   clearTimeout(room.rushTimer);
   const delay = Math.max(0, nextRound.automaticAt - Date.now());
+  const randomRushEpoch = room.randomRushEpoch;
   room.rushTimer = setTimeout(() => {
     room.rushTimer = null;
-    void startQueuedNextRound(room, nextRound.sourceRoundId);
+    void startQueuedNextRound(room, nextRound.sourceRoundId, randomRushEpoch);
   }, delay);
   room.rushTimer.unref?.();
 }
@@ -1271,6 +1389,8 @@ async function handle(ws, message) {
       dictionaryId: DEFAULT_DICTIONARY_ID,
       creatorId: null,
       randomRush: false,
+      randomRushIncludeDirty: false,
+      randomRushEpoch: 0,
       randomModeQueue: [],
       teamScore: 0,
       players: new Map(),
@@ -1555,6 +1675,23 @@ async function handle(ws, message) {
     if (room.status === "playing")
       return send(ws, { type: "error", code: "ROUND_PLAYING" });
     const requested = String(message.mode || "classic");
+    const hasRandomRushEligibility = Object.prototype.hasOwnProperty.call(
+      message,
+      "randomRushIncludeDirty",
+    );
+    if (
+      hasRandomRushEligibility &&
+      typeof message.randomRushIncludeDirty !== "boolean"
+    )
+      return send(ws, {
+        type: "error",
+        code: "RANDOM_RUSH_ELIGIBILITY_INVALID",
+      });
+    if (hasRandomRushEligibility && requested !== "random")
+      return send(ws, {
+        type: "error",
+        code: "RANDOM_RUSH_ELIGIBILITY_NOT_ALLOWED",
+      });
     const requestedDictionaryId = message.dictionaryId || room.dictionaryId || DEFAULT_DICTIONARY_ID;
     try {
       getDictionary(requestedDictionaryId);
@@ -1573,12 +1710,45 @@ async function handle(ws, message) {
     if (Object.keys(message).some((field) => SERVER_GENERATION_POLICY_FIELDS.has(field)))
       return send(ws, { type: "error", code: "ROUND_GENERATION_POLICY_NOT_ALLOWED" });
     if (requested === "random") {
-      if (room.pendingConsent)
-        cancelPendingConsent(room, "configuration_changed");
-      clearQueuedNextRound(room);
+      const includeDirty = message.randomRushIncludeDirty === true;
+      const previousMode = room.mode;
+      if (room.status === "finished") {
+        retireFinishedRoundForReplacement(room);
+        broadcast(room, state(room));
+      } else {
+        if (
+          room.pendingConsent?.randomRush &&
+          room.pendingConsent.randomRushIncludeDirty === includeDirty
+        )
+          return send(ws, { type: "error", code: "CONSENT_PENDING" });
+        if (room.pendingConsent)
+          cancelPendingConsent(room, "configuration_changed");
+        clearQueuedNextRound(room);
+      }
       room.randomRush = true;
+      room.randomRushIncludeDirty = includeDirty;
+      room.randomRushEpoch += 1;
       room.randomModeQueue = [];
-      return startRound(room, randomMode(room), null, null, null, requestedDictionaryId);
+      const selected = randomMode(room, previousMode);
+      if (selected === "dirty") {
+        const pending = createPendingConsent(
+          room,
+          selected,
+          configForPreset(selected),
+          requestedDictionaryId,
+          {
+            randomRush: true,
+            randomRushIncludeDirty: includeDirty,
+            randomRushEpoch: room.randomRushEpoch,
+          },
+        );
+        if (!pending) {
+          resetRandomRush(room);
+          broadcast(room, state(room));
+        }
+        return;
+      }
+      return startRound(room, selected, null, null, null, requestedDictionaryId);
     }
     let config;
     if (requested === "custom") {
@@ -1597,6 +1767,8 @@ async function handle(ws, message) {
         cancelPendingConsent(room, "configuration_changed");
       clearQueuedNextRound(room);
       room.randomRush = false;
+      room.randomRushIncludeDirty = false;
+      room.randomRushEpoch += 1;
       room.randomModeQueue = [];
       createPendingConsent(room, requested, config, requestedDictionaryId);
       return;
@@ -1605,6 +1777,8 @@ async function handle(ws, message) {
       cancelPendingConsent(room, "configuration_changed");
     clearQueuedNextRound(room);
     room.randomRush = false;
+    room.randomRushIncludeDirty = false;
+    room.randomRushEpoch += 1;
     room.randomModeQueue = [];
     return startRound(room, requested, config, null, null, requestedDictionaryId);
   }
@@ -1955,6 +2129,8 @@ module.exports = {
   createPendingConsent,
   cancelPendingConsent,
   completeAdultConsent,
+  randomRushModes,
+  startQueuedNextRound,
   createPreAdmissionChallenge,
   cleanupPreAdmission,
   prunePreAdmissionChallenges,

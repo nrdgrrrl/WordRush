@@ -435,10 +435,102 @@ html[data-theme="dark"] #multiplayerDialog {
     linear-gradient(145deg, #211b28 0 58%, #342541 100%);
   box-shadow: 0 14px 0 #f6c85f, 0 28px 90px #000b;
 }
+#randomRushChoiceDialog {
+  width: min(560px, calc(100% - 24px));
+  max-width: 560px;
+  border: 3px solid #2c1c37;
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 92% 5%, #f6c85f 0 5rem, transparent 5.1rem),
+    linear-gradient(145deg, #fff9f0 0 58%, #e8dcff 100%);
+  box-shadow: 0 14px 0 #2c1c37, 0 28px 90px #0008;
+}
+#randomRushChoiceDialog .dialog-head { padding: 22px 28px 10px; }
+#randomRushChoiceDialog .dialog-head h2 {
+  margin-top: 4px;
+  color: #2c1c37;
+  font-size: clamp(2rem, 7vw, 3.2rem);
+  letter-spacing: -0.07em;
+}
+.random-rush-choice {
+  padding-bottom: 28px;
+}
+.random-rush-choice-art {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 28px 12px;
+}
+.random-rush-choice-art span,
+.random-rush-choice-art b {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border: 2px solid #2c1c37;
+  border-radius: 15px;
+  background: #b7f5ff;
+  color: #2c1c37;
+  font-size: 30px;
+  box-shadow: 0 5px 0 #2c1c37;
+}
+.random-rush-choice-art b {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #f7b2a8;
+  font-size: 20px;
+}
+.random-rush-choice-copy {
+  max-width: 42ch;
+  margin: 0 auto 20px;
+  padding: 0 28px;
+  color: #5e5266;
+  line-height: 1.45;
+  text-align: center;
+  font-weight: 700;
+}
+.random-rush-choice-actions {
+  display: grid;
+  gap: 10px;
+  padding: 0 28px;
+}
+.random-rush-choice-actions button {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  width: 100%;
+  padding: 14px 16px;
+  text-align: left;
+}
+.random-rush-choice-actions button small {
+  color: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.78;
+}
 html[data-theme="dark"] #multiplayerDialog .dialog-head h2,
 html[data-theme="dark"] .multiplayer-welcome h3,
 html[data-theme="dark"] .scanner-heading {
   color: #fff9f0;
+}
+html[data-theme="dark"] #randomRushChoiceDialog {
+  border-color: #f6c85f;
+  background:
+    radial-gradient(circle at 92% 5%, #8b6c20 0 5rem, transparent 5.1rem),
+    linear-gradient(145deg, #211b28 0 58%, #342541 100%);
+  box-shadow: 0 14px 0 #f6c85f, 0 28px 90px #000b;
+}
+html[data-theme="dark"] #randomRushChoiceDialog .dialog-head h2,
+html[data-theme="dark"] .random-rush-choice-copy {
+  color: #fff9f0;
+}
+html[data-theme="dark"] .random-rush-choice-art span,
+html[data-theme="dark"] .random-rush-choice-art b {
+  border-color: #fff9f0;
+  box-shadow: 0 5px 0 #fff9f0;
+  color: #2c1c37;
 }
 html[data-theme="dark"] .multiplayer-welcome > p:last-child,
 html[data-theme="dark"] .multiplayer-choice > small,
@@ -464,11 +556,14 @@ html[data-theme="dark"] .multiplayer-code-button {
   color: #fff9f0;
 }
 @media (max-width: 560px) {
-  #multiplayerDialog .dialog-head { padding-inline: 20px; }
+  #multiplayerDialog .dialog-head,
+  #randomRushChoiceDialog .dialog-head { padding-inline: 20px; }
   #sessionChoices,
   .session-scanner { padding-inline: 20px; }
   .multiplayer-choice-grid { grid-template-columns: 1fr; }
   .multiplayer-choice { min-height: 126px; }
+  .random-rush-choice-copy,
+  .random-rush-choice-actions { padding-inline: 20px; }
 }
 @media (max-width: 380px) {
   .waiting-lobby {

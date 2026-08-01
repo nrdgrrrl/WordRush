@@ -41,6 +41,7 @@ const {
   createPendingConsent,
   cancelPendingConsent,
   completeAdultConsent,
+  randomRushModes,
   prunePreAdmissionChallenges,
 } = require("../server");
 function message(ws, type, payload = {}) {
@@ -161,6 +162,48 @@ async function startRandomTestRound(host, code) {
   await startedPromise;
   return rooms.get(code);
 }
+async function startForcedRandomTestRound(
+  host,
+  code,
+  selected,
+  includeDirty = false,
+) {
+  generationTestHooks.randomMode = () => selected;
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", {
+    mode: "random",
+    randomRushIncludeDirty: includeDirty,
+  });
+  await startedPromise;
+  return rooms.get(code);
+}
+async function queueDirtyRandomTransition(host, room) {
+  room.randomModeQueue = ["dirty"];
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  const finished = await finishedPromise;
+  const staleTimer = room.rushTimer;
+  clearTimeout(staleTimer);
+  room.rushTimer = null;
+  return { finished, staleTimer };
+}
+async function startQueuedDirtyConsentTestRoom(names) {
+  const { host, guests, code } = await createRoomWithPlayers(names);
+  const room = await startForcedRandomTestRound(host, code, "classic", true);
+  const { finished, staleTimer } = await queueDirtyRandomTransition(host, room);
+  const oldResultState = nextMatching(
+    host,
+    "room_state",
+    (state) =>
+      state.status === "finished" &&
+      state.lastResult?.roundId === finished.roundId &&
+      !state.lastResult?.nextRound,
+  );
+  const consentPromise = next(host, "adult_consent_request");
+  message(host, "start_next_round", { sourceRoundId: finished.roundId });
+  const [state, consent] = await Promise.all([oldResultState, consentPromise]);
+  return { host, guests, code, room, finished, staleTimer, state, consent };
+}
 async function startRoundImmediately(host) {
   const startedPromise = next(host, "round_start_now");
   message(host, "start_round_now");
@@ -207,6 +250,7 @@ test.afterEach(() => {
   generationTestHooks.limits = null;
   generationTestHooks.selectorLimits = null;
   generationTestHooks.lexicon = null;
+  generationTestHooks.randomMode = null;
   generationTestHooks.yieldScheduler = null;
   generationTestHooks.onContract = null;
   generationTestHooks.onResult = null;
@@ -1686,6 +1730,505 @@ test("Random Rush reports each deterministic queued mode at finish", async () =>
     await closed;
     host.close();
   }
+});
+
+test("Random Rush eligibility is private, strict, and never selects Dirty when omitted or false", async () => {
+  assert.equal(randomRushModes({ randomRushIncludeDirty: false }).includes("dirty"), false);
+  assert.equal(randomRushModes({ randomRushIncludeDirty: true }).includes("dirty"), true);
+
+  const host = await client("random-eligibility-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = rooms.get(created.code);
+
+  const invalid = next(host, "error");
+  message(host, "start_game", {
+    mode: "random",
+    randomRushIncludeDirty: "true",
+  });
+  assert.equal((await invalid).code, "RANDOM_RUSH_ELIGIBILITY_INVALID");
+  assert.equal(room.randomRush, false);
+  assert.equal(room.randomRushIncludeDirty, false);
+
+  const notAllowed = next(host, "error");
+  message(host, "start_game", {
+    mode: "classic",
+    randomRushIncludeDirty: false,
+  });
+  assert.equal((await notAllowed).code, "RANDOM_RUSH_ELIGIBILITY_NOT_ALLOWED");
+  assert.equal(room.status, "lobby");
+
+  generationTestHooks.randomMode = () => "dirty";
+  const started = next(host, "round_started");
+  message(host, "start_game", { mode: "random" });
+  assert.notEqual((await started).mode, "dirty");
+  assert.equal(room.randomRushIncludeDirty, false);
+
+  room.randomModeQueue = [];
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  const finished = await finishedPromise;
+  assert.notEqual(finished.nextRound.mode, "dirty");
+  assert.equal(room.nextRound.mode === "dirty", false);
+  clearTimeout(room.rushTimer);
+  room.rushTimer = null;
+
+  const replacementStarted = next(host, "round_started");
+  message(host, "start_game", {
+    mode: "random",
+    randomRushIncludeDirty: false,
+  });
+  assert.notEqual((await replacementStarted).mode, "dirty");
+  assert.equal(room.randomRushIncludeDirty, false);
+  room.randomModeQueue = [];
+  const replacementFinishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  const replacementFinished = await replacementFinishedPromise;
+  assert.notEqual(replacementFinished.nextRound.mode, "dirty");
+  clearTimeout(room.rushTimer);
+  room.rushTimer = null;
+
+  await closeTestRoom(host, [host]);
+  host.close();
+});
+
+test("eligible Random Rush retires a finished non-Random result before initial Dirty consent", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "finished-replacement-host",
+    "finished-replacement-guest",
+  ]);
+  const startedRace = next(host, "round_started");
+  message(host, "start_game", { mode: "race" });
+  await startedRace;
+  const room = rooms.get(code);
+  const playerIds = [...room.players.keys()];
+  const finished = await finishTestRound(host, [host, guests[0]]);
+  const sessionTotals = new Map(
+    [...room.players].map(([id, player]) => [
+      id,
+      {
+        wins: player.sessionWins,
+        losses: player.sessionLosses,
+        points: player.sessionPoints,
+      },
+    ]),
+  );
+  assert.equal(room.status, "finished");
+  assert.equal(room.randomRush, false);
+
+  let selectorPrevious;
+  generationTestHooks.randomMode = ({ previous }) => {
+    selectorPrevious = previous;
+    return "dirty";
+  };
+  const lobbyStatePromise = nextMatching(
+    host,
+    "room_state",
+    (state) =>
+      state.status === "lobby" &&
+      state.round === null &&
+      state.lastResult === null,
+  );
+  const consentPromise = next(host, "adult_consent_request");
+  message(host, "start_game", {
+    mode: "random",
+    randomRushIncludeDirty: true,
+  });
+  const [lobbyState, consent] = await Promise.all([
+    lobbyStatePromise,
+    consentPromise,
+  ]);
+  assert.deepEqual(
+    lobbyState.players.map((player) => player.id),
+    playerIds,
+  );
+  assert.equal(lobbyState.mode, "classic");
+  assert.deepEqual(lobbyState.config, configForPreset("classic"));
+  assert.equal(selectorPrevious, "race");
+  assert.equal(room.round, null);
+  assert.equal(room.lastResult, null);
+  for (const [id, totals] of sessionTotals) {
+    const player = room.players.get(id);
+    assert.deepEqual(
+      {
+        wins: player.sessionWins,
+        losses: player.sessionLosses,
+        points: player.sessionPoints,
+      },
+      totals,
+    );
+  }
+  assert.equal(consent.mode, "dirty");
+  assert.equal(room.status, "lobby");
+
+  let startedCount = 0;
+  const countStarted = (raw) => {
+    if (JSON.parse(raw).type === "round_started") startedCount += 1;
+  };
+  host.on("message", countStarted);
+  const hostAccepted = next(host, "adult_consent_player_accepted");
+  const guestAccepted = next(guests[0], "adult_consent_player_accepted");
+  const startedPromise = next(host, "round_started");
+  message(host, "adult_consent_response", {
+    requestId: consent.requestId,
+    accepted: true,
+  });
+  await hostAccepted;
+  message(guests[0], "adult_consent_response", {
+    requestId: consent.requestId,
+    accepted: true,
+  });
+  await guestAccepted;
+  const started = await startedPromise;
+  host.off("message", countStarted);
+  assert.equal(started.mode, "dirty");
+  assert.equal(startedCount, 1);
+  assert.equal(room.round.adultConsentRequestId, consent.requestId);
+  assert.equal(room.players.size, playerIds.length);
+  assert.equal(room.lastResult, null);
+  assert.notEqual(finished.roundId, room.round.id);
+
+  await closeTestRoom(host, [host, ...guests]);
+  host.close();
+  guests[0].close();
+});
+
+test("initial eligible Dirty selection waits for every player before generation", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "initial-dirty-host",
+    "initial-dirty-guest",
+  ]);
+  generationTestHooks.randomMode = () => "dirty";
+  const room = rooms.get(code);
+  const consentPromise = next(host, "adult_consent_request");
+  message(host, "start_game", {
+    mode: "random",
+    randomRushIncludeDirty: true,
+  });
+  const consent = await consentPromise;
+  assert.equal(room.randomRush, true);
+  assert.equal(room.randomRushIncludeDirty, true);
+  assert.equal(room.status, "lobby");
+  assert.equal(room.round, null);
+  assert.equal(room.generation, null);
+
+  const hostAccepted = next(host, "adult_consent_player_accepted");
+  message(host, "adult_consent_response", {
+    requestId: consent.requestId,
+    accepted: true,
+  });
+  await hostAccepted;
+  assert.equal(room.round, null);
+
+  const guestAccepted = next(guests[0], "adult_consent_player_accepted");
+  const startedPromise = next(host, "round_started");
+  message(guests[0], "adult_consent_response", {
+    requestId: consent.requestId,
+    accepted: true,
+  });
+  await guestAccepted;
+  const started = await startedPromise;
+  assert.equal(started.mode, "dirty");
+  assert.equal(started.randomRush, true);
+  assert.equal(room.round.adultConsentRequestId, consent.requestId);
+  assert.deepEqual(
+    room.round.consentedPlayerIds.sort(),
+    ["initial-dirty-host", "initial-dirty-guest"].sort(),
+  );
+
+  await closeTestRoom(host, [host, guests[0]]);
+  host.close();
+  guests[0].close();
+});
+
+test("queued Dirty Random Rush clears and broadcasts the old result before consent, then starts exactly once", async () => {
+  const host = await client("queued-dirty-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = await startForcedRandomTestRound(
+    host,
+    created.code,
+    "classic",
+    true,
+  );
+  const { finished, staleTimer } = await queueDirtyRandomTransition(host, room);
+  assert.equal(finished.nextRound.mode, "dirty");
+
+  const oldResultState = nextMatching(
+    host,
+    "room_state",
+    (state) =>
+      state.status === "finished" &&
+      state.lastResult?.roundId === finished.roundId &&
+      !state.lastResult?.nextRound,
+  );
+  const consentPromise = next(host, "adult_consent_request");
+  message(host, "start_next_round", { sourceRoundId: finished.roundId });
+  const [state, consent] = await Promise.all([oldResultState, consentPromise]);
+  assert.equal(state.lastResult.nextRound, undefined);
+  assert.equal(room.nextRound, null);
+  assert.equal(room.pendingConsent.sourceRoundId, finished.roundId);
+  assert.equal(room.status, "finished");
+
+  staleTimer?._onTimeout?.();
+  const duplicateStart = next(host, "error");
+  message(host, "start_next_round", { sourceRoundId: finished.roundId });
+  assert.equal((await duplicateStart).code, "NEXT_ROUND_UNAVAILABLE");
+
+  const guest = await client("queued-dirty-pre-admission");
+  const challengePromise = next(guest, "adult_pre_admission_challenge");
+  message(guest, "join_room", { code: created.code });
+  const challenge = await challengePromise;
+  const preAcceptedPromise = next(guest, "adult_pre_admission_accepted");
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "adult_consent_response", {
+    challengeId: challenge.challengeId,
+    accepted: true,
+  });
+  await preAcceptedPromise;
+  await joinedPromise;
+  assert.equal(room.pendingConsent.acceptedPlayerIds.includes("queued-dirty-pre-admission"), true);
+  assert.equal(room.round.participants.has("queued-dirty-pre-admission"), false);
+
+  let startedCount = 0;
+  const countStarted = (raw) => {
+    if (JSON.parse(raw).type === "round_started") startedCount += 1;
+  };
+  host.on("message", countStarted);
+  const startedPromise = next(host, "round_started");
+  const acceptedPromise = next(host, "adult_consent_player_accepted");
+  message(host, "adult_consent_response", {
+    requestId: consent.requestId,
+    accepted: true,
+  });
+  await acceptedPromise;
+  const started = await startedPromise;
+  host.off("message", countStarted);
+  assert.equal(started.mode, "dirty");
+  assert.equal(startedCount, 1);
+
+  const duplicateAccept = next(host, "error");
+  message(host, "adult_consent_response", {
+    requestId: consent.requestId,
+    accepted: true,
+  });
+  assert.equal((await duplicateAccept).code, "CONSENT_MISMATCH");
+
+  await closeTestRoom(host, [host, guest]);
+  host.close();
+  guest.close();
+});
+
+test("initial Random Rush Dirty consent decline, cancel, and timeout reset the run", async () => {
+  generationTestHooks.randomMode = () => "dirty";
+  const { host, guests, code } = await createRoomWithPlayers([
+    "initial-decline-host",
+    "initial-decline-guest",
+  ]);
+  const room = rooms.get(code);
+  const consentPromise = next(host, "adult_consent_request");
+  message(host, "start_game", {
+    mode: "random",
+    randomRushIncludeDirty: true,
+  });
+  const consent = await consentPromise;
+  const cancelled = next(host, "adult_consent_cancelled");
+  message(guests[0], "adult_consent_response", {
+    requestId: consent.requestId,
+    accepted: false,
+  });
+  assert.equal((await cancelled).reason, "player_declined");
+  assert.equal(room.status, "lobby");
+  assert.equal(room.round, null);
+  assert.equal(room.pendingConsent, null);
+  assert.equal(room.randomRush, false);
+  assert.equal(room.randomRushIncludeDirty, false);
+
+  const started = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  await started;
+  await closeTestRoom(host, [host, guests[0]]);
+  host.close();
+  guests[0].close();
+
+  const cancelHost = await client("initial-cancel-host");
+  const cancelCreated = next(cancelHost, "room_created");
+  const cancelLobby = next(cancelHost, "room_state");
+  message(cancelHost, "create_room");
+  const cancelRoomCreated = await cancelCreated;
+  await cancelLobby;
+  const cancelRoom = rooms.get(cancelRoomCreated.code);
+  const cancelConsent = next(cancelHost, "adult_consent_request");
+  message(cancelHost, "start_game", {
+    mode: "random",
+    randomRushIncludeDirty: true,
+  });
+  const pending = await cancelConsent;
+  const hostCancelled = next(cancelHost, "adult_consent_cancelled");
+  message(cancelHost, "adult_consent_cancel", { requestId: pending.requestId });
+  assert.equal((await hostCancelled).reason, "host_cancelled");
+  assert.equal(cancelRoom.randomRush, false);
+  assert.equal(cancelRoom.randomRushIncludeDirty, false);
+  await closeTestRoom(cancelHost, [cancelHost]);
+  cancelHost.close();
+
+  const timeoutHost = await client("initial-timeout-host");
+  const timeoutCreated = next(timeoutHost, "room_created");
+  const timeoutLobby = next(timeoutHost, "room_state");
+  message(timeoutHost, "create_room");
+  const timeoutRoomCreated = await timeoutCreated;
+  await timeoutLobby;
+  const timeoutRoom = rooms.get(timeoutRoomCreated.code);
+  const timeoutConsent = next(timeoutHost, "adult_consent_request");
+  message(timeoutHost, "start_game", {
+    mode: "random",
+    randomRushIncludeDirty: true,
+  });
+  await timeoutConsent;
+  const timedOut = next(timeoutHost, "adult_consent_cancelled");
+  timeoutRoom.pendingConsent.timer?._onTimeout?.();
+  assert.equal((await timedOut).reason, "timeout");
+  assert.equal(timeoutRoom.randomRush, false);
+  assert.equal(timeoutRoom.randomRushIncludeDirty, false);
+  await closeTestRoom(timeoutHost, [timeoutHost]);
+  timeoutHost.close();
+});
+
+test("queued Dirty consent cancellation and disconnect preserve the source result and leave recovery usable", async () => {
+  let prepared = await startQueuedDirtyConsentTestRoom(["queued-cancel-host"]);
+  const cancel = next(prepared.host, "adult_consent_cancelled");
+  message(prepared.host, "adult_consent_cancel", {
+    requestId: prepared.consent.requestId,
+  });
+  assert.equal((await cancel).reason, "host_cancelled");
+  assert.equal(prepared.room.status, "finished");
+  assert.equal(prepared.room.lastResult.roundId, prepared.finished.roundId);
+  assert.equal(prepared.room.lastResult.nextRound, undefined);
+  assert.equal(prepared.room.randomRush, false);
+  assert.equal(prepared.room.pendingConsent, null);
+  await closeTestRoom(prepared.host, [prepared.host]);
+  prepared.host.close();
+
+  prepared = await startQueuedDirtyConsentTestRoom([
+    "queued-disconnect-host",
+    "queued-disconnect-guest",
+  ]);
+  const disconnected = next(prepared.host, "adult_consent_cancelled");
+  prepared.guests[0].close();
+  assert.equal((await disconnected).reason, "player_disconnected");
+  assert.equal(prepared.room.status, "finished");
+  assert.equal(prepared.room.lastResult.roundId, prepared.finished.roundId);
+  assert.equal(prepared.room.lastResult.nextRound, undefined);
+  assert.equal(prepared.room.randomRush, false);
+  assert.equal(prepared.room.pendingConsent, null);
+  await closeTestRoom(prepared.host, [prepared.host]);
+  prepared.host.close();
+  prepared.guests[0].close();
+});
+
+test("queued Dirty generation failure and host replacement clear the run without stale starts", async () => {
+  let prepared = await startQueuedDirtyConsentTestRoom(["queued-failure-host"]);
+  generationTestHooks.selectorLimits = {
+    totalGenerationAttempts: 1,
+    totalPlacementOperations: 1,
+    totalGenerationBacktracks: 1,
+    totalAnalysisOperations: 1,
+    totalYields: 1,
+    operationsPerYield: 1,
+  };
+  const failure = next(prepared.host, "error");
+  const cancelled = next(prepared.host, "adult_consent_cancelled");
+  message(prepared.host, "adult_consent_response", {
+    requestId: prepared.consent.requestId,
+    accepted: true,
+  });
+  assert.equal((await failure).code, "BOARD_GENERATION_FAILED");
+  assert.equal((await cancelled).reason, "generation_failed");
+  assert.equal(prepared.room.status, "finished");
+  assert.equal(prepared.room.lastResult.roundId, prepared.finished.roundId);
+  assert.equal(prepared.room.lastResult.nextRound, undefined);
+  assert.equal(prepared.room.randomRush, false);
+  assert.equal(prepared.room.pendingConsent, null);
+  generationTestHooks.selectorLimits = { operationsPerYield: 2_048 };
+  const recovered = next(prepared.host, "round_started");
+  message(prepared.host, "start_game", { mode: "classic" });
+  assert.equal((await recovered).mode, "classic");
+  await closeTestRoom(prepared.host, [prepared.host]);
+  prepared.host.close();
+
+  prepared = await startQueuedDirtyConsentTestRoom(["queued-replacement-host"]);
+  const replacementCancelled = next(prepared.host, "adult_consent_cancelled");
+  const replacementStarted = next(prepared.host, "round_started");
+  message(prepared.host, "start_game", { mode: "classic" });
+  assert.equal((await replacementCancelled).reason, "configuration_changed");
+  assert.equal((await replacementStarted).mode, "classic");
+  assert.equal(prepared.room.randomRush, false);
+  assert.equal(prepared.room.randomRushIncludeDirty, false);
+  assert.equal(prepared.room.pendingConsent, null);
+  const staleAccept = next(prepared.host, "error");
+  message(prepared.host, "adult_consent_response", {
+    requestId: prepared.consent.requestId,
+    accepted: true,
+  });
+  assert.equal((await staleAccept).code, "CONSENT_MISMATCH");
+  await closeTestRoom(prepared.host, [prepared.host]);
+  prepared.host.close();
+});
+
+test("Random Rush reconnect preserves active Dirty consent and stale queued callbacks cannot revive a run", async () => {
+  const host = await client("random-reconnect-host");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const room = await startForcedRandomTestRound(host, created.code, "classic", true);
+  const reconnectToken = room.players.get("random-reconnect-host").reconnectToken;
+  const { finished, staleTimer } = await queueDirtyRandomTransition(host, room);
+  const consentPromise = next(host, "adult_consent_request");
+  const statePromise = nextMatching(
+    host,
+    "room_state",
+    (state) => state.status === "finished" && !state.lastResult?.nextRound,
+  );
+  message(host, "start_next_round", { sourceRoundId: finished.roundId });
+  const consent = await consentPromise;
+  await statePromise;
+  staleTimer?._onTimeout?.();
+  const startedPromise = next(host, "round_started");
+  message(host, "adult_consent_response", {
+    requestId: consent.requestId,
+    accepted: true,
+  });
+  await startedPromise;
+  assert.equal(room.randomRush, true);
+  assert.equal(room.randomRushIncludeDirty, true);
+
+  host.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const resumed = await client("random-reconnect-host");
+  const resumedPromise = next(resumed, "room_resumed");
+  const resumedStatePromise = next(resumed, "room_state");
+  message(resumed, "resume_room", {
+    code: created.code,
+    reconnectToken,
+  });
+  await resumedPromise;
+  const resumedState = await resumedStatePromise;
+  assert.equal(resumedState.status, "playing");
+  assert.equal(resumedState.mode, "dirty");
+  assert.equal(room.randomRushIncludeDirty, true);
+
+  const closed = next(resumed, "session_closed");
+  message(resumed, "end_session");
+  await closed;
+  resumed.close();
 });
 
 test("automatic Random Rush continuation consumes the stored mode exactly once", async () => {

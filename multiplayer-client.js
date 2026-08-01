@@ -29,6 +29,7 @@
   let scannerRun = 0;
   let pendingConsentRequestId = "";
   let pendingChallengeId = "";
+  let randomRushChoice = null;
   const $ = (selector) => document.querySelector(selector);
   const goHome = () =>
     document.querySelector('[data-screen="homeScreen"]')?.click();
@@ -45,6 +46,42 @@
     if (actions) actions.hidden = true;
     if (cancel) cancel.hidden = true;
     players?.replaceChildren();
+  }
+  function clearRandomRushChoice() {
+    randomRushChoice = null;
+    const dialog = $("#randomRushChoiceDialog");
+    if (dialog?.open) dialog.close();
+  }
+  function openRandomRushChoice(dictionaryId = null) {
+    const dialog = $("#randomRushChoiceDialog");
+    if (!dialog || !creator || !sessionCode || !socket || socket.readyState !== WebSocket.OPEN)
+      return false;
+    if (randomRushChoice) return true;
+    randomRushChoice = { dictionaryId };
+    dialog.showModal();
+    $("#randomRushKeepClean")?.focus();
+    return true;
+  }
+  function submitRandomRushChoice(includeDirty) {
+    const choice = randomRushChoice;
+    if (!choice) return;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      clearRandomRushChoice();
+      toast("The multiplayer session is reconnecting");
+      return;
+    }
+    randomRushChoice = null;
+    const dialog = $("#randomRushChoiceDialog");
+    if (dialog?.open) dialog.close();
+    trackMultiplayer("random_rush_eligibility", {
+      include_dirty: includeDirty,
+    });
+    sendWhenReady({
+      type: "start_game",
+      mode: "random",
+      randomRushIncludeDirty: includeDirty,
+      ...(choice.dictionaryId ? { dictionaryId: choice.dictionaryId } : {}),
+    });
   }
   const identity = () =>
     window.wordrushProfile
@@ -175,6 +212,7 @@
     window.wordrushSessionCreator = false;
     window.wordrushAbandonOnlineRound?.();
     pendingSession = false;
+    clearRandomRushChoice();
     localStorage.removeItem("wordrush-room");
     localStorage.removeItem("wordrush-room-token");
     clearConsentUi();
@@ -741,6 +779,7 @@
         clearSession();
         return goHome();
       }
+      clearRandomRushChoice();
       scheduleReconnect();
     });
     return activeSocket;
@@ -764,6 +803,7 @@
     });
   };
   window.wordrushStartSessionGame = ({ mode, config, randomRush, dictionaryId } = {}) => {
+    const isRandomRush = Boolean(randomRush || mode === "random");
     if (!sessionCode && !pendingSession && !savedSession()) return false;
     if (!sessionCode || !socket || socket.readyState !== WebSocket.OPEN) {
       pendingSession = true;
@@ -778,9 +818,13 @@
       toast("The multiplayer round is already running");
       return true;
     }
+    if (isRandomRush) {
+      openRandomRushChoice(dictionaryId);
+      return true;
+    }
     sendWhenReady({
       type: "start_game",
-      mode: randomRush ? "random" : mode,
+      mode,
       config,
       ...(dictionaryId ? { dictionaryId } : {}),
     });
@@ -865,7 +909,7 @@
   $("#sessionStart")?.addEventListener("click", () => {
     const mode = $("#sessionType").value;
     trackMultiplayer("start_requested", { mode });
-    window.wordrushStartSessionGame({ mode });
+    window.wordrushStartSessionGame({ mode, randomRush: mode === "random" });
   });
   function requestLeave() {
     if (
@@ -900,6 +944,15 @@
       String(safe % 60).padStart(2, "0")
     );
   }
+  $("#randomRushKeepClean")?.addEventListener("click", () =>
+    submitRandomRushChoice(false),
+  );
+  $("#randomRushIncludeDirty")?.addEventListener("click", () =>
+    submitRandomRushChoice(true),
+  );
+  $("#randomRushChoiceDialog")?.addEventListener("close", () => {
+    randomRushChoice = null;
+  });
   function renderConsentPlayers(requiredIds, acceptedIds) {
     const target = $("#consentPlayers");
     if (!target) return;
