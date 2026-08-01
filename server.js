@@ -604,9 +604,15 @@ function broadcast(room, message) {
   for (const player of room.players.values()) send(player.ws, message);
   for (const ws of room.displays) send(ws, displayUpdate(room, message.type));
 }
+function clearQueuedNextRound(room) {
+  clearTimeout(room.rushTimer);
+  room.rushTimer = null;
+  room.nextRound = null;
+  if (room.lastResult?.nextRound) delete room.lastResult.nextRound;
+}
 function clearRoomTimer(room) {
   clearTimeout(room.round?.timer);
-  clearTimeout(room.rushTimer);
+  clearQueuedNextRound(room);
 }
 function closeRoom(room, reason) {
   clearRoomTimer(room);
@@ -902,6 +908,49 @@ async function startRound(
   broadcast(room, { ...state(room), type: "round_started", config });
   return true;
 }
+function queuedNextRoundError(room, sourceRoundId) {
+  if (typeof sourceRoundId !== "string" || !sourceRoundId.trim())
+    return "ROUND_ID_REQUIRED";
+  if (
+    !room ||
+    rooms.get(room.code) !== room ||
+    !room.randomRush ||
+    room.status !== "finished" ||
+    !room.round ||
+    !room.lastResult ||
+    !room.nextRound
+  )
+    return "NEXT_ROUND_UNAVAILABLE";
+  if (
+    sourceRoundId !== room.lastResult.roundId ||
+    sourceRoundId !== room.round.id ||
+    room.nextRound.sourceRoundId !== sourceRoundId ||
+    room.lastResult.nextRound?.sourceRoundId !== sourceRoundId ||
+    room.lastResult.nextRound?.mode !== room.nextRound.mode ||
+    room.lastResult.nextRound?.automaticAt !== room.nextRound.automaticAt
+  )
+    return "ROUND_STALE";
+  if (room.generation) return "BOARD_GENERATING";
+  return null;
+}
+async function startQueuedNextRound(room, sourceRoundId) {
+  if (queuedNextRoundError(room, sourceRoundId)) return false;
+  const queued = room.nextRound;
+  clearQueuedNextRound(room);
+  const started = await startRound(room, queued.mode);
+  if (!started && rooms.get(room.code) === room && room.status === "finished")
+    broadcast(room, state(room));
+  return started;
+}
+function scheduleQueuedNextRound(room, nextRound) {
+  clearTimeout(room.rushTimer);
+  const delay = Math.max(0, nextRound.automaticAt - Date.now());
+  room.rushTimer = setTimeout(() => {
+    room.rushTimer = null;
+    void startQueuedNextRound(room, nextRound.sourceRoundId);
+  }, delay);
+  room.rushTimer.unref?.();
+}
 function finishRound(room, reason = "complete", suddenDeath = null) {
   if (!room.round || room.status !== "playing") return;
   clearTimeout(room.round.timer);
@@ -954,6 +1003,17 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
         },
       })),
   };
+  if (room.randomRush) {
+    const nextRound = {
+      sourceRoundId: result.roundId,
+      mode: randomMode(room),
+      automaticAt: Date.now() + RANDOM_RUSH_DELAY,
+    };
+    room.nextRound = nextRound;
+    result.nextRound = nextRound;
+  } else {
+    room.nextRound = null;
+  }
   room.lastResult = result;
   if (recorded) {
     try {
@@ -984,23 +1044,7 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
     }
   }
   broadcast(room, { type: "round_finished", ...result });
-  if (room.randomRush) {
-    const finishedRoundId = result.roundId;
-    room.rushTimer = setTimeout(() => {
-      room.rushTimer = null;
-      if (
-        rooms.get(room.code) !== room ||
-        !room.randomRush ||
-        room.status !== "finished" ||
-        room.lastResult?.roundId !== finishedRoundId ||
-        room.round?.id !== finishedRoundId ||
-        room.generation
-      )
-        return;
-      void startRound(room, randomMode(room));
-    }, RANDOM_RUSH_DELAY);
-    room.rushTimer.unref?.();
-  }
+  if (result.nextRound) scheduleQueuedNextRound(room, result.nextRound);
 }
 function issueDisplayToken(room, client) {
   const token = crypto.randomBytes(32).toString("base64url");
@@ -1226,6 +1270,7 @@ async function handle(ws, message) {
       results: { view: "static", speed: "medium" },
       lastResult: null,
       rushTimer: null,
+      nextRound: null,
     };
     rooms.set(room.code, room);
     client.roomCode = room.code;
@@ -1518,6 +1563,7 @@ async function handle(ws, message) {
     if (requested === "random") {
       if (room.pendingConsent)
         cancelPendingConsent(room, "configuration_changed");
+      clearQueuedNextRound(room);
       room.randomRush = true;
       room.randomModeQueue = [];
       return startRound(room, randomMode(room), null, null, null, requestedDictionaryId);
@@ -1537,14 +1583,28 @@ async function handle(ws, message) {
     if (usesAdultLexicon(config)) {
       if (room.pendingConsent)
         cancelPendingConsent(room, "configuration_changed");
+      clearQueuedNextRound(room);
+      room.randomRush = false;
+      room.randomModeQueue = [];
       createPendingConsent(room, requested, config, requestedDictionaryId);
       return;
     }
     if (room.pendingConsent)
       cancelPendingConsent(room, "configuration_changed");
+    clearQueuedNextRound(room);
     room.randomRush = false;
     room.randomModeQueue = [];
     return startRound(room, requested, config, null, null, requestedDictionaryId);
+  }
+  if (type === "start_next_round") {
+    if (client.id !== room.creatorId)
+      return send(ws, { type: "error", code: "CREATOR_ONLY" });
+    if (Object.prototype.hasOwnProperty.call(message, "mode"))
+      return send(ws, { type: "error", code: "NEXT_ROUND_MODE_NOT_ALLOWED" });
+    const failure = queuedNextRoundError(room, message.sourceRoundId);
+    if (failure) return send(ws, { type: "error", code: failure });
+    await startQueuedNextRound(room, message.sourceRoundId);
+    return;
   }
   if (type === "start_round_now") {
     if (client.id !== room.creatorId)
@@ -1730,6 +1790,7 @@ const server = http.createServer((req, res) => {
     "/custom.css",
     "/multiplayer.css",
     "/game-config.js",
+    "/multiplayer-result-state.js",
     "/board-core.js",
     "/analytics.js",
     "/trace-geometry.js",
