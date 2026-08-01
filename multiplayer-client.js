@@ -32,6 +32,20 @@
   const $ = (selector) => document.querySelector(selector);
   const goHome = () =>
     document.querySelector('[data-screen="homeScreen"]')?.click();
+  function clearConsentUi() {
+    pendingConsentRequestId = "";
+    pendingChallengeId = "";
+    const consentPanel = $("#consentPanel");
+    const prePanel = $("#preAdmissionPanel");
+    const actions = $("#consentActions");
+    const cancel = $("#consentCancel");
+    const players = $("#consentPlayers");
+    if (consentPanel) consentPanel.hidden = true;
+    if (prePanel) prePanel.hidden = true;
+    if (actions) actions.hidden = true;
+    if (cancel) cancel.hidden = true;
+    players?.replaceChildren();
+  }
   const identity = () =>
     window.wordrushProfile
       ? window.wordrushProfile()
@@ -162,6 +176,7 @@
     pendingSession = false;
     localStorage.removeItem("wordrush-room");
     localStorage.removeItem("wordrush-room-token");
+    clearConsentUi();
     $("#multiplayerBanner").hidden = true;
     $("#multiplayerBannerText").textContent = "No active session";
     $("#sessionLobby").hidden = true;
@@ -207,6 +222,7 @@
       if (!lobbyPlayers) return;
       const row = document.createElement("div");
       row.className = "live-player";
+      row.dataset.playerId = player.id;
       row.setAttribute("role", "listitem");
       if (player.id === creatorId) row.classList.add("is-host");
       row.append(playerIdentity(player));
@@ -260,11 +276,22 @@
     $("#resumeMultiplayer").hidden = roomStatus !== "playing";
   }
   function sessionDialog(open = true) {
-    if (open) $("#multiplayerDialog").showModal();
+    const dialog = $("#multiplayerDialog");
+    if (!dialog) return;
+    if (open) {
+      if (!dialog.open) dialog.showModal();
+    }
     else {
       stopQrScanner(false);
-      $("#multiplayerDialog").close();
+      if (dialog.open) dialog.close();
     }
+  }
+  function showLobbyView() {
+    stopQrScanner(false);
+    $("#sessionChoices").hidden = true;
+    $("#sessionScanner").hidden = true;
+    $("#sessionLobby").hidden = false;
+    sessionDialog();
   }
   function showLobby(code, isCreator) {
     pendingSession = false;
@@ -274,14 +301,12 @@
     creator = isCreator;
     if (isCreator) creatorId = guestId;
     $("#multiplayerBanner").hidden = false;
-    $("#sessionChoices").hidden = true;
-    $("#sessionLobby").hidden = false;
+    showLobbyView();
     $("#sessionCode").textContent = code;
     $("#sessionQr").src = "/qr.svg?join=" + encodeURIComponent(code);
     $("#sessionQr").alt = "QR code to join Wordrush room " + code;
     updateLobbyControls();
     window.dispatchEvent(new CustomEvent("wordrush:room-change"));
-    sessionDialog();
   }
   function sendWhenReady(payload) {
     const target = socket;
@@ -391,11 +416,13 @@
         trackMultiplayer("room_resumed");
         reconnectAttempts = 0;
         rememberSession(message);
+        clearConsentUi();
         if (!sessionCode) showLobby(message.code, false);
         toast("Session reconnected");
       }
       if (message.type === "adult_consent_request") {
         pendingConsentRequestId = message.requestId;
+        showLobbyView();
         const consentPanel = $("#consentPanel");
         const prePanel = $("#preAdmissionPanel");
         const actions = $("#consentActions");
@@ -418,14 +445,13 @@
         toast("Adult content requires your consent");
       }
       if (message.type === "adult_consent_player_accepted") {
-        renderConsentPlayers(message.requiredPlayerIds, message.acceptedPlayerIds);
+        if (pendingConsentRequestId === message.requestId) {
+          showLobbyView();
+          renderConsentPlayers(message.requiredPlayerIds, message.acceptedPlayerIds);
+        }
       }
       if (message.type === "adult_consent_cancelled") {
-        pendingConsentRequestId = "";
-        const consentPanel = $("#consentPanel");
-        const actions = $("#consentActions");
-        if (consentPanel) consentPanel.hidden = true;
-        if (actions) actions.hidden = true;
+        clearConsentUi();
         const reasonLabels = {
           host_cancelled: "The host cancelled the adult round",
           timeout: "Adult consent request timed out",
@@ -439,16 +465,14 @@
         updateLobbyControls();
       }
       if (message.type === "adult_consent_declined") {
-        pendingConsentRequestId = "";
-        const consentPanel = $("#consentPanel");
-        const actions = $("#consentActions");
-        if (consentPanel) consentPanel.hidden = true;
-        if (actions) actions.hidden = true;
+        clearConsentUi();
         toast("A player declined the adult round");
         updateLobbyControls();
       }
       if (message.type === "adult_pre_admission_challenge") {
+        pendingConsentRequestId = "";
         pendingChallengeId = message.challengeId;
+        showLobbyView();
         const prePanel = $("#preAdmissionPanel");
         const consentPanel = $("#consentPanel");
         const actions = $("#consentActions");
@@ -547,14 +571,7 @@
           player_count: message.players.length,
           random_rush: message.randomRush,
         });
-        pendingConsentRequestId = "";
-        pendingChallengeId = "";
-        const consentPanel = $("#consentPanel");
-        const prePanel = $("#preAdmissionPanel");
-        const actions = $("#consentActions");
-        if (consentPanel) consentPanel.hidden = true;
-        if (prePanel) prePanel.hidden = true;
-        if (actions) actions.hidden = true;
+        clearConsentUi();
         roomStatus = "playing";
         creatorId = message.creatorId || creatorId;
         updateLobbyControls();

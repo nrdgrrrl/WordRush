@@ -688,10 +688,19 @@ test("room recovers after consent cancellation and starts classic", async () => 
     window.__sentMessages.some((msg) => msg.type === "start_game"),
   );
   assert.equal(consentSent, true);
-  await page.locator("#sessionManage").click();
   await page.waitForFunction(() =>
-    !document.querySelector("#sessionLobby").hidden,
+    document.querySelector("#multiplayerDialog").open &&
+    !document.querySelector("#consentPanel").hidden &&
+    !document.querySelector("#consentActions").hidden,
   );
+  assert.equal(await page.locator("#consentCancel").isVisible(), true);
+  await page.locator("#consentCancel").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#consentPanel").hidden &&
+    document.querySelector("#consentActions").hidden,
+  );
+  assert.equal(await page.locator("#sessionType").isEnabled(), true);
+  assert.equal(await page.locator("#sessionStart").isEnabled(), true);
   await page.locator("#sessionType").selectOption("coop");
   await page.locator("#sessionStart").click();
   await startIntro(page);
@@ -727,11 +736,34 @@ test("late join during consent sees pre-admission panel", async () => {
   await guestPage.locator("#sessionJoin").click();
   const prePanelVisible = await guestPage.locator("#preAdmissionPanel").evaluate((node) => !node.hidden);
   assert.equal(prePanelVisible, true);
-  const lobbyHidden = await guestPage.locator("#sessionLobby").evaluate((node) => node.hidden);
-  assert.equal(lobbyHidden, true);
-  await hostPage.locator("#sessionManage").click();
+  const preAdmissionState = await guestPage.evaluate(() => ({
+    dialogOpen: document.querySelector("#multiplayerDialog").open,
+    lobbyVisible: !document.querySelector("#sessionLobby").hidden,
+    prePanelVisible: !document.querySelector("#preAdmissionPanel").hidden,
+    actionsVisible: !document.querySelector("#consentActions").hidden,
+    acceptEnabled: !document.querySelector("#consentAccept").disabled,
+    declineEnabled: !document.querySelector("#consentDecline").disabled,
+    consentHidden: document.querySelector("#consentPanel").hidden,
+    cancelHidden: document.querySelector("#consentCancel").hidden,
+    sessionCode: window.wordrushSessionCode || "",
+    savedRoom: localStorage.getItem("wordrush-room"),
+  }));
+  assert.deepEqual(preAdmissionState, {
+    dialogOpen: true,
+    lobbyVisible: true,
+    prePanelVisible: true,
+    actionsVisible: true,
+    acceptEnabled: true,
+    declineEnabled: true,
+    consentHidden: true,
+    cancelHidden: true,
+    sessionCode: "",
+    savedRoom: null,
+  });
+  await hostPage.locator("#consentCancel").click();
   await hostPage.waitForFunction(() =>
-    !document.querySelector("#sessionLobby").hidden,
+    document.querySelector("#consentPanel").hidden &&
+    document.querySelector("#consentActions").hidden,
   );
   await hostPage.locator("#sessionType").selectOption("classic");
   await hostPage.locator("#sessionStart").click();
