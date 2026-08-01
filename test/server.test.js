@@ -1800,7 +1800,10 @@ test("eligible Random Rush retires a finished non-Random result before initial D
     "finished-replacement-host",
     "finished-replacement-guest",
   ]);
-  const room = await startClassicTestRound(host, code);
+  const startedRace = next(host, "round_started");
+  message(host, "start_game", { mode: "race" });
+  await startedRace;
+  const room = rooms.get(code);
   const playerIds = [...room.players.keys()];
   const finished = await finishTestRound(host, [host, guests[0]]);
   const sessionTotals = new Map(
@@ -1816,7 +1819,11 @@ test("eligible Random Rush retires a finished non-Random result before initial D
   assert.equal(room.status, "finished");
   assert.equal(room.randomRush, false);
 
-  generationTestHooks.randomMode = () => "dirty";
+  let selectorPrevious;
+  generationTestHooks.randomMode = ({ previous }) => {
+    selectorPrevious = previous;
+    return "dirty";
+  };
   const lobbyStatePromise = nextMatching(
     host,
     "room_state",
@@ -1838,6 +1845,9 @@ test("eligible Random Rush retires a finished non-Random result before initial D
     lobbyState.players.map((player) => player.id),
     playerIds,
   );
+  assert.equal(lobbyState.mode, "classic");
+  assert.deepEqual(lobbyState.config, configForPreset("classic"));
+  assert.equal(selectorPrevious, "race");
   assert.equal(room.round, null);
   assert.equal(room.lastResult, null);
   for (const [id, totals] of sessionTotals) {

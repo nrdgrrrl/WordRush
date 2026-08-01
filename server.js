@@ -696,7 +696,7 @@ function randomRushModes(room) {
     ? [...RANDOM_RUSH_MODES, "dirty"]
     : [...RANDOM_RUSH_MODES];
 }
-function shuffledModes(room, previous) {
+function shuffledModes(room, previous = room.mode) {
   const modes = randomRushModes(room).filter((mode) => mode !== previous);
   for (let index = modes.length - 1; index > 0; index--) {
     const swap = crypto.randomInt(index + 1);
@@ -705,16 +705,16 @@ function shuffledModes(room, previous) {
   if (randomRushModes(room).includes(previous)) modes.push(previous);
   return modes;
 }
-function randomMode(room) {
+function randomMode(room, previous = room.mode) {
   if (!room.randomModeQueue.length) {
     const forced = generationTestHooks.randomMode?.({
       pool: randomRushModes(room),
-      previous: room.mode,
+      previous,
       room,
     });
     room.randomModeQueue = forced && randomRushModes(room).includes(forced)
       ? [forced]
-      : shuffledModes(room, room.mode);
+      : shuffledModes(room, previous);
   }
   return room.randomModeQueue.shift();
 }
@@ -1711,6 +1711,7 @@ async function handle(ws, message) {
       return send(ws, { type: "error", code: "ROUND_GENERATION_POLICY_NOT_ALLOWED" });
     if (requested === "random") {
       const includeDirty = message.randomRushIncludeDirty === true;
+      const previousMode = room.mode;
       if (room.status === "finished") {
         retireFinishedRoundForReplacement(room);
         broadcast(room, state(room));
@@ -1728,7 +1729,7 @@ async function handle(ws, message) {
       room.randomRushIncludeDirty = includeDirty;
       room.randomRushEpoch += 1;
       room.randomModeQueue = [];
-      const selected = randomMode(room);
+      const selected = randomMode(room, previousMode);
       if (selected === "dirty") {
         const pending = createPendingConsent(
           room,
