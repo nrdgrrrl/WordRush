@@ -59,6 +59,7 @@
     if (randomRushChoice) return true;
     randomRushChoice = { dictionaryId };
     dialog.showModal();
+    $("#randomRushKeepClean")?.focus();
     return true;
   }
   function submitRandomRushChoice(includeDirty) {

@@ -725,6 +725,25 @@ function resetRandomRush(room) {
   room.randomModeQueue = [];
   room.randomRushEpoch += 1;
 }
+function retireFinishedRoundForReplacement(room) {
+  if (room.status !== "finished") return false;
+  clearRoomTimer(room);
+  if (room.pendingConsent) cancelPendingConsent(room, "configuration_changed");
+  else resetRandomRush(room);
+  room.round = null;
+  room.lastResult = null;
+  room.status = "lobby";
+  room.mode = "classic";
+  room.config = MODE_CONFIG.classic;
+  room.results = { view: "static", speed: "medium" };
+  room.teamScore = 0;
+  for (const player of room.players.values()) {
+    player.score = 0;
+    player.words = [];
+    player.found = new Set();
+  }
+  return true;
+}
 function generationFailure(room, generation, result) {
   if (room.generation !== generation) return false;
   room.generation = null;
@@ -1692,14 +1711,19 @@ async function handle(ws, message) {
       return send(ws, { type: "error", code: "ROUND_GENERATION_POLICY_NOT_ALLOWED" });
     if (requested === "random") {
       const includeDirty = message.randomRushIncludeDirty === true;
-      if (
-        room.pendingConsent?.randomRush &&
-        room.pendingConsent.randomRushIncludeDirty === includeDirty
-      )
-        return send(ws, { type: "error", code: "CONSENT_PENDING" });
-      if (room.pendingConsent)
-        cancelPendingConsent(room, "configuration_changed");
-      clearQueuedNextRound(room);
+      if (room.status === "finished") {
+        retireFinishedRoundForReplacement(room);
+        broadcast(room, state(room));
+      } else {
+        if (
+          room.pendingConsent?.randomRush &&
+          room.pendingConsent.randomRushIncludeDirty === includeDirty
+        )
+          return send(ws, { type: "error", code: "CONSENT_PENDING" });
+        if (room.pendingConsent)
+          cancelPendingConsent(room, "configuration_changed");
+        clearQueuedNextRound(room);
+      }
       room.randomRush = true;
       room.randomRushIncludeDirty = includeDirty;
       room.randomRushEpoch += 1;

@@ -159,6 +159,15 @@ test(
         if (!firstRound) await host.locator("#sessionManage").click();
         await host.locator("#sessionType").selectOption(mode);
         await host.locator("#sessionStart").click();
+        if (mode === "random") {
+          assert.equal(
+            await host.locator("#randomRushChoiceDialog").evaluate(
+              (dialog) => dialog.open,
+            ),
+            true,
+          );
+          await host.locator("#randomRushKeepClean").click();
+        }
       }
       firstRound = false;
       await Promise.all(

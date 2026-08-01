@@ -1795,6 +1795,97 @@ test("Random Rush eligibility is private, strict, and never selects Dirty when o
   host.close();
 });
 
+test("eligible Random Rush retires a finished non-Random result before initial Dirty consent", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "finished-replacement-host",
+    "finished-replacement-guest",
+  ]);
+  const room = await startClassicTestRound(host, code);
+  const playerIds = [...room.players.keys()];
+  const finished = await finishTestRound(host, [host, guests[0]]);
+  const sessionTotals = new Map(
+    [...room.players].map(([id, player]) => [
+      id,
+      {
+        wins: player.sessionWins,
+        losses: player.sessionLosses,
+        points: player.sessionPoints,
+      },
+    ]),
+  );
+  assert.equal(room.status, "finished");
+  assert.equal(room.randomRush, false);
+
+  generationTestHooks.randomMode = () => "dirty";
+  const lobbyStatePromise = nextMatching(
+    host,
+    "room_state",
+    (state) =>
+      state.status === "lobby" &&
+      state.round === null &&
+      state.lastResult === null,
+  );
+  const consentPromise = next(host, "adult_consent_request");
+  message(host, "start_game", {
+    mode: "random",
+    randomRushIncludeDirty: true,
+  });
+  const [lobbyState, consent] = await Promise.all([
+    lobbyStatePromise,
+    consentPromise,
+  ]);
+  assert.deepEqual(
+    lobbyState.players.map((player) => player.id),
+    playerIds,
+  );
+  assert.equal(room.round, null);
+  assert.equal(room.lastResult, null);
+  for (const [id, totals] of sessionTotals) {
+    const player = room.players.get(id);
+    assert.deepEqual(
+      {
+        wins: player.sessionWins,
+        losses: player.sessionLosses,
+        points: player.sessionPoints,
+      },
+      totals,
+    );
+  }
+  assert.equal(consent.mode, "dirty");
+  assert.equal(room.status, "lobby");
+
+  let startedCount = 0;
+  const countStarted = (raw) => {
+    if (JSON.parse(raw).type === "round_started") startedCount += 1;
+  };
+  host.on("message", countStarted);
+  const hostAccepted = next(host, "adult_consent_player_accepted");
+  const guestAccepted = next(guests[0], "adult_consent_player_accepted");
+  const startedPromise = next(host, "round_started");
+  message(host, "adult_consent_response", {
+    requestId: consent.requestId,
+    accepted: true,
+  });
+  await hostAccepted;
+  message(guests[0], "adult_consent_response", {
+    requestId: consent.requestId,
+    accepted: true,
+  });
+  await guestAccepted;
+  const started = await startedPromise;
+  host.off("message", countStarted);
+  assert.equal(started.mode, "dirty");
+  assert.equal(startedCount, 1);
+  assert.equal(room.round.adultConsentRequestId, consent.requestId);
+  assert.equal(room.players.size, playerIds.length);
+  assert.equal(room.lastResult, null);
+  assert.notEqual(finished.roundId, room.round.id);
+
+  await closeTestRoom(host, [host, ...guests]);
+  host.close();
+  guests[0].close();
+});
+
 test("initial eligible Dirty selection waits for every player before generation", async () => {
   const { host, guests, code } = await createRoomWithPlayers([
     "initial-dirty-host",
