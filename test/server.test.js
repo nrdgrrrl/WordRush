@@ -3624,6 +3624,68 @@ test("Sudden Death Series freezes its roster, settles stale transitions, and res
   await closeTestRoom(host, [host, reconnected, guests[1], newcomer]);
 });
 
+test("finished Sudden Death Series restores normal room projections for new joins", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "series-finished-projection-host",
+    "series-finished-projection-guest",
+  ]);
+  const room = rooms.get(code);
+  const series = suddenDeathSeries.createSuddenDeathSeries(
+    [
+      { id: "series-finished-projection-host", name: "series-finished-projection-host", avatar: "🐈" },
+      { id: "series-finished-projection-guest", name: "series-finished-projection-guest", avatar: "🦊" },
+    ],
+    { id: "series-finished-projection-id", accountingId: "series-finished-projection-accounting" },
+  );
+  series.phase = "finished";
+  series.currentRoundNumber = series.totalRounds;
+  room.suddenDeathSeries = series;
+  room.mode = "sudden_series";
+  room.config = configForPreset("sudden_series");
+  room.status = "playing";
+  room.round = null;
+  const finishedPromise = next(host, "round_finished");
+  const finished = completeSuddenDeathSeries(room, series, {
+    roundId: "series-finished-projection-round",
+  });
+  await finishedPromise;
+  const resultSnapshot = JSON.stringify(finished);
+
+  const displayTokenPromise = next(host, "display_token");
+  message(host, "create_display_token");
+  const displayToken = await displayTokenPromise;
+  const display = await displayClient();
+  const displayConnectedPromise = next(display, "display_state");
+  message(display, "display_hello", { token: displayToken.token });
+  await displayConnectedPromise;
+
+  const newcomer = await client("series-newcomer");
+  const joinedPromise = next(newcomer, "joined_room");
+  const roomStatePromise = next(host, "room_state");
+  const displayStatePromise = next(display, "display_state");
+  message(newcomer, "join_room", {
+    code,
+    name: "series-newcomer",
+  });
+  const [joined, roomState, displayState] = await Promise.all([
+    joinedPromise,
+    roomStatePromise,
+    displayStatePromise,
+  ]);
+  assert.equal(joined.code, code);
+  assert.ok(roomState.players.some((player) => player.id === "series-newcomer"));
+  assert.ok(
+    displayState.state.players.some((player) => player.name === "series-newcomer"),
+    JSON.stringify(displayState.state.players),
+  );
+  assert.deepEqual(room.lastResult, finished);
+  assert.equal(JSON.stringify(roomState.lastResult), resultSnapshot);
+  assert.equal(JSON.stringify(displayState.state.lastResult), resultSnapshot);
+
+  display.close();
+  await closeTestRoom(host, [host, ...guests, newcomer]);
+});
+
 test("Sudden Death Series preserves a finished result when fewer than two players are connected", async () => {
   const { host, guests, code } = await createRoomWithPlayers([
     "series-failed-start-host",

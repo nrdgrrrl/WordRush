@@ -115,12 +115,36 @@
     return delivery === "accept" || delivery === "replace";
   }
 
+  function resultAccountingParticipant(ranking, guestId, series = null) {
+    if (!Array.isArray(ranking) || typeof guestId !== "string" || !guestId)
+      return null;
+    const participant = ranking.find((player) => player?.id === guestId);
+    if (!participant) return null;
+    if (series && participant.series?.status !== "active") return null;
+    return participant;
+  }
+
+  function shouldRecordMultiplayerResult({
+    ranking,
+    guestId,
+    series = null,
+    skipped = false,
+    resultId = null,
+    completedResultIds = [],
+  } = {}) {
+    if (skipped || !resultAccountingParticipant(ranking, guestId, series))
+      return false;
+    return !resultId || !completedResultIds.includes(resultId);
+  }
+
   return Object.freeze({
     normalizeNextRound,
     normalizeResultAction,
     normalizeAuthoritativeRoundMetadata,
     reconcileResultAction,
+    resultAccountingParticipant,
     classifyResultDelivery,
+    shouldRecordMultiplayerResult,
     shouldReplaySuddenDeath,
   });
 });

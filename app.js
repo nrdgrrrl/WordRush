@@ -1888,9 +1888,15 @@ window.wordrushOnlineFinish = (
         }
       : null,
   }));
-  const ownPlayer = normalizedRanking.find((player) => player.id === guestId);
-  const mine = ownPlayer?.score ?? s.score;
-  const ownWords = ownPlayer?.words || [];
+  const accountingParticipant = multiplayerResultState.resultAccountingParticipant(
+    normalizedRanking,
+    guestId,
+    series,
+  );
+  const mine = series
+    ? Number(accountingParticipant?.score) || 0
+    : accountingParticipant?.score ?? s.score;
+  const ownWords = accountingParticipant?.words || [];
   const suddenDeath =
     result.reason === "invalid_word" ? result.suddenDeath : null;
   const resultAction = multiplayerResultState.reconcileResultAction({
@@ -1967,26 +1973,31 @@ window.wordrushOnlineFinish = (
       " word" +
       (ownWords.length === 1 ? "" : "s") +
       " found by you.";
-  const won =
-    result.cooperative ||
-    (series
-      ? series.winnerIds?.includes(ownPlayer?.id)
-      : suddenDeath
-      ? suddenDeathOutcome.winnerIds(suddenDeath).includes(ownPlayer?.id)
-      : ownPlayer && ownPlayer.score === normalizedRanking[0]?.score);
+  const won = accountingParticipant
+    ? result.cooperative ||
+      (series
+        ? series.winnerIds?.includes(accountingParticipant.id)
+        : suddenDeath
+        ? suddenDeathOutcome.winnerIds(suddenDeath).includes(accountingParticipant.id)
+        : accountingParticipant.score === normalizedRanking[0]?.score)
+    : false;
   profile.completedMultiplayerRounds = Array.isArray(
     profile.completedMultiplayerRounds,
   ) ? profile.completedMultiplayerRounds : [];
-  const alreadyRecorded =
-    (result.resultId || result.accountingId || result.roundId) &&
-    profile.completedMultiplayerRounds.includes(
-      result.resultId || result.accountingId || result.roundId,
-    );
-  if (!skipped && !alreadyRecorded) {
+  const accountingResultId = result.resultId || result.accountingId || result.roundId;
+  const shouldRecord = multiplayerResultState.shouldRecordMultiplayerResult({
+    ranking: normalizedRanking,
+    guestId,
+    series,
+    skipped,
+    resultId: accountingResultId,
+    completedResultIds: profile.completedMultiplayerRounds,
+  });
+  if (shouldRecord) {
     profile.score += mine;
     profile.rounds++;
     profile.totalGameSeconds += series
-      ? Math.max(0, Number(ownPlayer?.series?.gameplaySeconds) || Number(result.gameSeconds) || 0)
+      ? Math.max(0, Number(accountingParticipant?.series?.gameplaySeconds) || Number(result.gameSeconds) || 0)
       : s.startedAt
       ? Math.max(0, (Date.now() - s.startedAt) / 1000)
       : Math.max(0, Number(result.gameSeconds) || 0);
@@ -1995,10 +2006,10 @@ window.wordrushOnlineFinish = (
     profile.multiplayerWins = (profile.multiplayerWins || 0) + (won ? 1 : 0);
     profile.multiplayerLosses = (profile.multiplayerLosses || 0) + (won ? 0 : 1);
     if (won) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
-    if (result.resultId || result.accountingId || result.roundId)
+    if (accountingResultId)
       profile.completedMultiplayerRounds = [
         ...profile.completedMultiplayerRounds,
-        result.resultId || result.accountingId || result.roundId,
+        accountingResultId,
       ].slice(-50);
     recordPlayDay();
     updateProfile();

@@ -205,10 +205,7 @@
     )
       return renderSeriesInterstitial(state);
     const players = state.series
-      ? [...(state.series.participants || [])].sort((a, b) =>
-          (Number(a.strikes) || 0) - (Number(b.strikes) || 0) ||
-          (a.status === "withdrawn") - (b.status === "withdrawn"),
-        )
+      ? suddenDeathSeries.rankParticipants(state.series.participants || [])
       : [...(state.players || [])].sort((a, b) => b.score - a.score);
     if (state.status !== "finished") renderedFinishedRoundId = null;
     const cards = players.map((player) => state.series

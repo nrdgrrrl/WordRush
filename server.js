@@ -573,7 +573,8 @@ function publicSeriesState(room) {
 }
 function publicRoomPlayers(room) {
   const series = room.suddenDeathSeries;
-  if (!series) return [...room.players.values()];
+  if (!series || !["playing", "interstitial"].includes(series.phase))
+    return [...room.players.values()];
   const activeIds = new Set(activeSeriesParticipants(room).map((player) => player.id));
   return [...room.players.values()].filter((player) => activeIds.has(player.id));
 }

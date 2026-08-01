@@ -5,7 +5,9 @@ const {
   normalizeResultAction,
   normalizeAuthoritativeRoundMetadata,
   reconcileResultAction,
+  resultAccountingParticipant,
   classifyResultDelivery,
+  shouldRecordMultiplayerResult,
   shouldReplaySuddenDeath,
 } = require("../multiplayer-result-state");
 
@@ -301,4 +303,56 @@ test("authoritative replacement normalizes the snapshot mode and grid size", () 
       size: 5,
     },
   );
+});
+
+test("series result accounting only accepts active matching participants once", () => {
+  const ranking = [
+    {
+      id: "active-player",
+      score: 42,
+      series: { status: "active", gameplaySeconds: 12 },
+    },
+    {
+      id: "withdrawn-player",
+      score: 99,
+      series: { status: "withdrawn", gameplaySeconds: 30 },
+    },
+  ];
+  const series = { id: "series-result" };
+  assert.equal(
+    resultAccountingParticipant(ranking, "active-player", series),
+    ranking[0],
+  );
+  assert.equal(resultAccountingParticipant(ranking, "withdrawn-player", series), null);
+  assert.equal(resultAccountingParticipant(ranking, "newcomer", series), null);
+  assert.equal(
+    shouldRecordMultiplayerResult({
+      ranking,
+      guestId: "active-player",
+      series,
+      resultId: "series-result",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRecordMultiplayerResult({
+      ranking,
+      guestId: "active-player",
+      series,
+      resultId: "series-result",
+      completedResultIds: ["series-result"],
+    }),
+    false,
+  );
+  for (const guestId of ["withdrawn-player", "newcomer"]) {
+    assert.equal(
+      shouldRecordMultiplayerResult({
+        ranking,
+        guestId,
+        series,
+        resultId: "series-result",
+      }),
+      false,
+    );
+  }
 });
