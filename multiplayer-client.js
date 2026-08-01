@@ -565,6 +565,7 @@
           const accepted = window.wordrushOnlineFinish?.(
             restoredResult.ranking,
             restoredResult,
+            { authoritativeSnapshot: true },
           );
           if (accepted === false) return;
         }

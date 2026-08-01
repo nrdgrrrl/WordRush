@@ -4,6 +4,7 @@ const {
   normalizeNextRound,
   normalizeResultAction,
   reconcileResultAction,
+  classifyResultDelivery,
 } = require("../multiplayer-result-state");
 
 const configs = {
@@ -202,4 +203,66 @@ test("changed, stale, and unknown transitions cannot inherit or retain consumpti
   });
   assert.equal(unknown.nextRound, null);
   assert.equal(unknown.heading, "");
+});
+
+test("classifies live results and authoritative finished snapshots by delivery context", () => {
+  assert.equal(
+    classifyResultDelivery({
+      localRoundId: "round-1",
+      resultRoundId: "round-1",
+      completed: true,
+    }),
+    "refresh",
+  );
+  assert.equal(
+    classifyResultDelivery({
+      localRoundId: "round-1",
+      resultRoundId: "round-2",
+      completed: true,
+    }),
+    "stale",
+  );
+  assert.equal(
+    classifyResultDelivery({
+      localRoundId: "round-1",
+      resultRoundId: "round-2",
+      completed: true,
+      authoritativeSnapshot: true,
+    }),
+    "replace",
+  );
+  assert.equal(
+    classifyResultDelivery({
+      localRoundId: "round-2",
+      resultRoundId: "round-2",
+      completed: true,
+      authoritativeSnapshot: true,
+    }),
+    "refresh",
+  );
+});
+
+test("authoritative replacement starts with a fresh next action", () => {
+  const previousAction = {
+    nextRound: {
+      sourceRoundId: "round-1",
+      mode: "race",
+      automaticAt: 1234,
+    },
+    consumed: true,
+  };
+  const replacement = reconcileResultAction({
+    sourceRoundId: "round-2",
+    currentRoundId: "round-2",
+    nextRound: {
+      sourceRoundId: "round-2",
+      mode: "classic",
+      automaticAt: 5678,
+    },
+    isCreator: true,
+    configForPreset,
+    previousAction,
+  });
+  assert.equal(replacement.consumed, false);
+  assert.equal(replacement.heading, "Up next: CLASSIC");
 });

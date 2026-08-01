@@ -63,6 +63,27 @@
     );
   }
 
+  function classifyResultDelivery({
+    localRoundId = null,
+    resultRoundId = null,
+    completed = false,
+    authoritativeSnapshot = false,
+    activeSoloRound = false,
+  }) {
+    if (authoritativeSnapshot) {
+      if (!resultRoundId) return "stale";
+      if (completed && localRoundId === resultRoundId) return "refresh";
+      if (localRoundId && localRoundId !== resultRoundId) return "replace";
+      return "accept";
+    }
+    if (resultRoundId && localRoundId && resultRoundId !== localRoundId)
+      return "stale";
+    if (completed && resultRoundId && localRoundId === resultRoundId)
+      return "refresh";
+    if (activeSoloRound) return "stale";
+    return "accept";
+  }
+
   function reconcileResultAction({ previousAction = null, ...options }) {
     const action = normalizeResultAction(options);
     if (!action.nextRound) return action;
@@ -78,5 +99,6 @@
     normalizeNextRound,
     normalizeResultAction,
     reconcileResultAction,
+    classifyResultDelivery,
   });
 });

@@ -1630,14 +1630,22 @@ window.wordrushRoundStartNow = (timing = {}) => {
   if (roundIntroFinish) finishRoundIntro();
   else activateOnlineRound();
 };
-window.wordrushOnlineFinish = (ranking, result = {}) => {
-  if (
-    result.roundId &&
-    ((s.onlineRoundKey && s.onlineRoundKey !== result.roundId) ||
-      (!s.onlineRoundKey && !s.done && s.startedAt && !window.wordrushSessionCode))
-  )
+window.wordrushOnlineFinish = (
+  ranking,
+  result = {},
+  { authoritativeSnapshot = false } = {},
+) => {
+  const delivery = multiplayerResultState.classifyResultDelivery({
+    localRoundId: s.onlineRoundKey,
+    resultRoundId: result.roundId,
+    completed: Boolean(s.done),
+    authoritativeSnapshot,
+    activeSoloRound:
+      !s.onlineRoundKey && !s.done && s.startedAt && !window.wordrushSessionCode,
+  });
+  if (delivery === "stale")
     return false;
-  if (s.done && result.roundId && s.onlineResultRoundId === result.roundId) {
+  if (delivery === "refresh") {
     const resultAction = multiplayerResultState.reconcileResultAction({
       sourceRoundId: result.roundId,
       currentRoundId: s.onlineRoundKey,
@@ -1653,6 +1661,14 @@ window.wordrushOnlineFinish = (ranking, result = {}) => {
   }
   if (s.done && !result.roundId)
     return true;
+  if (delivery === "replace") {
+    s.onlineRoundKey = result.roundId;
+    s.onlineResultRoundId = null;
+    s.onlineNextRound = null;
+    s.onlineResultAction = null;
+    s.onlineRandomRush = Boolean(result.randomRush);
+    s.startedAt = 0;
+  }
   cancelSoloRushContinuation();
   if (!s.onlineRoundKey && result.roundId) s.onlineRoundKey = result.roundId;
   cancelRoundIntro();
