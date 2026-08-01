@@ -167,6 +167,8 @@ const s = {
   nextRushMode: null,
   roundWordTimes: [],
   onlineRoundKey: null,
+  onlineSeries: null,
+  onlineSeriesId: null,
   onlineIntroEndsAt: 0,
   onlineRandomRush: false,
   onlineResultRoundId: null,
@@ -478,6 +480,7 @@ function renderResults(
     onlineSourceRoundId = null,
     onlineCreator = false,
     suddenDeath = null,
+    series = null,
   } = {},
 ) {
   const rows = ranking?.length
@@ -489,6 +492,10 @@ function renderResults(
         score: s.score,
         words: [...s.found].map((word) => ({ word, points: word.length ** 2 })),
       }];
+  if (!series) {
+    const panel = $("#seriesFinalPanel");
+    if (panel) panel.hidden = true;
+  }
   const onlineHeading = onlineSourceRoundId
     ? multiplayerResultState.normalizeResultAction({
         sourceRoundId: onlineSourceRoundId,
@@ -508,13 +515,17 @@ function renderResults(
     : nextRushLabel
     ? onlineHeading || "Up next: " + nextRushLabel
     : profile.name + ".";
-  renderHeroScores(rows, skipped, suddenDeath);
+  renderHeroScores(rows, skipped, suddenDeath, series);
   const suddenDeathData = suddenDeathOutcome.normalizeSuddenDeathOutcome(suddenDeath);
   const target = $("#resultPlayers");
   target.replaceChildren();
   rows.forEach((player, index) => {
     const row = document.createElement("article");
-    const outcomeBadge = suddenDeathOutcome.badgeForPlayer(suddenDeathData, player);
+    const outcomeBadge = suddenDeath
+      ? suddenDeathOutcome.badgeForPlayer(suddenDeathData, player)
+      : series?.winnerIds?.includes(player.id)
+        ? "WINNER"
+        : null;
     row.className = "result-player-card rank-" + Math.min(index + 1, 4) +
       (suddenDeathData ? " sudden-death-result-card" : "");
     const rank = document.createElement("span");
@@ -527,7 +538,13 @@ function renderResults(
     const name = document.createElement("b");
     name.textContent = (player.avatar || "🐈") + " " + player.name;
     const wordCount = document.createElement("small");
-    wordCount.textContent = (player.words?.length || 0) + " words";
+    wordCount.textContent = series
+      ? (Number(player.series?.strikes) || 0) +
+        " strike" +
+        (Number(player.series?.strikes) === 1 ? "" : "s") +
+        " · " +
+        (player.series?.status === "withdrawn" ? "withdrawn" : "active")
+      : (player.words?.length || 0) + " words";
     identity.append(name, wordCount);
     if (player.session) {
       const sessionRecord = document.createElement("small");
@@ -540,7 +557,9 @@ function renderResults(
     }
     const score = document.createElement("b");
     score.className = "result-player-score";
-    score.textContent = Number(player.score || 0).toLocaleString();
+    score.textContent = series
+      ? (Number(player.series?.strikes) || 0) + " STRIKES"
+      : Number(player.score || 0).toLocaleString();
     row.append(rank, identity, score);
     target.append(row);
   });
@@ -552,16 +571,28 @@ function renderOnlineResultAction(resultAction, skipped = false) {
   $("#again").textContent = resultAction.label;
   $("#again").disabled = resultAction.disabled || resultAction.consumed === true;
 }
-function renderHeroScores(players, skipped = false, suddenDeath = null) {
+function renderHeroScores(
+  players,
+  skipped = false,
+  suddenDeath = null,
+  series = null,
+) {
   const target = $("#resultHeroScores");
   if (!target) return;
-  const ordered = [...players].sort(
-    (a, b) => (Number(b.score) || 0) - (Number(a.score) || 0),
+  const ordered = [...players].sort((a, b) =>
+    series
+      ? (Number(a.series?.strikes) || 0) - (Number(b.series?.strikes) || 0) ||
+        (a.series?.status === "withdrawn") - (b.series?.status === "withdrawn")
+      : (Number(b.score) || 0) - (Number(a.score) || 0),
   );
   const displayed = ordered.slice(0, 2);
-  const winningScore = Number(displayed[0]?.score) || 0;
+  const winningScore = series
+    ? Number(displayed[0]?.series?.strikes) || 0
+    : Number(displayed[0]?.score) || 0;
   const tied = displayed.filter(
-    (player) => (Number(player.score) || 0) === winningScore,
+    (player) => (series
+      ? Number(player.series?.strikes) || 0
+      : Number(player.score) || 0) === winningScore,
   ).length > 1;
   const suddenDeathData = suddenDeathOutcome.normalizeSuddenDeathOutcome(suddenDeath);
   const suddenDeathWinnerIds = new Set(suddenDeathOutcome.winnerIds(suddenDeathData));
@@ -570,7 +601,9 @@ function renderHeroScores(players, skipped = false, suddenDeath = null) {
       const card = document.createElement("article");
       const isWinner = !skipped && suddenDeathData
         ? suddenDeathWinnerIds.has(player.id)
-        : !skipped && (Number(player.score) || 0) === winningScore;
+        : series
+          ? series.winnerIds?.includes(player.id)
+          : !skipped && (Number(player.score) || 0) === winningScore;
       card.className = "result-hero-score-card" +
         (isWinner ? " is-winner" : "") +
         (player.id === window.wordrushGuestId ? " is-you" : "");
@@ -578,6 +611,10 @@ function renderHeroScores(players, skipped = false, suddenDeath = null) {
       badge.className = "hero-score-badge";
       badge.textContent = skipped
         ? "SCORE"
+        : series
+          ? series.winnerIds?.includes(player.id)
+            ? "WINNER"
+            : "STRIKES"
         : suddenDeathData
           ? suddenDeathOutcome.badgeForPlayer(suddenDeathData, player)
           : isWinner
@@ -587,7 +624,9 @@ function renderHeroScores(players, skipped = false, suddenDeath = null) {
       name.className = "hero-score-name";
       name.textContent = (player.avatar || "🐈") + " " + player.name;
       const score = document.createElement("strong");
-      score.textContent = Number(player.score || 0).toLocaleString();
+      score.textContent = series
+        ? (Number(player.series?.strikes) || 0) + " strikes"
+        : Number(player.score || 0).toLocaleString();
       card.append(badge, name, score);
       return card;
     }),
@@ -629,6 +668,102 @@ function clearSuddenDeathPresentation() {
   $("#suddenDeathExplosionTitle").textContent = "💥 SUDDEN DEATH!";
   $("#suddenDeathExplosionDetail").textContent = "";
 }
+function clearSeriesPresentation() {
+  clearTimeout(seriesTransitionTimer);
+  seriesTransitionTimer = 0;
+  s.onlineSeries = null;
+  s.onlineSeriesId = null;
+  const screen = $("#seriesTransitionScreen");
+  if (screen) screen.classList.remove("active");
+  const finalPanel = $("#seriesFinalPanel");
+  if (finalPanel) finalPanel.hidden = true;
+  $("#seriesTransitionOutcome").textContent = "";
+  $("#seriesTransitionStandings")?.replaceChildren();
+  $("#seriesRoundHistory")?.replaceChildren();
+  clearSuddenDeathPresentation();
+}
+function seriesReasonText(reason, loserName, rejectedWord) {
+  const name = loserName || "A player";
+  if (reason === "invalid_word")
+    return name + " rejected " + (rejectedWord || "a word") + " and takes a strike.";
+  if (reason === "host_skip") return "The host skipped this micro-round. No strike.";
+  if (reason === "timeout") return "Time expired. No strike.";
+  return "The micro-round ended without a strike.";
+}
+function renderSeriesStandings(series, target) {
+  if (!target) return;
+  target.replaceChildren(
+    ...(series?.participants || []).map((player) => {
+      const row = document.createElement("div");
+      row.className = "series-standing" +
+        (player.status === "withdrawn" ? " is-withdrawn" : "");
+      const identity = document.createElement("span");
+      identity.textContent = (player.avatar || "🐈") + " " + player.name;
+      const status = document.createElement("small");
+      status.textContent = player.status === "withdrawn"
+        ? "WITHDRAWN"
+        : (Number(player.strikes) || 0) + " STRIKE" +
+          (Number(player.strikes) === 1 ? "" : "S");
+      row.append(identity, status);
+      return row;
+    }),
+  );
+}
+function renderSeriesTransition(message = {}, series = message.series) {
+  if (!series) return;
+  clearTimeout(seriesTransitionTimer);
+  const roundNumber = Number(message.roundNumber) ||
+    Math.max(1, Number(series.currentRoundNumber) - 1);
+  const history = series.history || [];
+  const outcome = message.reason
+    ? message
+    : history.find((entry) => Number(entry.roundNumber) === roundNumber) || {};
+  $("#seriesTransitionTitle").textContent =
+    "Round " + roundNumber + " of " + (series.totalRounds || 10);
+  $("#seriesTransitionOutcome").textContent = seriesReasonText(
+    outcome.reason,
+    outcome.loserName || outcome.loser?.name,
+    outcome.rejectedWord,
+  );
+  renderSeriesStandings(series, $("#seriesTransitionStandings"));
+  const deadline = Number(message.nextRoundAt || series.nextRoundAt) || Date.now();
+  const update = () => {
+    const remaining = Math.max(0, deadline - Date.now());
+    $("#seriesTransitionNext").textContent = remaining
+      ? "Next board in " + (remaining / 1000).toFixed(1) + " seconds…"
+      : "Next board is starting…";
+    if (remaining)
+      seriesTransitionTimer = setTimeout(update, Math.min(100, remaining));
+  };
+  update();
+  show("seriesTransitionScreen");
+}
+window.wordrushSeriesRoundFinished = (message) => {
+  if (!message?.series?.id) return;
+  if (s.onlineSeriesId && s.onlineSeriesId !== message.series.id) return;
+  cancelRoundIntro();
+  clearInterval(s.timer);
+  clearPick(true);
+  clearTrace();
+  activeOnlineRoundKey = null;
+  s.done = 1;
+  s.onlineRoundKey = message.roundId || s.onlineRoundKey;
+  s.onlineSeries = message.series;
+  s.onlineSeriesId = message.series.id;
+  renderSeriesTransition(message, message.series);
+};
+window.wordrushSeriesState = (series) => {
+  if (!series?.id || series.phase !== "interstitial") return;
+  if (s.onlineSeriesId && s.onlineSeriesId !== series.id) return;
+  s.onlineSeries = series;
+  s.onlineSeriesId = series.id;
+  renderSeriesTransition({}, series);
+};
+window.wordrushSeriesCancelled = () => {
+  clearSeriesPresentation();
+  s.onlineRoundKey = null;
+  s.done = 1;
+};
 function triggerSuddenDeathExplosion(details, roundKey = s.suddenDeathRoundKey) {
   const explosion = $("#suddenDeathExplosion");
   const copy = suddenDeathOutcome.formatSuddenDeathOutcome(details);
@@ -826,6 +961,7 @@ let roundIntroCountdown = 0;
 let roundIntroFinish = null;
 let roundIntroGeneration = 0;
 let activeOnlineRoundKey = null;
+let seriesTransitionTimer = 0;
 function cancelRoundIntro() {
   roundIntroGeneration++;
   clearTimeout(roundIntroTimer);
@@ -892,6 +1028,8 @@ function abandonActiveRound() {
   s.done = 1;
   activeOnlineRoundKey = null;
   s.onlineRoundKey = null;
+  s.onlineSeries = null;
+  s.onlineSeriesId = null;
   s.onlineIntroEndsAt = 0;
   s.pendingOnlineTrace = null;
   clearPick(true);
@@ -902,6 +1040,7 @@ window.wordrushAbandonOnlineRound = () => {
   cancelSoloRushContinuation();
   s.config = null;
   s.onlineRandomRush = false;
+  clearSeriesPresentation();
   s.onlineResultRoundId = null;
   s.onlineNextRound = null;
   s.onlineResultAction = null;
@@ -1014,6 +1153,8 @@ async function start(
   s.mode = generationInputs.mode;
   s.rush = generationInputs.rush;
   s.onlineRoundKey = null;
+  s.onlineSeries = null;
+  s.onlineSeriesId = null;
   s.onlineResultRoundId = null;
   s.onlineNextRound = null;
   s.onlineResultAction = null;
@@ -1110,7 +1251,12 @@ async function submit() {
   ) {
     s.pendingOnlineTrace = { word: w, trace };
     window.wordrushSocket.send(
-      JSON.stringify({ type: "submit_word", word: w, path: trace }),
+      JSON.stringify({
+        type: "submit_word",
+        word: w,
+        path: trace,
+        roundId: s.onlineRoundKey,
+      }),
     );
     clearPick();
     return;
@@ -1568,6 +1714,7 @@ window.wordrushOnlineRound = (
   randomRush = false,
   dictionaryMetadata = null,
   chain = null,
+  series = null,
 ) => {
   cancelSoloRushContinuation();
   randomModeQueue = [];
@@ -1579,6 +1726,12 @@ window.wordrushOnlineRound = (
   clearSuddenDeathPresentation();
   activeOnlineRoundKey = null;
   s.onlineRoundKey = roundKey;
+  s.onlineSeries = series?.id ? series : null;
+  s.onlineSeriesId = series?.id || null;
+  clearTimeout(seriesTransitionTimer);
+  seriesTransitionTimer = 0;
+  const seriesFinalPanel = $("#seriesFinalPanel");
+  if (seriesFinalPanel) seriesFinalPanel.hidden = true;
   s.onlineIntroEndsAt = round.introEndsAt || Date.now() + 4000;
   s.mode = mode || "classic";
   s.dictionaryId = round.dictionary?.dictionaryId || dictionaryMetadata?.dictionaryId || DEFAULT_DICTIONARY_ID;
@@ -1618,13 +1771,21 @@ window.wordrushOnlineRound = (
   s.startedAt = round.startsAt || Date.now();
   s.endsAt = round.endsAt || Date.now();
   $("#gameMode").textContent = s.config.label;
-  $("#gameTitle").textContent = "Round 01 \u00b7 " + round.size + "\u00d7" + round.size;
+  $("#gameTitle").textContent = series?.id
+    ? "Round " + String(round.seriesRoundNumber || series.currentRoundNumber || 1).padStart(2, "0") +
+      " of " + (series.totalRounds || 10) + " · " + round.size + "×" + round.size
+    : "Round 01 \u00b7 " + round.size + "\u00d7" + round.size;
   $("#ruleBanner").textContent = s.config.rule;
   $("#gameHint").textContent = "Minimum " + s.config.min + " letters";
   clearInterval(s.timer);
   render();
   applyOnlineChainState(chain, true);
-  showOnlineRoundIntro(Math.max(0, s.onlineIntroEndsAt - Date.now()));
+  if (series?.id && Number(round.seriesRoundNumber) > 1) {
+    cancelRoundIntro();
+    activateOnlineRound({ navigate: true });
+  } else {
+    showOnlineRoundIntro(Math.max(0, s.onlineIntroEndsAt - Date.now()));
+  }
 };
 window.wordrushRoundStartNow = (timing = {}) => {
   if (!s.onlineRoundKey || s.done) return;
@@ -1695,6 +1856,15 @@ window.wordrushOnlineFinish = (
   s.done = 1;
   activeOnlineRoundKey = null;
   s.onlineIntroEndsAt = 0;
+  const series = result.series?.id ? result.series : null;
+  if (series) {
+    clearTimeout(seriesTransitionTimer);
+    seriesTransitionTimer = 0;
+    s.onlineSeries = series;
+    s.onlineSeriesId = series.id;
+  } else {
+    clearSeriesPresentation();
+  }
   clearInterval(s.timer);
   const guestId = window.wordrushGuestId;
   const skipped = result.reason === "skipped" || result.recorded === false;
@@ -1707,6 +1877,15 @@ window.wordrushOnlineFinish = (
           points: Number(item.points) || 0,
         }))
       : [],
+    series: player.series
+      ? {
+          status: player.series.status === "withdrawn" ? "withdrawn" : "active",
+          strikes: Number(player.series.strikes) || 0,
+          aggregateScore: Number(player.series.aggregateScore) || 0,
+          acceptedWordCount: Number(player.series.acceptedWordCount) || 0,
+          gameplaySeconds: Number(player.series.gameplaySeconds) || 0,
+        }
+      : null,
   }));
   const ownPlayer = normalizedRanking.find((player) => player.id === guestId);
   const mine = ownPlayer?.score ?? s.score;
@@ -1745,6 +1924,7 @@ window.wordrushOnlineFinish = (
     onlineSourceRoundId: result.roundId || s.onlineRoundKey,
     onlineCreator: Boolean(window.wordrushSessionCreator),
     suddenDeath,
+    series,
   });
   renderSuddenDeath(suddenDeath);
   if (suddenDeath && multiplayerResultState.shouldReplaySuddenDeath(delivery))
@@ -1752,16 +1932,24 @@ window.wordrushOnlineFinish = (
   $("#resultAchievement").hidden = false;
   $("#resultAchievementTitle").textContent = skipped
     ? "Round skipped"
+    : series
+    ? "Sudden Death Series complete"
     : suddenDeath
     ? "Sudden Death result"
     : result.cooperative
     ? "Co-op complete"
     : "Multiplayer round";
-  const leaders = normalizedRanking.filter(
-    (player) => player.score === normalizedRanking[0]?.score,
-  );
+  const leaders = series
+    ? normalizedRanking.filter((player) => series.winnerIds?.includes(player.id))
+    : normalizedRanking.filter(
+        (player) => player.score === normalizedRanking[0]?.score,
+      );
   $("#resultAchievementDetail").textContent = skipped
     ? "Scores were not recorded"
+    : series
+    ? leaders.map((player) => player.name).join(" & ") +
+      (leaders.length > 1 ? " share" : " wins") +
+      " the series with the fewest strikes."
     : suddenDeath
     ? suddenDeathOutcome.formatSuddenDeathOutcome(suddenDeath)
     : result.cooperative
@@ -1780,18 +1968,25 @@ window.wordrushOnlineFinish = (
       " found by you.";
   const won =
     result.cooperative ||
-    (suddenDeath
+    (series
+      ? series.winnerIds?.includes(ownPlayer?.id)
+      : suddenDeath
       ? suddenDeathOutcome.winnerIds(suddenDeath).includes(ownPlayer?.id)
       : ownPlayer && ownPlayer.score === normalizedRanking[0]?.score);
   profile.completedMultiplayerRounds = Array.isArray(
     profile.completedMultiplayerRounds,
   ) ? profile.completedMultiplayerRounds : [];
   const alreadyRecorded =
-    result.roundId && profile.completedMultiplayerRounds.includes(result.roundId);
+    (result.resultId || result.accountingId || result.roundId) &&
+    profile.completedMultiplayerRounds.includes(
+      result.resultId || result.accountingId || result.roundId,
+    );
   if (!skipped && !alreadyRecorded) {
     profile.score += mine;
     profile.rounds++;
-    profile.totalGameSeconds += s.startedAt
+    profile.totalGameSeconds += series
+      ? Math.max(0, Number(ownPlayer?.series?.gameplaySeconds) || Number(result.gameSeconds) || 0)
+      : s.startedAt
       ? Math.max(0, (Date.now() - s.startedAt) / 1000)
       : Math.max(0, Number(result.gameSeconds) || 0);
     profile.gamesWon += won ? 1 : 0;
@@ -1799,10 +1994,10 @@ window.wordrushOnlineFinish = (
     profile.multiplayerWins = (profile.multiplayerWins || 0) + (won ? 1 : 0);
     profile.multiplayerLosses = (profile.multiplayerLosses || 0) + (won ? 0 : 1);
     if (won) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
-    if (result.roundId)
+    if (result.resultId || result.accountingId || result.roundId)
       profile.completedMultiplayerRounds = [
         ...profile.completedMultiplayerRounds,
-        result.roundId,
+        result.resultId || result.accountingId || result.roundId,
       ].slice(-50);
     recordPlayDay();
     updateProfile();

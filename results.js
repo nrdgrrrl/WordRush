@@ -18,6 +18,7 @@
   let revealToken = 0;
   let renderedView = null;
   let currentSuddenDeath = null;
+  let currentSeries = null;
   const suddenDeathOutcome = window.WordrushSuddenDeathOutcome;
 
   function localRow() {
@@ -36,7 +37,11 @@
     return resultRows.length ? resultRows : [localRow()];
   }
 
-  function makePlayerCard(player, suddenDeath = currentSuddenDeath) {
+  function makePlayerCard(
+    player,
+    suddenDeath = currentSuddenDeath,
+    series = currentSeries,
+  ) {
     const card = document.createElement("article");
     card.className = "reveal-player";
     const heading = document.createElement("header");
@@ -47,7 +52,11 @@
     score.className = "reveal-player-total";
     score.textContent = "0";
     heading.append(identity, score);
-    const outcomeBadge = suddenDeathOutcome.badgeForPlayer(suddenDeath, player);
+    const outcomeBadge = suddenDeath
+      ? suddenDeathOutcome.badgeForPlayer(suddenDeath, player)
+      : series?.winnerIds?.includes(player.id)
+        ? "WINNER"
+        : null;
     if (outcomeBadge) {
       const badge = document.createElement("small");
       badge.className = "reveal-outcome-badge";
@@ -55,6 +64,15 @@
       badge.textContent = outcomeBadge;
       heading.insertBefore(badge, score);
       card.classList.add("sudden-death-result-card");
+    }
+    if (series) {
+      const seriesStatus = document.createElement("small");
+      seriesStatus.className = "reveal-series-status";
+      seriesStatus.textContent =
+        (Number(player.series?.strikes) || 0) + " strike" +
+        (Number(player.series?.strikes) === 1 ? "" : "s") +
+        " · " + (player.series?.status === "withdrawn" ? "withdrawn" : "active");
+      heading.append(seriesStatus);
     }
     if (player.session) {
       const sessionRecord = document.createElement("p");
@@ -84,10 +102,12 @@
     card.querySelector(".reveal-word-list").append(line);
   }
 
-  function renderHighlights(players, skipped = false, suddenDeath = null) {
+  function renderHighlights(players, skipped = false, suddenDeath = null, series = null) {
     const outcome = suddenDeathOutcome.normalizeSuddenDeathOutcome(suddenDeath);
     const topPlayer = [...players].sort(
-      (a, b) => (Number(b.score) || 0) - (Number(a.score) || 0),
+      (a, b) => series
+        ? (Number(a.series?.strikes) || 0) - (Number(b.series?.strikes) || 0)
+        : (Number(b.score) || 0) - (Number(a.score) || 0),
     )[0];
     const words = players.flatMap((player) =>
       (player.words || []).map((item) => ({ ...item, player })),
@@ -97,7 +117,9 @@
       (Number(b.points) || 0) - (Number(a.points) || 0),
     )[0];
     if ($("#resultTopLabel"))
-      $("#resultTopLabel").textContent = skipped
+      $("#resultTopLabel").textContent = series
+        ? "SERIES RESULT"
+        : skipped
         ? "ROUND RESULT"
         : outcome
           ? "TOP SCORE · OUTCOME ABOVE"
@@ -114,6 +136,56 @@
         " pts · " + (longest.player.avatar || "🐈") + " " + longest.player.name
         : "—";
   }
+  function renderSeriesFinal(series, ranking) {
+    const panel = $("#seriesFinalPanel");
+    if (!panel) return;
+    panel.hidden = !series;
+    if (!series) {
+      $("#seriesFinalStandings")?.replaceChildren();
+      $("#seriesRoundHistory")?.replaceChildren();
+      return;
+    }
+    const standings = [...(ranking || [])].sort((a, b) =>
+      (Number(a.series?.strikes) || 0) - (Number(b.series?.strikes) || 0) ||
+      (a.series?.status === "withdrawn") - (b.series?.status === "withdrawn"),
+    );
+    const standingsTarget = $("#seriesFinalStandings");
+    standingsTarget?.replaceChildren(
+      ...standings.map((player) => {
+        const row = document.createElement("div");
+        row.className = "series-final-standing" +
+          (series.winnerIds?.includes(player.id) ? " is-winner" : "") +
+          (player.series?.status === "withdrawn" ? " is-withdrawn" : "");
+        const name = document.createElement("strong");
+        name.textContent = (player.avatar || "🐈") + " " + player.name;
+        const detail = document.createElement("span");
+        detail.textContent =
+          (Number(player.series?.strikes) || 0) + " strike" +
+          (Number(player.series?.strikes) === 1 ? "" : "s") +
+          " · " + (player.series?.status === "withdrawn" ? "withdrawn" : "active");
+        const score = document.createElement("b");
+        score.textContent = (Number(player.score) || 0).toLocaleString() + " pts";
+        row.append(name, detail, score);
+        return row;
+      }),
+    );
+    const historyTarget = $("#seriesRoundHistory");
+    const reason = (entry) => entry.reason === "invalid_word"
+      ? (entry.loserName || "A player") + " rejected " +
+        (entry.rejectedWord || "a word") + " · strike"
+      : entry.reason === "timeout"
+        ? "Timeout · no strike"
+        : entry.reason === "host_skip"
+          ? "Host skip · no strike"
+          : "Round ended · no strike";
+    historyTarget?.replaceChildren(
+      ...(series.history || []).map((entry) => {
+        const item = document.createElement("li");
+        item.textContent = "Round " + entry.roundNumber + ": " + reason(entry);
+        return item;
+      }),
+    );
+  }
 
   function renderReveal() {
     const host = $("#revealPlayers");
@@ -122,7 +194,9 @@
     revealToken++;
     const token = revealToken;
     const players = rows();
-    const cards = players.map((player) => makePlayerCard(player, currentSuddenDeath));
+    const cards = players.map((player) =>
+      makePlayerCard(player, currentSuddenDeath, currentSeries),
+    );
     host.replaceChildren(...cards);
     $("#revealTotal").textContent = "0";
     const playerTotals = players.map(() => 0);
@@ -260,6 +334,7 @@
     localWords = [];
     resultRows = [];
     currentSuddenDeath = null;
+    currentSeries = null;
     renderedView = null;
     revealToken++;
     clearTimeout(revealTimer);
@@ -293,7 +368,9 @@
     currentSuddenDeath = suddenDeathOutcome.normalizeSuddenDeathOutcome(
       detail.suddenDeath || detail.result?.suddenDeath,
     );
-    renderHighlights(rows(), skipped, currentSuddenDeath);
+    currentSeries = detail.result?.series || null;
+    renderHighlights(rows(), skipped, currentSuddenDeath, currentSeries);
+    renderSeriesFinal(currentSeries, rows());
     applyResults(true);
   });
 

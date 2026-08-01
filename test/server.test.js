@@ -9,6 +9,7 @@ const { COMMON_WORDS, ADULT_WORDS, configForPreset } = require("../game-config")
 const { neighbors } = require("../game-core");
 const { DEFAULT_DICTIONARY_ID } = require("../dictionary-registry");
 const { Leaderboard } = require("../leaderboard");
+const suddenDeathSeries = require("../sudden-death-series");
 process.env.RANDOM_RUSH_DELAY = "50";
 process.env.WORDRUSH_ROOM_RECONNECT_GRACE_MS = "100";
 process.env.WORDRUSH_MAX_WS_PER_IP = "1000";
@@ -41,17 +42,18 @@ const {
   createPendingConsent,
   cancelPendingConsent,
   completeAdultConsent,
+  completeSuddenDeathSeries,
   randomRushModes,
   prunePreAdmissionChallenges,
 } = require("../server");
 function message(ws, type, payload = {}) {
   ws.send(JSON.stringify({ type, ...payload }));
 }
-function next(ws, wanted) {
+function next(ws, wanted, timeoutMs = 1500) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error("Timed out waiting for " + wanted)),
-      1500,
+      timeoutMs,
     );
     const handler = (raw) => {
       const data = JSON.parse(raw);
@@ -3546,4 +3548,183 @@ test("single-player Sudden Death has no winner", async () => {
   assert.equal(board.profile("sudden-one-loser").multiplayerWins, 0);
   assert.equal(board.profile("sudden-one-loser").multiplayerLosses, 1);
   await closeTestRoom(host, [host]);
+});
+
+test("Sudden Death Series freezes its roster, settles stale transitions, and restores active state", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "series-protocol-host",
+    "series-protocol-guest",
+    "series-protocol-third",
+  ]);
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "sudden_series" });
+  const started = await startedPromise;
+  const room = rooms.get(code);
+  assert.equal(started.mode, "sudden_series");
+  assert.equal(started.config.size, 4);
+  assert.equal(started.config.min, 3);
+  assert.equal(started.config.seconds, 30);
+  assert.equal(started.series.phase, "playing");
+  assert.equal(started.series.currentRoundNumber, 1);
+  assert.equal(started.series.participants.length, 3);
+  assert.equal(room.status, "playing");
+
+  const newcomer = await client("series-protocol-newcomer");
+  const frozenError = next(newcomer, "error");
+  message(newcomer, "join_room", { code, name: "series-protocol-newcomer" });
+  assert.equal((await frozenError).code, "SERIES_ROSTER_FROZEN");
+  newcomer.close();
+
+  room.round.board = [
+    "C", "A", "T", "X",
+    "X", "Y", "Z", "Z", "Y",
+    ...Array(7).fill("X"),
+  ];
+  await startRoundImmediately(host);
+  const firstRoundId = room.round.id;
+  const transition = next(host, "series_round_finished");
+  message(host, "submit_word", {
+    roundId: firstRoundId,
+    word: "XYZZY",
+    path: [4, 5, 6, 7, 8],
+  });
+  const settled = await transition;
+  assert.equal(settled.reason, "invalid_word");
+  assert.equal(settled.rejectedWord, "XYZZY");
+  assert.equal(settled.series.currentRoundNumber, 2);
+  assert.equal(settled.series.participants.find((player) => player.id === "series-protocol-host").strikes, 1);
+  assert.equal(room.round, null);
+  assert.equal(room.status, "playing");
+
+  const staleSubmit = next(host, "error");
+  message(host, "submit_word", {
+    roundId: firstRoundId,
+    word: "XYZZY",
+    path: [4, 5, 6, 7, 8],
+  });
+  assert.equal((await staleSubmit).code, "ROUND_STALE");
+  const staleSkip = next(host, "error");
+  message(host, "skip_round", { roundId: firstRoundId });
+  assert.equal((await staleSkip).code, "ROUND_STALE");
+
+  const nextRoundPromise = next(host, "round_started", 4000);
+  const reconnectedToken = room.players.get("series-protocol-guest").reconnectToken;
+  guests[0].close();
+  const reconnected = await client("series-protocol-guest");
+  const resumed = next(reconnected, "room_state");
+  message(reconnected, "resume_room", { code, reconnectToken: reconnectedToken });
+  const resumedState = await resumed;
+  assert.equal(resumedState.series.id, settled.series.id);
+  assert.ok(["interstitial", "playing"].includes(resumedState.series.phase));
+  const nextRound = await nextRoundPromise;
+  assert.equal(nextRound.series.currentRoundNumber, 2);
+  assert.equal(nextRound.round.seriesId, settled.series.id);
+  assert.equal(nextRound.round.seriesRoundNumber, 2);
+
+  await closeTestRoom(host, [host, reconnected, guests[1], newcomer]);
+});
+
+test("Sudden Death Series solo endpoint and Random Rush policy are multiplayer-only", async () => {
+  const response = await postSoloBoard({ mode: "sudden_series" });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error, "MULTIPLAYER_ONLY_MODE");
+  assert.equal(configForPreset("sudden_series").series, true);
+  assert.equal(configForPreset("sudden_series").sudden, true);
+  assert.equal(require("../game-config").RANDOM_RUSH_MODES.includes("sudden_series"), false);
+});
+
+test("Sudden Death Series expiry withdraws guests and cancels below two active players", async () => {
+  const first = await createRoomWithPlayers([
+    "series-expiry-host",
+    "series-expiry-guest",
+    "series-expiry-third",
+  ]);
+  const firstStarted = next(first.host, "round_started");
+  message(first.host, "start_game", { mode: "sudden_series" });
+  await firstStarted;
+  const withdrawn = next(first.host, "series_participant_withdrawn", 2000);
+  first.guests[0].close();
+  const withdrawnMessage = await withdrawn;
+  assert.equal(withdrawnMessage.participantId, "series-expiry-guest");
+  assert.equal(
+    withdrawnMessage.series.participants.find((player) => player.id === "series-expiry-guest").status,
+    "withdrawn",
+  );
+  assert.equal(withdrawnMessage.reason, "expired");
+  await closeTestRoom(first.host, [first.host, first.guests[1]]);
+
+  const second = await createRoomWithPlayers([
+    "series-cancel-host",
+    "series-cancel-guest",
+  ]);
+  const secondStarted = next(second.host, "round_started");
+  message(second.host, "start_game", { mode: "sudden_series" });
+  await secondStarted;
+  const cancelled = next(second.host, "series_cancelled", 2000);
+  second.guests[0].close();
+  const cancellation = await cancelled;
+  assert.equal(cancellation.reason, "insufficient_players");
+  assert.equal(rooms.get(second.code).status, "lobby");
+  assert.equal(rooms.get(second.code).suddenDeathSeries, null);
+  await closeTestRoom(second.host, [second.host]);
+});
+
+test("Sudden Death Series final accounting is guarded and excludes withdrawn participants", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "series-accounting-winner",
+    "series-accounting-withdrawn",
+  ]);
+  const room = rooms.get(code);
+  const series = suddenDeathSeries.createSuddenDeathSeries(
+    [
+      { id: "series-accounting-winner", name: "series-accounting-winner", avatar: "🐈" },
+      { id: "series-accounting-withdrawn", name: "series-accounting-withdrawn", avatar: "🦊" },
+    ],
+    { id: "series-accounting-id", accountingId: "series-accounting-record" },
+  );
+  room.suddenDeathSeries = series;
+  room.mode = "sudden_series";
+  room.config = configForPreset("sudden_series");
+  room.status = "playing";
+  room.round = null;
+  room.players.get("series-accounting-winner").score = 25;
+  suddenDeathSeries.recordAcceptedWord(series, "series-accounting-winner", "CAT", 9);
+  suddenDeathSeries.recordAcceptedWord(series, "series-accounting-winner", "DOG", 16);
+  suddenDeathSeries.withdrawParticipant(series, "series-accounting-withdrawn");
+  series.phase = "finished";
+  series.history = Array.from({ length: 10 }, (_, index) => ({
+    roundNumber: index + 1,
+    roundId: "series-accounting-round-" + (index + 1),
+    reason: index === 0 ? "invalid_word" : "timeout",
+    loserId: index === 0 ? "series-accounting-withdrawn" : null,
+    loserName: index === 0 ? "series-accounting-withdrawn" : null,
+    rejectedWord: index === 0 ? "NOPE" : "",
+    strikeAwarded: false,
+    strikes: {
+      "series-accounting-winner": 0,
+      "series-accounting-withdrawn": 0,
+    },
+  }));
+  const finishedPromise = next(host, "round_finished");
+  const result = completeSuddenDeathSeries(room, series, {
+    roundId: "series-accounting-round-10",
+  });
+  await finishedPromise;
+  assert.deepEqual(result.series.winnerIds, ["series-accounting-winner"]);
+  assert.equal(result.ranking.length, 2);
+  assert.equal(result.ranking.find((player) => player.id === "series-accounting-withdrawn").series.status, "withdrawn");
+  assert.equal(room.players.get("series-accounting-winner").sessionPoints, 25);
+  assert.equal(room.players.get("series-accounting-winner").sessionWins, 1);
+  assert.equal(room.players.get("series-accounting-withdrawn").sessionPoints, 0);
+  const leaderboard = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE);
+  const before = leaderboard.profile("series-accounting-winner");
+  assert.equal(before.multiplayerWins, 1);
+  completeSuddenDeathSeries(room, series, {
+    roundId: "series-accounting-round-10",
+  });
+  const after = leaderboard.profile("series-accounting-winner");
+  assert.equal(after.multiplayerWins, before.multiplayerWins);
+  assert.equal(after.totalScore, before.totalScore);
+  assert.equal(series.accountingRecorded, true);
+  await closeTestRoom(host, [host, ...guests]);
 });

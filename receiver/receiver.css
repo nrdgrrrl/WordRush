@@ -22,6 +22,62 @@ footer { color: #d1c1d8; font-size: clamp(.9rem, 1.35vw, 1.35rem); }
 .score-card:first-child { border-color: #f6c85f; background: #3b2949; }
 .score-card .name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: clamp(1.2rem, 2vw, 2.2rem); font-weight: 800; }
 .score-card .score { display: block; margin-top: .1em; color: #f6c85f; font-size: clamp(2rem, 4.3vw, 5rem); font-weight: 900; line-height: 1; }
+.score-card.is-withdrawn,
+.series-tv-standing.is-withdrawn,
+.series-tv-final-card.is-withdrawn { opacity: .62; }
+.series-interstitial {
+  max-width: 72rem;
+  width: 100%;
+  padding: clamp(1.5rem, 4vw, 4rem);
+  border: .2rem solid #f6c85f;
+  border-radius: 2rem;
+  background: linear-gradient(145deg, #5b2d7f, #34213f);
+}
+.series-interstitial h1 { max-width: none; margin: .25em 0 .4em; }
+.series-tv-outcome {
+  margin: 1rem 0 1.5rem;
+  color: #fff9f0;
+  font-size: clamp(1.25rem, 2.5vw, 2.6rem);
+  font-weight: 850;
+  line-height: 1.25;
+}
+.series-tv-standings,
+.series-tv-final-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+}
+.series-tv-standing {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.2rem;
+  border-radius: 1rem;
+  background: rgba(255,255,255,.1);
+  font-size: clamp(1rem, 1.7vw, 1.8rem);
+}
+.series-tv-standing span { color: #f6c85f; font-weight: 900; }
+.series-tv-next { margin: 1.5rem 0 0; color: #d1c1d8; font-size: clamp(1rem, 1.5vw, 1.4rem); }
+.series-results { grid-template-columns: minmax(0, 1fr); }
+.series-results .finish-title h1 { max-width: 16ch; }
+.series-tv-final-card {
+  padding: 1.2rem;
+  border: .18rem solid rgba(255,255,255,.2);
+  border-radius: 1.2rem;
+  background: #2a2038;
+}
+.series-tv-final-card.is-winner { border-color: #f6c85f; background: #493254; }
+.series-tv-final-card header { gap: 1rem; }
+.series-tv-final-card header strong { font-size: clamp(1.15rem, 1.8vw, 2rem); }
+.series-tv-final-card header b { color: #f6c85f; font-size: clamp(1.2rem, 2vw, 2.2rem); }
+.series-tv-final-card p { margin: .8rem 0 0; color: #d1c1d8; font-size: clamp(.95rem, 1.4vw, 1.35rem); }
+.series-tv-history { margin-top: 1rem; }
+.series-tv-history h2 { margin: 0 0 .7rem; color: #f6c85f; font-size: clamp(1rem, 1.5vw, 1.5rem); letter-spacing: .12em; text-transform: uppercase; }
+.series-tv-history ol { display: grid; gap: .55rem; margin: 0; padding-left: 1.6rem; color: #e3d8eb; font-size: clamp(.95rem, 1.25vw, 1.25rem); line-height: 1.3; }
+@media (prefers-reduced-motion: reduce) {
+  .series-interstitial,
+  .series-tv-final-card { animation: none !important; transition: none !important; }
+}
 .finished h1 { font-size: clamp(2.8rem, 5.5vw, 6.5rem); }
 .receiver-shell:has(.results-party) { padding: 2.2vh 4.2vw 2vh; }
 .results-party {
