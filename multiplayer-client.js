@@ -493,6 +493,17 @@
         }
       }
       if (message.type === "room_state" && message.code !== endedSessionCode) {
+        const restoredResult =
+          message.status === "finished" && message.lastResult?.ranking
+            ? message.lastResult
+            : null;
+        if (restoredResult) {
+          const accepted = window.wordrushOnlineFinish?.(
+            restoredResult.ranking,
+            restoredResult,
+          );
+          if (accepted === false) return;
+        }
         roomStatus = message.status;
         creatorId = message.creatorId;
         window.wordrushCanSetResultsSettings = creatorId === guestId;
@@ -528,13 +539,7 @@
         }
         if (message.status === "finished" && message.results)
           window.wordrushResultsSettings?.(message.results);
-        if (message.status === "finished" && message.lastResult?.ranking) {
-          sessionDialog(false);
-          window.wordrushOnlineFinish?.(
-            message.lastResult.ranking,
-            message.lastResult,
-          );
-        }
+        if (restoredResult) sessionDialog(false);
       }
       if (message.type === "round_started") {
         trackMultiplayer("round_started", {
@@ -604,9 +609,7 @@
         request.resolve(message);
       }
       if (message.type === "round_finished") {
-        roomStatus = "finished";
-        sessionDialog(false);
-        window.wordrushOnlineFinish?.(message.ranking, {
+        const accepted = window.wordrushOnlineFinish?.(message.ranking, {
           roundId: message.roundId,
           gameSeconds: message.gameSeconds,
           cooperative: message.cooperative,
@@ -618,6 +621,9 @@
           results: message.results,
           dictionary: message.dictionary,
         });
+        if (accepted === false) return;
+        roomStatus = "finished";
+        sessionDialog(false);
         toast(message.cooperative ? "Team round complete" : "Round complete");
       }
       if (message.type === "results_settings")
