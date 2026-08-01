@@ -340,6 +340,41 @@ function recordedScore(player) {
     0,
   );
 }
+const ROUND_PARTICIPANT_RESERVED = "ROUND_PARTICIPANT_RESERVED";
+function isDetachedRoundParticipant(room, playerId) {
+  return Boolean(
+    room.status === "playing" &&
+      room.round?.participants?.has(playerId) &&
+      !room.players.has(playerId),
+  );
+}
+function rejectDetachedRoundParticipant(room, client, ws) {
+  if (!isDetachedRoundParticipant(room, client.id)) return false;
+  send(ws, { type: "error", code: ROUND_PARTICIPANT_RESERVED });
+  return true;
+}
+function createPlayer(room, client, ws) {
+  return {
+    ...client,
+    ws,
+    reconnectToken: crypto.randomBytes(32).toString("base64url"),
+    disconnectTimer: null,
+    score: room.mode === "coop" ? room.teamScore : 0,
+    words: [],
+    found: new Set(),
+    sessionWins: 0,
+    sessionLosses: 0,
+    sessionPoints: 0,
+  };
+}
+function admitPlayerToRoom(room, client, ws) {
+  if (rejectDetachedRoundParticipant(room, client, ws)) return null;
+  const player = createPlayer(room, client, ws);
+  room.players.set(client.id, player);
+  if (room.status === "playing" && room.round)
+    room.round.participants.set(client.id, player);
+  return player;
+}
 function createPendingConsent(room, mode, config, dictionaryId = room.dictionaryId || DEFAULT_DICTIONARY_ID) {
   if (!config) return;
   const adultConfig = { ...config, adult: true };
@@ -842,6 +877,7 @@ async function startRound(
     quality: result.compactDiagnostics || null,
     adultConsentRequestId: consentRequestId,
     consentedPlayerIds,
+    participants: new Map(room.players),
   };
   room.status = "playing";
   room.teamScore = 0;
@@ -871,10 +907,15 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
   clearTimeout(room.round.timer);
   room.status = "finished";
   const recorded = reason !== "skipped";
-  for (const player of room.players.values())
+  for (const player of room.round.participants.values())
     player.score = playerScore(room, player);
-  const rankedPlayers = [...room.players.values()]
-    .sort((a, b) => b.score - a.score);
+  const participantOrder = new Map(
+    [...room.round.participants.keys()].map((id, index) => [id, index]),
+  );
+  const rankedPlayers = [...room.round.participants.values()].sort(
+    (a, b) =>
+      b.score - a.score || participantOrder.get(a.id) - participantOrder.get(b.id),
+  );
   const winningScore = rankedPlayers[0]?.score;
   if (recorded) {
     rankedPlayers.forEach((player) => {
@@ -1191,19 +1232,7 @@ async function handle(ws, message) {
     room.creatorId = client.id;
     client.name = cleanText(message.name, client.name);
     client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
-    const player = {
-      ...client,
-      ws,
-      reconnectToken: crypto.randomBytes(32).toString("base64url"),
-      disconnectTimer: null,
-      score: room.mode === "coop" ? room.teamScore : 0,
-      words: [],
-      found: new Set(),
-      sessionWins: 0,
-      sessionLosses: 0,
-      sessionPoints: 0,
-    };
-    room.players.set(client.id, player);
+    const player = admitPlayerToRoom(room, client, ws);
     send(ws, {
       type: "room_created",
       code: room.code,
@@ -1252,6 +1281,7 @@ async function handle(ws, message) {
       });
       return broadcast(room, state(room));
     }
+    if (rejectDetachedRoundParticipant(room, client, ws)) return;
     if (room.players.size >= MAX_PLAYERS)
       return send(ws, { type: "error", code: "ROOM_FULL" });
     if (roomExposesAdultContent(room)) {
@@ -1263,19 +1293,7 @@ async function handle(ws, message) {
     client.roomCode = room.code;
     client.name = cleanText(message.name, client.name);
     client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
-    const player = {
-      ...client,
-      ws,
-      reconnectToken: crypto.randomBytes(32).toString("base64url"),
-      disconnectTimer: null,
-      score: room.mode === "coop" ? room.teamScore : 0,
-      words: [],
-      found: new Set(),
-      sessionWins: 0,
-      sessionLosses: 0,
-      sessionPoints: 0,
-    };
-    room.players.set(client.id, player);
+    const player = admitPlayerToRoom(room, client, ws);
     send(ws, {
       type: "joined_room",
       code: room.code,
@@ -1315,21 +1333,10 @@ async function handle(ws, message) {
 
       function admitPlayer() {
         if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
+        if (rejectDetachedRoundParticipant(targetRoom, challengeClient, ws)) return null;
         if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
         challengeClient.roomCode = targetRoom.code;
-        const player = {
-          ...challengeClient,
-          ws,
-          reconnectToken: crypto.randomBytes(32).toString("base64url"),
-          disconnectTimer: null,
-          score: targetRoom.mode === "coop" ? targetRoom.teamScore : 0,
-          words: [],
-          found: new Set(),
-          sessionWins: 0,
-          sessionLosses: 0,
-          sessionPoints: 0,
-        };
-        targetRoom.players.set(challengeClient.id, player);
+        const player = admitPlayerToRoom(targetRoom, challengeClient, ws);
         send(ws, {
           type: "adult_pre_admission_accepted",
           challengeId: challenge.challengeId,
@@ -1379,21 +1386,10 @@ async function handle(ws, message) {
 
       function admitNormalJoin() {
         if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
+        if (rejectDetachedRoundParticipant(targetRoom, challengeClient, ws)) return null;
         if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
         challengeClient.roomCode = targetRoom.code;
-        const player = {
-          ...challengeClient,
-          ws,
-          reconnectToken: crypto.randomBytes(32).toString("base64url"),
-          disconnectTimer: null,
-          score: targetRoom.mode === "coop" ? targetRoom.teamScore : 0,
-          words: [],
-          found: new Set(),
-          sessionWins: 0,
-          sessionLosses: 0,
-          sessionPoints: 0,
-        };
-        targetRoom.players.set(challengeClient.id, player);
+        const player = admitPlayerToRoom(targetRoom, challengeClient, ws);
         send(ws, {
           type: "joined_room",
           code: targetRoom.code,
@@ -1891,6 +1887,7 @@ module.exports = {
   prunePreAdmissionChallenges,
   CONSENT_TIMEOUT_MS,
   CHALLENGE_TIMEOUT_MS,
+  ROUND_PARTICIPANT_RESERVED,
 };
 
 const { Leaderboard } = require("./leaderboard");

@@ -126,6 +126,46 @@ function wordPath(board, size, word) {
     }
   return null;
 }
+async function createRoomWithPlayers(names) {
+  const host = await client(names[0]);
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room", { name: names[0] });
+  const created = await createdPromise;
+  await lobbyPromise;
+  const guests = [];
+  for (const name of names.slice(1)) {
+    const guest = await client(name);
+    const joinedPromise = next(guest, "joined_room");
+    message(guest, "join_room", { code: created.code, name });
+    await joinedPromise;
+    guests.push(guest);
+  }
+  return { host, guests, code: created.code };
+}
+async function startClassicTestRound(host, code) {
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  await startedPromise;
+  return rooms.get(code);
+}
+async function startRoundImmediately(host) {
+  const startedPromise = next(host, "round_start_now");
+  message(host, "start_round_now");
+  await startedPromise;
+}
+async function finishTestRound(host, players) {
+  const finishedPromises = players.map((ws) => next(ws, "round_finished"));
+  message(host, "end_round");
+  return (await Promise.all(finishedPromises))[0];
+}
+async function closeTestRoom(host, players) {
+  const active = players.filter((ws) => ws.readyState <= 1);
+  const closedPromises = active.map((ws) => next(ws, "session_closed"));
+  message(host, "end_session");
+  await Promise.all(closedPromises);
+  for (const ws of players) if (ws.readyState <= 1) ws.close();
+}
 test.before(
   () => new Promise((resolve) => server.listen(0, "127.0.0.1", resolve)),
 );
@@ -1591,6 +1631,475 @@ test("skipping Random Rush continues at most once", async () => {
   message(host, "end_session");
   await closed;
   host.close();
+});
+
+test("round results include every admitted player, including a zero-score player", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "all-result-host",
+    "all-result-guest",
+    "all-result-zero",
+  ]);
+  const room = await startClassicTestRound(host, code);
+  room.round.board = ["C", "A", "T", ...Array(13).fill("X")];
+  await startRoundImmediately(host);
+
+  for (const ws of [host, guests[0]]) {
+    const accepted = next(ws, "word_accepted");
+    message(ws, "submit_word", { word: "CAT", path: [0, 1, 2] });
+    await accepted;
+  }
+  const finished = await finishTestRound(host, [host, ...guests]);
+  assert.deepEqual(
+    finished.ranking.map((player) => player.id),
+    ["all-result-host", "all-result-guest", "all-result-zero"],
+  );
+  assert.equal(finished.ranking[2].score, 0);
+  assert.deepEqual(finished.ranking[2].words, []);
+  await closeTestRoom(host, [host, ...guests]);
+});
+
+test("tied zero-score participants remain in deterministic admission order", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "zero-tie-host",
+    "zero-tie-first",
+    "zero-tie-second",
+  ]);
+  const room = await startClassicTestRound(host, code);
+  const finished = await finishTestRound(host, [host, ...guests]);
+  assert.deepEqual(
+    finished.ranking.map((player) => ({ id: player.id, score: player.score })),
+    [
+      { id: "zero-tie-host", score: 0 },
+      { id: "zero-tie-first", score: 0 },
+      { id: "zero-tie-second", score: 0 },
+    ],
+  );
+  assert.deepEqual(
+    [...room.round.participants.keys()],
+    ["zero-tie-host", "zero-tie-first", "zero-tie-second"],
+  );
+  await closeTestRoom(host, [host, ...guests]);
+});
+
+test("a deliberately departed participant remains in the completed round", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "leave-result-host",
+    "leave-result-guest",
+  ]);
+  const guest = guests[0];
+  const room = await startClassicTestRound(host, code);
+  room.round.board = ["C", "A", "T", ...Array(13).fill("X")];
+  await startRoundImmediately(host);
+  const accepted = next(guest, "word_accepted");
+  message(guest, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  await accepted;
+
+  const left = next(guest, "session_left");
+  message(guest, "leave_session");
+  await left;
+  assert.equal(room.players.has("leave-result-guest"), false);
+  assert.equal(room.round.participants.has("leave-result-guest"), true);
+
+  const detached = room.round.participants.get("leave-result-guest");
+  const before = {
+    name: detached.name,
+    avatar: detached.avatar,
+    score: detached.score,
+    words: detached.words.map((item) => ({ ...item })),
+    reconnectToken: detached.reconnectToken,
+  };
+  const beforeOrder = [...room.round.participants.keys()];
+  for (const reconnectToken of [undefined, "wrong-reconnect-token"]) {
+    const claimant = await client("leave-result-guest");
+    const errorPromise = next(claimant, "error");
+    message(claimant, "join_room", {
+      code,
+      name: "untrusted-claimant",
+      avatar: "🦊",
+      ...(reconnectToken ? { reconnectToken } : {}),
+    });
+    assert.deepEqual(await errorPromise, {
+      type: "error",
+      code: "ROUND_PARTICIPANT_RESERVED",
+    });
+    const resumeError = next(claimant, "error");
+    message(claimant, "resume_room", {
+      code,
+      ...(reconnectToken ? { reconnectToken } : {}),
+    });
+    assert.deepEqual(await resumeError, {
+      type: "error",
+      code: "RESUME_FAILED",
+    });
+    claimant.close();
+  }
+  assert.equal(room.players.has("leave-result-guest"), false);
+  assert.strictEqual(room.round.participants.get("leave-result-guest"), detached);
+  assert.deepEqual(
+    {
+      name: detached.name,
+      avatar: detached.avatar,
+      score: detached.score,
+      words: detached.words,
+      reconnectToken: detached.reconnectToken,
+    },
+    before,
+  );
+  assert.deepEqual([...room.round.participants.keys()], beforeOrder);
+
+  const finished = await finishTestRound(host, [host]);
+  assert.deepEqual(
+    finished.ranking.map((player) => player.id),
+    ["leave-result-guest", "leave-result-host"],
+  );
+  const departed = finished.ranking.find(
+    (player) => player.id === "leave-result-guest",
+  );
+  assert.equal(departed.name, before.name);
+  assert.equal(departed.avatar, before.avatar);
+  assert.equal(departed.score, before.score);
+  assert.deepEqual(departed.words, before.words);
+  await closeTestRoom(host, [host]);
+  guest.close();
+});
+
+test("a guest whose reconnect grace expires remains in the round result", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "expiry-result-host",
+    "expiry-result-guest",
+  ]);
+  const guest = guests[0];
+  const room = await startClassicTestRound(host, code);
+  const disconnected = nextMatching(
+    host,
+    "room_state",
+    (state) =>
+      state.players.find((player) => player.id === "expiry-result-guest")
+        ?.connected === false,
+  );
+  guest.close();
+  await disconnected;
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  assert.equal(room.players.has("expiry-result-guest"), false);
+  assert.equal(room.round.participants.has("expiry-result-guest"), true);
+
+  const finished = await finishTestRound(host, [host]);
+  assert.deepEqual(
+    finished.ranking.map((player) => player.id),
+    ["expiry-result-host", "expiry-result-guest"],
+  );
+  await closeTestRoom(host, [host]);
+});
+
+test("a detached participant cannot resume after reconnect grace expires", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "expired-reconnect-host",
+    "expired-reconnect-guest",
+  ]);
+  const guest = guests[0];
+  const room = await startClassicTestRound(host, code);
+  const reconnectToken = room.players.get("expired-reconnect-guest").reconnectToken;
+  const disconnected = nextMatching(
+    host,
+    "room_state",
+    (state) =>
+      state.players.find((player) => player.id === "expired-reconnect-guest")
+        ?.connected === false,
+  );
+  guest.close();
+  await disconnected;
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  assert.equal(room.players.has("expired-reconnect-guest"), false);
+
+  const claimant = await client("expired-reconnect-guest");
+  const joinError = next(claimant, "error");
+  message(claimant, "join_room", { code, reconnectToken });
+  assert.equal((await joinError).code, "ROUND_PARTICIPANT_RESERVED");
+  const resumeError = next(claimant, "error");
+  message(claimant, "resume_room", { code, reconnectToken });
+  assert.equal((await resumeError).code, "RESUME_FAILED");
+  claimant.close();
+
+  const finished = await finishTestRound(host, [host]);
+  assert.equal(
+    finished.ranking.filter((player) => player.id === "expired-reconnect-guest").length,
+    1,
+  );
+  await closeTestRoom(host, [host]);
+});
+
+test("adult pre-admission cannot reclaim a detached round participant", async () => {
+  const host = await client("adult-reserved-host");
+  const guest = await client("adult-reserved-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  await joinedPromise;
+
+  const consentPromise = next(host, "adult_consent_request");
+  message(host, "start_game", { mode: "dirty" });
+  const consent = await consentPromise;
+  const hostAccepted = next(host, "adult_consent_player_accepted");
+  message(host, "adult_consent_response", {
+    requestId: consent.requestId,
+    accepted: true,
+  });
+  await hostAccepted;
+  const startedPromise = next(host, "round_started");
+  const guestAccepted = next(guest, "adult_consent_player_accepted");
+  message(guest, "adult_consent_response", {
+    requestId: consent.requestId,
+    accepted: true,
+  });
+  await guestAccepted;
+  await startedPromise;
+  const room = rooms.get(created.code);
+
+  const left = next(guest, "session_left");
+  message(guest, "leave_session");
+  await left;
+  assert.equal(room.players.has("adult-reserved-guest"), false);
+
+  const claimant = await client("adult-reserved-guest");
+  const errorPromise = next(claimant, "error");
+  message(claimant, "join_room", { code: created.code });
+  assert.equal((await errorPromise).code, "ROUND_PARTICIPANT_RESERVED");
+  assert.equal(
+    [...preAdmissionChallenges.values()].some(
+      (challenge) => challenge.ws === claimant,
+    ),
+    false,
+  );
+  claimant.close();
+
+  const finishedPromise = next(host, "round_finished");
+  message(host, "end_round");
+  await finishedPromise;
+  const closed = next(host, "session_closed");
+  message(host, "end_session");
+  await closed;
+  host.close();
+  guest.close();
+});
+
+test("a player admitted during an active round is registered exactly once", async () => {
+  const { host, code } = await createRoomWithPlayers(["late-admission-host"]);
+  const room = await startClassicTestRound(host, code);
+  const late = await client("late-admission-guest");
+  const joined = next(late, "joined_room");
+  message(late, "join_room", { code, name: "late-admission-guest" });
+  await joined;
+  assert.deepEqual([...room.round.participants.keys()], [
+    "late-admission-host",
+    "late-admission-guest",
+  ]);
+  const finished = await finishTestRound(host, [host, late]);
+  assert.deepEqual(
+    finished.ranking.map((player) => player.id),
+    ["late-admission-host", "late-admission-guest"],
+  );
+  await closeTestRoom(host, [host, late]);
+});
+
+test("reconnecting an active participant preserves its record without duplication", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "reconnect-result-host",
+    "reconnect-result-guest",
+  ]);
+  const guest = guests[0];
+  const room = await startClassicTestRound(host, code);
+  room.round.board = ["C", "A", "T", ...Array(13).fill("X")];
+  await startRoundImmediately(host);
+  const accepted = next(guest, "word_accepted");
+  message(guest, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  await accepted;
+  const reconnectToken = room.players.get("reconnect-result-guest").reconnectToken;
+  const disconnected = nextMatching(
+    host,
+    "room_state",
+    (state) =>
+      state.players.find((player) => player.id === "reconnect-result-guest")
+        ?.connected === false,
+  );
+  guest.close();
+  await disconnected;
+
+  const resumed = await client("reconnect-result-guest");
+  const resumedPromise = next(resumed, "room_resumed");
+  const statePromise = next(resumed, "room_state");
+  message(resumed, "resume_room", { code, reconnectToken });
+  await resumedPromise;
+  await statePromise;
+  assert.equal(room.round.participants.size, 2);
+  assert.equal(room.players.get("reconnect-result-guest").score, 9);
+  assert.deepEqual(room.players.get("reconnect-result-guest").words, [
+    { word: "CAT", points: 9 },
+  ]);
+
+  const finished = await finishTestRound(host, [host, resumed]);
+  assert.deepEqual(
+    finished.ranking.map((player) => player.id),
+    ["reconnect-result-guest", "reconnect-result-host"],
+  );
+  await closeTestRoom(host, [host, resumed]);
+});
+
+test("joining after completion does not alter the finished round result", async () => {
+  const { host, code } = await createRoomWithPlayers(["finished-result-host"]);
+  const room = await startClassicTestRound(host, code);
+  const finished = await finishTestRound(host, [host]);
+  const originalIds = finished.ranking.map((player) => player.id);
+  const spectator = await client("after-result-spectator");
+  const joined = next(spectator, "joined_room");
+  const statePromise = next(spectator, "room_state");
+  message(spectator, "join_room", { code, name: "after-result-spectator" });
+  await joined;
+  const state = await statePromise;
+  assert.deepEqual(state.lastResult.ranking.map((player) => player.id), originalIds);
+  assert.equal(room.round.participants.has("after-result-spectator"), false);
+  assert.deepEqual(room.lastResult.ranking.map((player) => player.id), originalIds);
+  await closeTestRoom(host, [host, spectator]);
+});
+
+test("live, resumed, and display finished results share participant IDs and order", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "propagation-result-host",
+    "propagation-result-guest",
+  ]);
+  const guest = guests[0];
+  const tokenPromise = next(host, "display_token");
+  message(host, "create_display_token");
+  const token = await tokenPromise;
+  const display = await displayClient();
+  const displayConnected = next(display, "display_state");
+  message(display, "display_hello", { token: token.token });
+  await displayConnected;
+  const room = await startClassicTestRound(host, code);
+  const finishedLive = next(host, "round_finished");
+  const finishedGuest = next(guest, "round_finished");
+  const finishedDisplay = nextMatching(
+    display,
+    "display_state",
+    (message) => message.event === "round_finished",
+  );
+  message(host, "end_round");
+  const finished = await finishedLive;
+  await finishedGuest;
+  const displayResult = await finishedDisplay;
+  const expectedIds = finished.ranking.map((player) => player.id);
+  assert.deepEqual(room.lastResult.ranking.map((player) => player.id), expectedIds);
+  assert.deepEqual(
+    displayResult.state.lastResult.ranking.map((player) => player.id),
+    expectedIds,
+  );
+
+  const reconnectToken = room.players.get("propagation-result-host").reconnectToken;
+  host.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const resumed = await client("propagation-result-host");
+  const resumedPromise = next(resumed, "room_resumed");
+  const statePromise = next(resumed, "room_state");
+  message(resumed, "resume_room", { code, reconnectToken });
+  await resumedPromise;
+  const state = await statePromise;
+  assert.deepEqual(state.lastResult.ranking.map((player) => player.id), expectedIds);
+
+  const closed = [next(resumed, "session_closed"), next(guest, "session_closed")];
+  message(resumed, "end_session");
+  await Promise.all(closed);
+  resumed.close();
+  guest.close();
+  display.close();
+});
+
+test("a subsequent round receives a fresh participant set", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "fresh-round-host",
+    "fresh-round-departed",
+  ]);
+  const departed = guests[0];
+  const firstRound = await startClassicTestRound(host, code);
+  const firstRoundId = firstRound.round.id;
+  const left = next(departed, "session_left");
+  message(departed, "leave_session");
+  await left;
+  const firstFinished = await finishTestRound(host, [host]);
+  assert.deepEqual(firstFinished.ranking.map((player) => player.id), [
+    "fresh-round-host",
+    "fresh-round-departed",
+  ]);
+
+  const secondRound = await startClassicTestRound(host, code);
+  assert.notEqual(secondRound.round.id, firstRoundId);
+  assert.deepEqual([...secondRound.round.participants.keys()], ["fresh-round-host"]);
+  const rejoined = await client("fresh-round-departed");
+  const joined = next(rejoined, "joined_room");
+  message(rejoined, "join_room", { code, name: "fresh-round-departed" });
+  await joined;
+  assert.deepEqual([...secondRound.round.participants.keys()], [
+    "fresh-round-host",
+    "fresh-round-departed",
+  ]);
+  const secondFinished = await finishTestRound(host, [host, rejoined]);
+  assert.deepEqual(secondFinished.ranking.map((player) => player.id), [
+    "fresh-round-host",
+    "fresh-round-departed",
+  ]);
+  await closeTestRoom(host, [host, rejoined]);
+  departed.close();
+});
+
+test("a skipped round keeps all participants and remains unrecorded", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "skipped-complete-host",
+    "skipped-complete-first",
+    "skipped-complete-second",
+  ]);
+  const room = await startClassicTestRound(host, code);
+  const leaderboardBefore = fs.existsSync(process.env.WORDRUSH_LEADERBOARD_FILE)
+    ? fs.readFileSync(process.env.WORDRUSH_LEADERBOARD_FILE, "utf8")
+    : null;
+  const finishedPromise = next(host, "round_finished");
+  message(host, "skip_round", { roundId: room.round.id });
+  const finished = await finishedPromise;
+  assert.equal(finished.reason, "skipped");
+  assert.equal(finished.recorded, false);
+  assert.deepEqual(finished.ranking.map((player) => player.id), [
+    "skipped-complete-host",
+    "skipped-complete-first",
+    "skipped-complete-second",
+  ]);
+  const leaderboardAfter = fs.existsSync(process.env.WORDRUSH_LEADERBOARD_FILE)
+    ? fs.readFileSync(process.env.WORDRUSH_LEADERBOARD_FILE, "utf8")
+    : null;
+  assert.equal(leaderboardAfter, leaderboardBefore);
+  await closeTestRoom(host, [host, ...guests]);
+});
+
+test("leaderboard recording receives one complete recordable participant ranking", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "complete-leaderboard-host",
+    "complete-leaderboard-scoring",
+    "complete-leaderboard-zero",
+  ]);
+  const room = await startClassicTestRound(host, code);
+  room.round.board = ["C", "A", "T", ...Array(13).fill("X")];
+  await startRoundImmediately(host);
+  const accepted = next(guests[0], "word_accepted");
+  message(guests[0], "submit_word", { word: "CAT", path: [0, 1, 2] });
+  await accepted;
+  const finished = await finishTestRound(host, [host, ...guests]);
+  const data = JSON.parse(fs.readFileSync(process.env.WORDRUSH_LEADERBOARD_FILE, "utf8"));
+  const records = finished.ranking.map((player) => data.players[player.id]);
+  assert.equal(records.length, 3);
+  assert.ok(records.every(Boolean));
+  assert.ok(records.every((record) => record.rounds === 1));
+  assert.equal(data.players["complete-leaderboard-zero"].totalScore, 0);
+  await closeTestRoom(host, [host, ...guests]);
 });
 
 test("authoritative multiplayer results populate trusted leaderboard persistence", async () => {
