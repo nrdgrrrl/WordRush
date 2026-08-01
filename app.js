@@ -869,7 +869,6 @@ async function start(
   dictionaryId = DEFAULT_DICTIONARY_ID,
 ) {
   const generationRequest = ++soloGenerationRequest;
-  clearSuddenDeathPresentation();
   if (
     window.wordrushStartSessionGame?.({
       mode,
