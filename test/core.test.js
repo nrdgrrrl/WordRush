@@ -17,6 +17,8 @@ const {
   configForPreset,
   validateCustomConfig,
   shouldEndOnRejectedWord,
+  chainWordMatches,
+  advanceChainFields,
 } = require("../game-config");
 const boardCore = require("../board-core");
 const { DEFAULT_DICTIONARY_ID } = require("../dictionary-registry");
@@ -387,4 +389,35 @@ test("shouldEndOnRejectedWord matches expected semantics", () => {
     { config: { sudden: false }, reason: "duplicate", expected: false },
   ])
     assert.equal(shouldEndOnRejectedWord(config, reason), expected);
+});
+
+test("word chain helpers keep accepted state authoritative", () => {
+  const fields = {
+    lastAcceptedWord: "",
+    requiredLetter: "",
+    chainResetLetter: "",
+    chainRemainingByInitial: { C: 1, D: 1, T: 1, G: 1 },
+  };
+  assert.equal(chainWordMatches(fields.requiredLetter, "cat"), true);
+  advanceChainFields(fields, "cat");
+  assert.deepEqual(fields, {
+    lastAcceptedWord: "CAT",
+    requiredLetter: "T",
+    chainResetLetter: "",
+    chainRemainingByInitial: { C: 0, D: 1, T: 1, G: 1 },
+  });
+
+  const unchanged = structuredClone(fields);
+  assert.equal(chainWordMatches(fields.requiredLetter, "dog"), false);
+  assert.deepEqual(fields, unchanged);
+
+  fields.chainRemainingByInitial.T = 0;
+  advanceChainFields(fields, "cat");
+  assert.equal(fields.requiredLetter, "");
+  assert.equal(fields.chainResetLetter, "T");
+
+  advanceChainFields(fields, "dog");
+  assert.equal(fields.lastAcceptedWord, "DOG");
+  assert.equal(fields.requiredLetter, "G");
+  assert.equal(fields.chainResetLetter, "");
 });

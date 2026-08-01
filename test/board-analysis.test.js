@@ -73,6 +73,12 @@ test("createQualityReport calculates deterministic buckets and spatial metrics",
   const report = createQualityReport({ board, size: 4, minimum: 3, lexicon });
 
   assert.equal(report.totalPlayableWords, 6);
+  const starts = Object.fromEntries(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => [letter, 0]),
+  );
+  starts.A = 6;
+  assert.deepEqual(report.playableWordStarts, starts);
+  assert.equal("words" in report, false);
   assert.deepEqual(report.lengthBuckets, {
     "3-4": 2,
     "5-6": 2,
@@ -126,6 +132,11 @@ test("quality reports honor the explicit minimum without a production lexicon", 
     lexicon: ["ABC", "ABCDH", "ABCDHL", "ABCDHLPON"],
   });
   assert.equal(report.totalPlayableWords, 3);
+  const starts = Object.fromEntries(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => [letter, 0]),
+  );
+  starts.A = 3;
+  assert.deepEqual(report.playableWordStarts, starts);
   assert.deepEqual(report.lengthBuckets, {
     "3-4": 0,
     "5-6": 2,

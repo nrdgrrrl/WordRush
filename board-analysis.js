@@ -296,11 +296,15 @@ function concentrationForFamily(participation) {
 function buildReportFromSolution({ board, size, minimum, solution }) {
   const tileParticipation = Array(board.length).fill(0);
   const tileParticipationByLength = emptyFamilyArrays(board.length);
+  const playableWordStarts = Object.fromEntries(
+    Array.from({ length: 26 }, (_, index) => [String.fromCharCode(65 + index), 0]),
+  );
   const lengthBuckets = Object.fromEntries(
     LENGTH_BUCKETS.map(([name]) => [name, 0]),
   );
   let longestPlayableWord = null;
   for (const word of solution.words) {
+    playableWordStarts[word[0]]++;
     const family = familyForWord(word);
     for (const index of solution.wordTileIndices[word]) {
       tileParticipation[index]++;
@@ -330,6 +334,7 @@ function buildReportFromSolution({ board, size, minimum, solution }) {
   };
   return {
     totalPlayableWords: solution.words.length,
+    playableWordStarts,
     lengthBuckets,
     longestPlayableWord,
     longestPlayableLength: longestPlayableWord?.length || 0,
@@ -395,6 +400,9 @@ function* connectedRegionsCooperatively(unused, size, context) {
 function* buildReportCooperatively(context, board, size, minimum, solution) {
   const tileParticipation = Array(board.length).fill(0);
   const tileParticipationByLength = emptyFamilyArrays(board.length);
+  const playableWordStarts = Object.fromEntries(
+    Array.from({ length: 26 }, (_, index) => [String.fromCharCode(65 + index), 0]),
+  );
   const legacyTiles = {
     all: new Set(),
     medium: new Set(),
@@ -406,6 +414,7 @@ function* buildReportCooperatively(context, board, size, minimum, solution) {
   let longestPlayableWord = null;
   for (const word of solution.words) {
     yield* recordOperation(context, "aggregationCount");
+    playableWordStarts[word[0]]++;
     const family = familyForWord(word);
     const wordTiles = solution.wordTileIndices[word];
     for (const index of wordTiles) {
@@ -444,6 +453,7 @@ function* buildReportCooperatively(context, board, size, minimum, solution) {
   );
   return {
     totalPlayableWords: solution.words.length,
+    playableWordStarts,
     lengthBuckets,
     longestPlayableWord,
     longestPlayableLength: longestPlayableWord?.length || 0,

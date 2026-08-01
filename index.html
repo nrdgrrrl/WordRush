@@ -242,6 +242,11 @@
           ></div>
         </div>
         <div class="preview" id="preview">Trace a word</div>
+        <div class="chain-status" id="chainStatus" hidden aria-live="polite">
+          <div><span>Last accepted:</span><strong id="chainLastAccepted">None</strong></div>
+          <div><span>Next letter:</span><strong id="chainRequiredLetter">Any</strong></div>
+          <p id="chainGuidance" hidden></p>
+        </div>
         <div class="board">
           <svg
             class="trace-layer"

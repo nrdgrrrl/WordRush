@@ -888,6 +888,108 @@ test("authoritatively accepts a valid path and rejects an invalid word", async (
   ws.close();
 });
 
+test("Word Chain commits one shared state while preserving player ownership", async () => {
+  const host = await client("chain-host");
+  const guest = await client("chain-guest");
+  const createdPromise = next(host, "room_created");
+  const lobbyPromise = next(host, "room_state");
+  message(host, "create_room");
+  const created = await createdPromise;
+  await lobbyPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code });
+  const joined = await joinedPromise;
+
+  const hostStarted = next(host, "round_started");
+  const guestStarted = next(guest, "round_started");
+  message(host, "start_game", { mode: "chain" });
+  const started = await hostStarted;
+  await guestStarted;
+  assert.deepEqual(started.chain, {
+    lastAcceptedWord: "",
+    requiredLetter: "",
+    chainResetLetter: "",
+  });
+
+  const room = rooms.get(created.code);
+  room.round.board = [
+    "C", "A", "T", "O", "N",
+    "X", "X", "X", "X", "E",
+    ...Array(15).fill("X"),
+  ];
+  room.round.chainRemainingByInitial = { C: 1, T: 1, E: 0 };
+  room.round.startedAt = Date.now() - 1;
+  room.round.introEndsAt = Date.now() - 1;
+  room.round.endsAt = Date.now() + 60_000;
+
+  const shortWord = next(host, "word_rejected");
+  message(host, "submit_word", { word: "TO", path: [2, 3] });
+  const shortResult = await shortWord;
+  assert.equal(shortResult.reason, "minimum");
+  assert.equal(shortResult.requiredLetter, "");
+  assert.deepEqual(shortResult.chain, started.chain);
+
+  const hostAccepted = next(host, "word_accepted");
+  const guestAccepted = next(guest, "word_accepted");
+  message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  const accepted = await hostAccepted;
+  const guestAcceptedMessage = await guestAccepted;
+  assert.deepEqual(accepted.chain, {
+    lastAcceptedWord: "CAT",
+    requiredLetter: "T",
+    chainResetLetter: "",
+  });
+  assert.deepEqual(guestAcceptedMessage.chain, accepted.chain);
+  assert.equal(room.players.get("chain-host").score, 9);
+  assert.deepEqual(room.players.get("chain-host").words, [{ word: "CAT", points: 9 }]);
+
+  const wrongWord = next(guest, "word_rejected");
+  message(guest, "submit_word", { word: "ONE", path: [3, 4, 9] });
+  const wrongResult = await wrongWord;
+  assert.equal(wrongResult.reason, "chain");
+  assert.equal(wrongResult.requiredLetter, "T");
+  assert.deepEqual(wrongResult.chain, accepted.chain);
+
+  const duplicateWord = next(guest, "word_rejected");
+  message(guest, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  assert.equal((await duplicateWord).reason, "duplicate");
+
+  const resetHostAccepted = next(host, "word_accepted");
+  const resetGuestAccepted = next(guest, "word_accepted");
+  message(host, "submit_word", { word: "TONE", path: [2, 3, 4, 9] });
+  const resetAccepted = await resetHostAccepted;
+  await resetGuestAccepted;
+  assert.deepEqual(resetAccepted.chain, {
+    lastAcceptedWord: "TONE",
+    requiredLetter: "",
+    chainResetLetter: "E",
+  });
+  assert.equal(room.players.get("chain-host").score, 25);
+  assert.deepEqual(room.players.get("chain-host").words, [
+    { word: "CAT", points: 9 },
+    { word: "TONE", points: 16 },
+  ]);
+
+  guest.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const resumedGuest = await client("chain-guest");
+  const resumedPromise = next(resumedGuest, "room_resumed");
+  const resumedStatePromise = next(resumedGuest, "room_state");
+  message(resumedGuest, "resume_room", {
+    code: created.code,
+    reconnectToken: joined.reconnectToken,
+  });
+  await resumedPromise;
+  const resumedState = await resumedStatePromise;
+  assert.deepEqual(resumedState.chain, resetAccepted.chain);
+
+  const finishedPromise = next(resumedGuest, "round_finished");
+  message(host, "end_round");
+  assert.equal((await finishedPromise).reason, "manual");
+  resumedGuest.close();
+  host.close();
+});
+
 test("rejects multiplayer submissions before the authoritative round start", async () => {
   const ws = await client("early-submitter");
   const createdPromise = next(ws, "room_created");

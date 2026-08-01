@@ -522,6 +522,7 @@
             message.mode,
             message.randomRush,
             message.dictionary,
+            message.chain,
           );
           sessionDialog(false);
         }
@@ -559,6 +560,7 @@
           message.mode,
           message.randomRush,
           message.dictionary,
+          message.chain,
         );
         sessionDialog(false);
         toast("Round started · " + message.players.length + " players");
@@ -567,14 +569,20 @@
         window.wordrushRoundStartNow?.(message);
       if (message.type === "word_accepted") {
         if (message.playerId === guestId)
-          window.wordrushRecordOnlineWord?.(message.word, message.points);
+          window.wordrushRecordOnlineWord?.(message.word, message.points, message.chain);
+        else
+          window.wordrushUpdateOnlineChain?.(message.chain, true);
         renderPlayers(message.scores);
         const own = message.scores.find((score) => score.id === guestId);
         if (own && $("#gameScore")) $("#gameScore").textContent = own.score;
       }
       if (message.type === "word_rejected") {
         if (message.playerId === guestId)
-          window.wordrushRecordOnlineIncorrect?.(message.reason, message.word);
+          window.wordrushRecordOnlineIncorrect?.(
+            message.reason,
+            message.word,
+            message.chain,
+          );
         const rejection = {
           minimum: `Need at least ${message.minimum || 3} letters`,
           path: "Tiles must connect in order",
