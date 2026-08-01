@@ -1,6 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { applyTraceSegment, crossedTileIndices } = require("../trace-geometry");
+const {
+  applyTraceSegment,
+  crossedTileIndices,
+  pointInMovementRegion,
+} = require("../trace-geometry");
 
 function boardTiles(size, width = 40, gap = 5) {
   return Array.from({ length: size * size }, (_, index) => {
@@ -56,6 +60,23 @@ test("fast diagonal movement preserves every crossed diagonal tile", () => {
   );
 });
 
+test("the final release segment preserves tiles crossed after the last move", () => {
+  const tiles = boardTiles(4);
+  const afterMove = segment([0], { x: 20, y: 20 }, { x: 65, y: 20 }, tiles, 4);
+  assert.deepEqual(
+    segment(afterMove, { x: 65, y: 20 }, { x: 155, y: 20 }, tiles, 4),
+    [0, 1, 2, 3],
+  );
+});
+
+test("a release at the last move coordinate does not duplicate a tile", () => {
+  const tiles = boardTiles(3);
+  assert.deepEqual(
+    segment([0, 1], { x: 65, y: 20 }, { x: 65, y: 20 }, tiles, 3),
+    [0, 1],
+  );
+});
+
 test("slow movement produces the same path as one fast segment", () => {
   const tiles = boardTiles(4);
   const slow = segment(
@@ -66,6 +87,12 @@ test("slow movement produces the same path as one fast segment", () => {
     4,
   );
   assert.deepEqual(slow, segment([0], { x: 20, y: 20 }, { x: 110, y: 20 }, tiles, 4));
+});
+
+test("slow movement uses the existing conservative center-region decision", () => {
+  const tile = boardTiles(1)[0];
+  assert.equal(pointInMovementRegion({ x: 20, y: 20 }, tile), true);
+  assert.equal(pointInMovementRegion({ x: 39, y: 39 }, tile), false);
 });
 
 test("movement through a gap does not select a nearby tile", () => {
@@ -85,6 +112,22 @@ test("a zero-width corner touch does not insert an unrelated tile", () => {
   assert.deepEqual(
     crossedTileIndices({ x: 20, y: 20 }, { x: 45, y: 45 }, tiles),
     [0],
+  );
+});
+
+test("a bounding-rectangle corner graze outside the movement region is ignored", () => {
+  const tile = { index: 1, left: 45, top: 0, width: 40, height: 40 };
+  assert.deepEqual(
+    crossedTileIndices({ x: 40, y: 40 }, { x: 50, y: 30 }, [tile]),
+    [],
+  );
+});
+
+test("a tangent-only touch of the movement region is ignored", () => {
+  const tile = { index: 1, left: 0, top: 0, width: 40, height: 40 };
+  assert.deepEqual(
+    crossedTileIndices({ x: 0, y: 33.6 }, { x: 40, y: 33.6 }, [tile]),
+    [],
   );
 });
 

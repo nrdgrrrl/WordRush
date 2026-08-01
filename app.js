@@ -1775,9 +1775,11 @@ function safeCandidateAt(x, y, target = null, starting = false) {
   const left = gridRect.left + tile.offsetLeft,
     top = gridRect.top + tile.offsetTop,
     w = tile.offsetWidth,
-    h = tile.offsetHeight,
-    radius = Math.min(w, h) * 0.34;
-  return Math.hypot(x - (left + w / 2), y - (top + h / 2)) <= radius
+    h = tile.offsetHeight;
+  return window.WordRushTraceGeometry.pointInMovementRegion(
+    { x, y },
+    { left, top, width: w, height: h },
+  )
     ? tile
     : null;
 }
@@ -1850,6 +1852,8 @@ $("#grid").onpointermove = (e) => {
 };
 $("#grid").onpointerup = (e) => {
   if (!s.drag || e.pointerId !== s.pointerId) return;
+  tracePoint(e.clientX, e.clientY);
+  applyTraceSegment(e.clientX, e.clientY);
   s.drag = 0;
   s.pointerId = null;
   s.previousPointer = null;

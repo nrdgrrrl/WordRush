@@ -4,19 +4,6 @@
 })(typeof globalThis === "undefined" ? this : globalThis, function () {
   const EPSILON = 1e-9;
 
-  function axisInterval(start, end, minimum, maximum) {
-    if (
-      ![start, end, minimum, maximum].every(Number.isFinite) ||
-      minimum >= maximum
-    )
-      return null;
-    if (start === end)
-      return start > minimum && start < maximum ? [-Infinity, Infinity] : null;
-    const first = (minimum - start) / (end - start);
-    const second = (maximum - start) / (end - start);
-    return first < second ? [first, second] : [second, first];
-  }
-
   function tileEdges(tile) {
     if (!tile || !Number.isFinite(tile.left) || !Number.isFinite(tile.top))
       return null;
@@ -32,14 +19,53 @@
     };
   }
 
-  function segmentIntersection(start, end, tile) {
+  function movementCircle(tile) {
     const edges = tileEdges(tile);
     if (!edges) return null;
-    const x = axisInterval(start.x, end.x, edges.left, edges.right);
-    const y = axisInterval(start.y, end.y, edges.top, edges.bottom);
-    if (!x || !y) return null;
-    const entry = Math.max(0, x[0], y[0]);
-    const exit = Math.min(1, x[1], y[1]);
+    return {
+      x: (edges.left + edges.right) / 2,
+      y: (edges.top + edges.bottom) / 2,
+      radius: Math.min(tile.width, tile.height) * 0.34,
+    };
+  }
+
+  function pointInMovementRegion(point, tile) {
+    const circle = movementCircle(tile);
+    if (
+      !circle ||
+      !point ||
+      !Number.isFinite(point.x) ||
+      !Number.isFinite(point.y)
+    )
+      return false;
+    return Math.hypot(point.x - circle.x, point.y - circle.y) <= circle.radius;
+  }
+
+  function segmentIntersection(start, end, tile) {
+    const circle = movementCircle(tile);
+    if (
+      !circle ||
+      !start ||
+      !end ||
+      ![start.x, start.y, end.x, end.y].every(Number.isFinite)
+    )
+      return null;
+    const dx = end.x - start.x,
+      dy = end.y - start.y,
+      a = dx * dx + dy * dy;
+    if (a <= 0) return null;
+    const offsetX = start.x - circle.x,
+      offsetY = start.y - circle.y,
+      b = 2 * (offsetX * dx + offsetY * dy),
+      c = offsetX * offsetX + offsetY * offsetY - circle.radius ** 2,
+      discriminant = b * b - 4 * a * c;
+    // A tangent has no interior interval and must not invent a tile.
+    if (discriminant <= 0) return null;
+    const root = Math.sqrt(discriminant),
+      first = (-b - root) / (2 * a),
+      second = (-b + root) / (2 * a),
+      entry = Math.max(0, Math.min(first, second)),
+      exit = Math.min(1, Math.max(first, second));
     return exit - entry > EPSILON ? { entry, exit } : null;
   }
 
@@ -82,5 +108,5 @@
     return nextPath;
   }
 
-  return { applyTraceSegment, crossedTileIndices };
+  return { applyTraceSegment, crossedTileIndices, pointInMovementRegion };
 });
