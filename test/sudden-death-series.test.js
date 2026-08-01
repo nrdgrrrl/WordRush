@@ -61,6 +61,20 @@ test("sudden_series preset is fixed to ten bounded micro-rounds", () => {
   ]);
 });
 
+test("series identities freeze sanitized pre-series session totals", () => {
+  const series = createSuddenDeathSeries([
+    { ...players[0], sessionWins: 3, sessionLosses: 2, sessionPoints: 41 },
+    { ...players[1], session: { wins: 7, losses: 1, points: 88 } },
+  ], {
+    id: "series-session-snapshot",
+    accountingId: "accounting-session-snapshot",
+  });
+  assert.deepEqual(series.participants.map((player) => player.session), [
+    { wins: 3, losses: 2, points: 41 },
+    { wins: 7, losses: 1, points: 88 },
+  ]);
+});
+
 test("ten rounds record outcome-only history and allow a final co-winner tie", () => {
   const series = createSuddenDeathSeries(players, {
     id: "series-tie",

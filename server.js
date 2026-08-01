@@ -765,6 +765,11 @@ function connectedSeriesRoster(room) {
       id: player.id,
       name: player.name,
       avatar: player.avatar || "🐈",
+      session: {
+        wins: player.sessionWins,
+        losses: player.sessionLosses,
+        points: player.sessionPoints,
+      },
     }));
 }
 function removeExcludedSeriesSeats(room, roster) {
@@ -873,10 +878,17 @@ function seriesRankedParticipants(series) {
 }
 function seriesSessionSnapshot(room, participant) {
   const player = room.players.get(participant.id);
+  const session = player
+    ? {
+        wins: player.sessionWins,
+        losses: player.sessionLosses,
+        points: player.sessionPoints,
+      }
+    : participant.session;
   return {
-    wins: player?.sessionWins || 0,
-    losses: player?.sessionLosses || 0,
-    points: player?.sessionPoints || 0,
+    wins: Math.max(0, Math.floor(Number(session?.wins) || 0)),
+    losses: Math.max(0, Math.floor(Number(session?.losses) || 0)),
+    points: Math.max(0, Number(session?.points) || 0),
   };
 }
 function recordSuddenDeathSeriesAccounting(room, series) {
@@ -2106,6 +2118,19 @@ async function handle(ws, message) {
     if (client.id !== room.creatorId)
       return send(ws, { type: "error", code: "CREATOR_ONLY" });
     closeRoom(room, "creator_ended");
+    return;
+  }
+  if (type === "cancel_series") {
+    if (client.id !== room.creatorId)
+      return send(ws, { type: "error", code: "CREATOR_ONLY" });
+    const series = room.suddenDeathSeries;
+    if (!series || !["playing", "interstitial"].includes(series.phase))
+      return send(ws, { type: "error", code: "SERIES_NOT_ACTIVE" });
+    if (typeof message.seriesId !== "string" || !message.seriesId)
+      return send(ws, { type: "error", code: "SERIES_ID_REQUIRED" });
+    if (message.seriesId !== series.id)
+      return send(ws, { type: "error", code: "SERIES_STALE" });
+    cancelSuddenDeathSeries(room, "host_cancelled");
     return;
   }
   if (type === "start_game") {

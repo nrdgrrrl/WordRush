@@ -234,6 +234,8 @@
     $("#endGame").hidden = false;
     $("#endGame").textContent = "End round";
     $("#endGame").setAttribute("aria-label", "End round");
+    $("#cancelSeries").hidden = true;
+    $("#cancelSeriesTransition").hidden = true;
     $("#gameBack").setAttribute("aria-label", "Back to home");
     $("#exitMultiplayer").hidden = true;
     $("#exitMultiplayer").textContent = "Leave party";
@@ -366,14 +368,18 @@
         : "Waiting for the host to start. Get your fingers ready!";
     const inSession = Boolean(sessionCode);
     const playing = roomStatus === "playing";
+    const seriesPlaying = inSession && creator && playing && roomSeries?.phase === "playing";
+    const seriesInterstitial = inSession && creator && playing && roomSeries?.phase === "interstitial";
     $("#endGame").hidden = inSession
-      ? !creator || !playing
+      ? !creator || !playing || Boolean(seriesInterstitial)
       : false;
     $("#endGame").textContent = inSession ? "Skip round" : "End round";
     $("#endGame").setAttribute(
       "aria-label",
       inSession ? "Skip round" : "End round",
     );
+    $("#cancelSeries").hidden = !seriesPlaying;
+    $("#cancelSeriesTransition").hidden = !seriesInterstitial;
     $("#gameBack").setAttribute(
       "aria-label",
       inSession
@@ -710,8 +716,8 @@
         clearConsentUi();
         roomStatus = "playing";
         creatorId = message.creatorId || creatorId;
-        updateLobbyControls();
         roomSeries = message.series || null;
+        updateLobbyControls();
         renderPlayers(message.players, roomSeries);
         window.wordrushOnlineRound?.(
           message.round,
@@ -731,6 +737,7 @@
         roomStatus = "playing";
         roomSeries = message.series || roomSeries;
         renderPlayers(message.series?.participants || message.players, roomSeries);
+        updateLobbyControls();
         window.wordrushSeriesRoundFinished?.(message);
         sessionDialog(false);
       }
@@ -998,7 +1005,16 @@
       return;
     leaveSession();
   }
+  function requestCancelSeries() {
+    if (!creator || !roomSeries?.id || !sessionCode || !socket || socket.readyState !== WebSocket.OPEN)
+      return;
+    if (!confirm("End this Sudden Death Series and return to the room lobby?")) return;
+    trackMultiplayer("series_cancel_requested", { series_id: roomSeries.id });
+    sendWhenReady({ type: "cancel_series", seriesId: roomSeries.id });
+  }
   $("#sessionLeave")?.addEventListener("click", requestLeave);
+  $("#cancelSeries")?.addEventListener("click", requestCancelSeries);
+  $("#cancelSeriesTransition")?.addEventListener("click", requestCancelSeries);
   $("#exitMultiplayer")?.addEventListener("click", () => {
     if (!creator || confirm("Close this multiplayer session for everyone?"))
       leaveSession();

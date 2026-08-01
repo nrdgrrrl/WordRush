@@ -15,12 +15,28 @@
     "complete",
   ]);
 
+  function sessionTotals(player) {
+    const source = player?.session && typeof player.session === "object"
+      ? player.session
+      : player || {};
+    return {
+      wins: Math.max(0, Math.floor(Number(source.wins ?? source.sessionWins) || 0)),
+      losses: Math.max(0, Math.floor(Number(source.losses ?? source.sessionLosses) || 0)),
+      points: Math.max(0, Number(source.points ?? source.sessionPoints) || 0),
+    };
+  }
+
   function identity(player) {
     if (!player || typeof player !== "object") return null;
     const id = String(player.id || "").trim();
     const name = String(player.name || "").trim();
     if (!id || !name) return null;
-    return { id, name, avatar: String(player.avatar || "🐈") };
+    return {
+      id,
+      name,
+      avatar: String(player.avatar || "🐈"),
+      session: sessionTotals(player),
+    };
   }
 
   function participant(series, playerId) {
@@ -80,6 +96,7 @@
       participants: identities.map((player) => ({
         ...player,
         status: "active",
+        session: { ...player.session },
         strikes: 0,
         aggregateScore: 0,
         acceptedWords: [],
