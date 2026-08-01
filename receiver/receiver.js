@@ -13,6 +13,7 @@
   let targetRoomCode = "";
   const reconnectStorageKey = "wordrush-display-reconnect";
   const suddenDeathOutcome = window.WordrushSuddenDeathOutcome;
+  const suddenDeathSeries = window.WordrushSuddenDeathSeries;
   let renderedFinishedRoundId = null;
 
   const savedReconnectCredential = () => {
@@ -59,7 +60,7 @@
         ? "Host skip · no strike"
         : "Round ended · no strike";
   const seriesStandings = (series) =>
-    (series?.participants || []).map((player) =>
+    suddenDeathSeries.rankParticipants(series?.participants || []).map((player) =>
       "<div class=\"series-tv-standing" +
       (player.status === "withdrawn" ? " is-withdrawn" : "") +
       "\"><strong>" + escape(player.avatar || "🐈") + " " +
@@ -87,13 +88,13 @@
   };
   const renderSeriesFinished = (state, result) => {
     const series = result.series || state.series;
-    const ranking = [...(result.ranking || series?.participants || [])].sort((a, b) =>
-      (Number(a.series?.strikes ?? a.strikes) || 0) -
-      (Number(b.series?.strikes ?? b.strikes) || 0) ||
-      ((a.series?.status === "withdrawn" || a.status === "withdrawn") -
-        (b.series?.status === "withdrawn" || b.status === "withdrawn")),
+    const ranking = suddenDeathSeries.rankParticipants(
+      result.ranking || series?.participants || [],
     );
-    const winners = ranking.filter((player) => series?.winnerIds?.includes(player.id));
+    const winners = ranking.filter((player) =>
+      (player.series?.status || player.status) !== "withdrawn" &&
+      series?.winnerIds?.includes(player.id),
+    );
     const headline = winners.length
       ? winners.map((player) => escape(player.avatar || "🐈") + " " +
           escape(player.name)).join(" & ") +

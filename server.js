@@ -571,7 +571,14 @@ function publicChainState(round) {
 function publicSeriesState(room) {
   return suddenDeathSeries.publicSeries(room.suddenDeathSeries);
 }
+function publicRoomPlayers(room) {
+  const series = room.suddenDeathSeries;
+  if (!series) return [...room.players.values()];
+  const activeIds = new Set(activeSeriesParticipants(room).map((player) => player.id));
+  return [...room.players.values()].filter((player) => activeIds.has(player.id));
+}
 function state(room) {
+  const publicPlayers = publicRoomPlayers(room);
   return {
     type: "room_state",
     code: room.code,
@@ -587,7 +594,7 @@ function state(room) {
     ...(room.status === "playing" && room.round?.config?.chain
       ? { chain: publicChainState(room.round) }
       : {}),
-    players: [...room.players.values()].map((p) => ({
+    players: publicPlayers.map((p) => ({
       id: p.id,
       name: p.name,
       avatar: p.avatar || "🐈",
@@ -615,6 +622,7 @@ function state(room) {
   };
 }
 function displayState(room) {
+  const publicPlayers = publicRoomPlayers(room);
   return {
     code: room.code,
     mode: room.mode,
@@ -624,7 +632,7 @@ function displayState(room) {
     config: roomConfig(room),
     series: publicSeriesState(room),
     lastResult: room.status === "finished" ? room.lastResult : null,
-    players: [...room.players.values()].map((p) => ({
+    players: publicPlayers.map((p) => ({
       name: p.name,
       avatar: p.avatar || "🐈",
       score: playerScore(room, p),
@@ -749,6 +757,28 @@ function seriesParticipant(room, playerId) {
 function activeSeriesParticipants(room) {
   return suddenDeathSeries.activeParticipants(room.suddenDeathSeries);
 }
+function connectedSeriesRoster(room) {
+  return [...room.players.values()]
+    .filter((player) => player.ws?.readyState === 1)
+    .map((player) => ({
+      id: player.id,
+      name: player.name,
+      avatar: player.avatar || "🐈",
+    }));
+}
+function removeExcludedSeriesSeats(room, roster) {
+  const rosterIds = new Set(roster.map((player) => player.id));
+  for (const [id, player] of room.players) {
+    if (rosterIds.has(id) || player.ws?.readyState === 1) continue;
+    clearTimeout(player.disconnectTimer);
+    player.disconnectTimer = null;
+    for (const client of clients.values()) {
+      if (client.id === id && client.roomCode === room.code)
+        client.roomCode = null;
+    }
+    room.players.delete(id);
+  }
+}
 function releaseSeriesGenerationWait(generation) {
   generation?.transitionWaitResolve?.();
 }
@@ -838,13 +868,7 @@ function withdrawSeriesParticipant(room, playerId, reason = "withdrawn") {
   return true;
 }
 function seriesRankedParticipants(series) {
-  const order = new Map(series.participants.map((player, index) => [player.id, index]));
-  return [...series.participants].sort((a, b) =>
-    (a.status === "active" ? 0 : 1) - (b.status === "active" ? 0 : 1) ||
-    a.strikes - b.strikes ||
-    b.aggregateScore - a.aggregateScore ||
-    order.get(a.id) - order.get(b.id),
-  );
+  return suddenDeathSeries.rankParticipants(series.participants);
 }
 function seriesSessionSnapshot(room, participant) {
   const player = room.players.get(participant.id);
@@ -1269,6 +1293,12 @@ async function startRound(
     series.transitionId = null;
     series.nextRoundAt = null;
   }
+  const seriesRoundPlayers = series
+    ? series.participants
+      .filter((participant) => participant.status === "active")
+      .map((participant) => [participant.id, room.players.get(participant.id)])
+      .filter(([, player]) => player)
+    : null;
   const introEndsAt = Date.now() + introDuration;
   const startedAt = introEndsAt;
   room.round = {
@@ -1295,13 +1325,11 @@ async function startRound(
     quality: result.compactDiagnostics || null,
     adultConsentRequestId: consentRequestId,
     consentedPlayerIds,
-    participants: new Map(room.players),
+    participants: series ? new Map(seriesRoundPlayers) : new Map(room.players),
     seriesId: series?.id || null,
     seriesRoundNumber,
     seriesParticipantIds: series
-      ? series.participants
-        .filter((participant) => participant.status === "active")
-        .map((participant) => participant.id)
+      ? seriesRoundPlayers.map(([id]) => id)
       : [],
   };
   room.status = "playing";
@@ -1691,11 +1719,23 @@ async function handle(ws, message) {
       rooms.has(client.roomCode)
     )
       return send(ws, { type: "error", code: "ALREADY_IN_ROOM" });
+    const frozenIdentity = room?.suddenDeathSeries
+      ? seriesParticipant(room, client.id)
+      : null;
     const player = room?.players.get(client.id);
-    if (!room || !player || player.reconnectToken !== message.reconnectToken)
+    if (!room)
       return send(ws, { type: "error", code: "RESUME_FAILED" });
-    if (room.suddenDeathSeries && seriesParticipant(room, client.id)?.status === "withdrawn")
+    if (frozenIdentity?.status === "withdrawn")
       return send(ws, { type: "error", code: "SERIES_PARTICIPANT_WITHDRAWN" });
+    if (!player || player.reconnectToken !== message.reconnectToken)
+      return send(ws, {
+        type: "error",
+        code: room.suddenDeathSeries &&
+          ["playing", "interstitial"].includes(room.suddenDeathSeries.phase) &&
+          !frozenIdentity
+          ? "SERIES_ROSTER_FROZEN"
+          : "RESUME_FAILED",
+      });
     if (
       roomExposesAdultContent(room) &&
       !room.round?.consentedPlayerIds?.includes(client.id)
@@ -1707,9 +1747,6 @@ async function handle(ws, message) {
     client.roomCode = room.code;
     client.name = cleanText(message.name, player.name);
     client.avatar = cleanText(message.avatar, player.avatar || "🐈", 2);
-    const frozenIdentity = room.suddenDeathSeries
-      ? seriesParticipant(room, client.id)
-      : null;
     if (frozenIdentity) {
       client.name = frozenIdentity.name;
       client.avatar = frozenIdentity.avatar;
@@ -1776,6 +1813,13 @@ async function handle(ws, message) {
     const room = rooms.get(String(message.code || "").toUpperCase());
     if (!room) return send(ws, { type: "error", code: "ROOM_NOT_FOUND" });
     const existingPlayer = room.players.get(client.id);
+    const activeSeries = room.suddenDeathSeries &&
+      ["playing", "interstitial"].includes(room.suddenDeathSeries.phase);
+    const frozenIdentity = room.suddenDeathSeries
+      ? seriesParticipant(room, client.id)
+      : null;
+    if (activeSeries && !frozenIdentity)
+      return send(ws, { type: "error", code: "SERIES_ROSTER_FROZEN" });
     if (existingPlayer) {
       if (room.suddenDeathSeries && seriesParticipant(room, client.id)?.status === "withdrawn")
         return send(ws, { type: "error", code: "SERIES_PARTICIPANT_WITHDRAWN" });
@@ -1799,9 +1843,6 @@ async function handle(ws, message) {
         existingPlayer.avatar || "🐈",
         2,
       );
-      const frozenIdentity = room.suddenDeathSeries
-        ? seriesParticipant(room, client.id)
-        : null;
       if (frozenIdentity) {
         client.name = frozenIdentity.name;
         client.avatar = frozenIdentity.avatar;
@@ -1882,6 +1923,19 @@ async function handle(ws, message) {
 
       function admitPlayer() {
         if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
+        if (
+          targetRoom.suddenDeathSeries &&
+          ["playing", "interstitial"].includes(targetRoom.suddenDeathSeries.phase)
+        ) {
+          const frozenIdentity = seriesParticipant(targetRoom, challengeClient.id);
+          send(ws, {
+            type: "error",
+            code: frozenIdentity?.status === "withdrawn"
+              ? "SERIES_PARTICIPANT_WITHDRAWN"
+              : "SERIES_ROSTER_FROZEN",
+          });
+          return null;
+        }
         if (rejectDetachedRoundParticipant(targetRoom, challengeClient, ws)) return null;
         if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
         challengeClient.roomCode = targetRoom.code;
@@ -2096,23 +2150,18 @@ async function handle(ws, message) {
     if (Object.keys(message).some((field) => SERVER_GENERATION_POLICY_FIELDS.has(field)))
       return send(ws, { type: "error", code: "ROUND_GENERATION_POLICY_NOT_ALLOWED" });
     if (requested === SUDDEN_SERIES_MODE) {
-      if (room.status === "finished") {
-        retireFinishedRoundForReplacement(room);
-        broadcast(room, state(room));
-      }
-      const roster = [...room.players.values()]
-        .filter((player) => player.ws?.readyState === 1)
-        .map((player) => ({
-          id: player.id,
-          name: player.name,
-          avatar: player.avatar || "🐈",
-        }));
+      const roster = connectedSeriesRoster(room);
       if (roster.length < suddenDeathSeries.MIN_PLAYERS)
         return send(ws, {
           type: "error",
           code: "SERIES_REQUIRES_MULTIPLAYER",
           minimumPlayers: suddenDeathSeries.MIN_PLAYERS,
         });
+      if (room.status === "finished") {
+        retireFinishedRoundForReplacement(room);
+        broadcast(room, state(room));
+      }
+      removeExcludedSeriesSeats(room, roster);
       if (room.pendingConsent) cancelPendingConsent(room, "configuration_changed");
       clearQueuedNextRound(room);
       room.randomRush = false;

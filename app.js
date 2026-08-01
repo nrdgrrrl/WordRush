@@ -13,7 +13,8 @@ const $ = (s) => document.querySelector(s),
   isPartyRound = sharedConfig.isPartyRound,
   shouldEndOnRejectedWord = sharedConfig.shouldEndOnRejectedWord,
   multiplayerResultState = window.WordrushMultiplayerResultState,
-  suddenDeathOutcome = window.WordrushSuddenDeathOutcome;
+  suddenDeathOutcome = window.WordrushSuddenDeathOutcome,
+  suddenDeathSeries = window.WordrushSuddenDeathSeries;
 let customAdult = false;
 function emit(name, detail = {}) {
   document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
@@ -483,7 +484,7 @@ function renderResults(
     series = null,
   } = {},
 ) {
-  const rows = ranking?.length
+  const sourceRows = ranking?.length
     ? ranking
     : [{
         id: "local-player",
@@ -492,6 +493,9 @@ function renderResults(
         score: s.score,
         words: [...s.found].map((word) => ({ word, points: word.length ** 2 })),
       }];
+  const rows = series
+    ? suddenDeathSeries.rankParticipants(sourceRows)
+    : sourceRows;
   if (!series) {
     const panel = $("#seriesFinalPanel");
     if (panel) panel.hidden = true;
@@ -523,7 +527,7 @@ function renderResults(
     const row = document.createElement("article");
     const outcomeBadge = suddenDeath
       ? suddenDeathOutcome.badgeForPlayer(suddenDeathData, player)
-      : series?.winnerIds?.includes(player.id)
+      : player.series?.status !== "withdrawn" && series?.winnerIds?.includes(player.id)
         ? "WINNER"
         : null;
     row.className = "result-player-card rank-" + Math.min(index + 1, 4) +
@@ -579,12 +583,9 @@ function renderHeroScores(
 ) {
   const target = $("#resultHeroScores");
   if (!target) return;
-  const ordered = [...players].sort((a, b) =>
-    series
-      ? (Number(a.series?.strikes) || 0) - (Number(b.series?.strikes) || 0) ||
-        (a.series?.status === "withdrawn") - (b.series?.status === "withdrawn")
-      : (Number(b.score) || 0) - (Number(a.score) || 0),
-  );
+  const ordered = series
+    ? suddenDeathSeries.rankParticipants(players, { winnerIds: series.winnerIds })
+    : [...players].sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
   const displayed = ordered.slice(0, 2);
   const winningScore = series
     ? Number(displayed[0]?.series?.strikes) || 0
@@ -602,7 +603,7 @@ function renderHeroScores(
       const isWinner = !skipped && suddenDeathData
         ? suddenDeathWinnerIds.has(player.id)
         : series
-          ? series.winnerIds?.includes(player.id)
+          ? player.series?.status !== "withdrawn" && series.winnerIds?.includes(player.id)
           : !skipped && (Number(player.score) || 0) === winningScore;
       card.className = "result-hero-score-card" +
         (isWinner ? " is-winner" : "") +
@@ -612,7 +613,7 @@ function renderHeroScores(
       badge.textContent = skipped
         ? "SCORE"
         : series
-          ? series.winnerIds?.includes(player.id)
+          ? player.series?.status !== "withdrawn" && series.winnerIds?.includes(player.id)
             ? "WINNER"
             : "STRIKES"
         : suddenDeathData

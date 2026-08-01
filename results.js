@@ -20,6 +20,7 @@
   let currentSuddenDeath = null;
   let currentSeries = null;
   const suddenDeathOutcome = window.WordrushSuddenDeathOutcome;
+  const suddenDeathSeries = window.WordrushSuddenDeathSeries;
 
   function localRow() {
     const profile = window.wordrushProfile?.() || {
@@ -104,11 +105,9 @@
 
   function renderHighlights(players, skipped = false, suddenDeath = null, series = null) {
     const outcome = suddenDeathOutcome.normalizeSuddenDeathOutcome(suddenDeath);
-    const topPlayer = [...players].sort(
-      (a, b) => series
-        ? (Number(a.series?.strikes) || 0) - (Number(b.series?.strikes) || 0)
-        : (Number(b.score) || 0) - (Number(a.score) || 0),
-    )[0];
+    const topPlayer = series
+      ? suddenDeathSeries.rankParticipants(players, { winnerIds: series.winnerIds })[0]
+      : [...players].sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))[0];
     const words = players.flatMap((player) =>
       (player.words || []).map((item) => ({ ...item, player })),
     );
@@ -145,10 +144,7 @@
       $("#seriesRoundHistory")?.replaceChildren();
       return;
     }
-    const standings = [...(ranking || [])].sort((a, b) =>
-      (Number(a.series?.strikes) || 0) - (Number(b.series?.strikes) || 0) ||
-      (a.series?.status === "withdrawn") - (b.series?.status === "withdrawn"),
-    );
+    const standings = suddenDeathSeries.rankParticipants(ranking || []);
     const standingsTarget = $("#seriesFinalStandings");
     standingsTarget?.replaceChildren(
       ...standings.map((player) => {

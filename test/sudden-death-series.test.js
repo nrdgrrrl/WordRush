@@ -7,6 +7,7 @@ const {
   TOTAL_ROUNDS,
   activeParticipants,
   cancelSeries,
+  rankParticipants,
   createSuddenDeathSeries,
   finalizeSeries,
   recordAcceptedWord,
@@ -195,4 +196,53 @@ test("cancellation records a recovery reason without producing winners", () => {
   assert.equal(cancelSeries(series, "generation_failed"), true);
   assert.equal(series.cancelledReason, "generation_failed");
   assert.equal(series.winnerIds.length, 0);
+});
+
+test("public series ranking keeps withdrawn players after active winners", () => {
+  const ranking = rankParticipants([
+    {
+      id: "withdrawn",
+      name: "Withdrawn",
+      status: "withdrawn",
+      strikes: 0,
+      aggregateScore: 999,
+    },
+    {
+      id: "winner",
+      name: "Winner",
+      status: "active",
+      strikes: 1,
+      aggregateScore: 10,
+    },
+    {
+      id: "active-runner-up",
+      name: "Active runner-up",
+      status: "active",
+      strikes: 2,
+      aggregateScore: 20,
+    },
+  ]);
+  assert.deepEqual(ranking.map((player) => player.id), [
+    "winner",
+    "active-runner-up",
+    "withdrawn",
+  ]);
+
+  const hero = rankParticipants(ranking, { winnerIds: ["winner"] }).slice(0, 2);
+  assert.equal(hero[0].id, "winner");
+  assert.equal(hero.some((player) => player.status === "withdrawn"), false);
+
+  const resultSurface = rankParticipants([
+    {
+      id: "withdrawn",
+      score: 999,
+      series: { status: "withdrawn", strikes: 0 },
+    },
+    {
+      id: "winner",
+      score: 10,
+      series: { status: "active", strikes: 1 },
+    },
+  ], { winnerIds: ["winner"] });
+  assert.deepEqual(resultSurface.map((player) => player.id), ["winner", "withdrawn"]);
 });

@@ -31,6 +31,41 @@
     return (series?.participants || []).filter((player) => player.status === "active");
   }
 
+  function participantDetails(player) {
+    return player?.series && typeof player.series === "object"
+      ? player.series
+      : player || {};
+  }
+
+  function compareParticipants(a, b, options = {}) {
+    const aDetails = participantDetails(a);
+    const bDetails = participantDetails(b);
+    const winnerIds = options.winnerIds instanceof Set
+      ? options.winnerIds
+      : new Set(options.winnerIds || []);
+    const order = options.order instanceof Map ? options.order : null;
+    const aActive = aDetails.status !== "withdrawn";
+    const bActive = bDetails.status !== "withdrawn";
+    const aWinner = aActive && winnerIds.has(a?.id);
+    const bWinner = bActive && winnerIds.has(b?.id);
+    return (
+      Number(!aActive) - Number(!bActive) ||
+      Number(!aWinner) - Number(!bWinner) ||
+      (Number(aDetails.strikes) || 0) - (Number(bDetails.strikes) || 0) ||
+      (Number(b?.score ?? bDetails.aggregateScore) || 0) -
+        (Number(a?.score ?? aDetails.aggregateScore) || 0) ||
+      (order ? (order.get(a?.id) ?? 0) - (order.get(b?.id) ?? 0) : 0)
+    );
+  }
+
+  function rankParticipants(players, options = {}) {
+    const values = Array.isArray(players) ? [...players] : [];
+    const order = options.order instanceof Map
+      ? options.order
+      : new Map(values.map((player, index) => [player?.id, index]));
+    return values.sort((a, b) => compareParticipants(a, b, { ...options, order }));
+  }
+
   function createSuddenDeathSeries(players, { id, accountingId } = {}) {
     const identities = (Array.isArray(players) ? players : [])
       .map(identity)
@@ -201,10 +236,12 @@
     activeParticipants,
     addGameplaySeconds,
     cancelSeries,
+    compareParticipants,
     createSuddenDeathSeries,
     finalizeSeries,
     participant,
     publicSeries,
+    rankParticipants,
     recordAcceptedWord,
     recordRound,
     withdrawParticipant,

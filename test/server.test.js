@@ -3624,6 +3624,79 @@ test("Sudden Death Series freezes its roster, settles stale transitions, and res
   await closeTestRoom(host, [host, reconnected, guests[1], newcomer]);
 });
 
+test("Sudden Death Series preserves a finished result when fewer than two players are connected", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "series-failed-start-host",
+    "series-failed-start-guest",
+  ]);
+  await startClassicTestRound(host, code);
+  await finishTestRound(host, [host, guests[0]]);
+  const room = rooms.get(code);
+  const existingResult = room.lastResult;
+  guests[0].close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const errorPromise = next(host, "error");
+  message(host, "start_game", { mode: "sudden_series" });
+  const error = await errorPromise;
+  assert.equal(error.code, "SERIES_REQUIRES_MULTIPLAYER");
+  assert.equal(room.status, "finished");
+  assert.equal(room.lastResult, existingResult);
+  assert.equal(room.suddenDeathSeries, null);
+  await closeTestRoom(host, [host, guests[0]]);
+});
+
+test("Sudden Death Series removes excluded retained seats and preserves included reconnects", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "series-roster-cleanup-host",
+    "series-roster-cleanup-excluded",
+    "series-roster-cleanup-included",
+  ]);
+  const excluded = guests[0];
+  const excludedToken = rooms.get(code).players.get("series-roster-cleanup-excluded").reconnectToken;
+  excluded.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "sudden_series" });
+  const started = await startedPromise;
+  const room = rooms.get(code);
+  const rosterIds = [
+    "series-roster-cleanup-host",
+    "series-roster-cleanup-included",
+  ];
+  assert.equal(room.players.has("series-roster-cleanup-excluded"), false);
+  assert.deepEqual([...room.round.participants.keys()], rosterIds);
+  assert.deepEqual(started.players.map((player) => player.id), rosterIds);
+  assert.equal(started.players.length, 2);
+
+  const excludedResume = await client("series-roster-cleanup-excluded");
+  const resumeErrorPromise = next(excludedResume, "error");
+  message(excludedResume, "resume_room", {
+    code,
+    reconnectToken: excludedToken,
+  });
+  assert.equal((await resumeErrorPromise).code, "SERIES_ROSTER_FROZEN");
+  const joinErrorPromise = next(excludedResume, "error");
+  message(excludedResume, "join_room", { code, name: "series-roster-cleanup-excluded" });
+  assert.equal((await joinErrorPromise).code, "SERIES_ROSTER_FROZEN");
+  excludedResume.close();
+
+  const included = guests[1];
+  const includedToken = room.players.get("series-roster-cleanup-included").reconnectToken;
+  included.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const reconnected = await client("series-roster-cleanup-included");
+  const resumedPromise = next(reconnected, "room_state");
+  message(reconnected, "resume_room", { code, reconnectToken: includedToken });
+  const resumed = await resumedPromise;
+  assert.equal(resumed.series.id, started.series.id);
+  assert.deepEqual(resumed.players.map((player) => player.id), rosterIds);
+  assert.deepEqual([...room.round.participants.keys()], rosterIds);
+
+  await closeTestRoom(host, [host, reconnected, excluded, included]);
+});
+
 test("Sudden Death Series solo endpoint and Random Rush policy are multiplayer-only", async () => {
   const response = await postSoloBoard({ mode: "sudden_series" });
   assert.equal(response.status, 400);
@@ -3691,6 +3764,7 @@ test("Sudden Death Series final accounting is guarded and excludes withdrawn par
   suddenDeathSeries.recordAcceptedWord(series, "series-accounting-winner", "CAT", 9);
   suddenDeathSeries.recordAcceptedWord(series, "series-accounting-winner", "DOG", 16);
   suddenDeathSeries.withdrawParticipant(series, "series-accounting-withdrawn");
+  series.participants.find((player) => player.id === "series-accounting-withdrawn").aggregateScore = 999;
   series.phase = "finished";
   series.history = Array.from({ length: 10 }, (_, index) => ({
     roundNumber: index + 1,
@@ -3712,6 +3786,10 @@ test("Sudden Death Series final accounting is guarded and excludes withdrawn par
   await finishedPromise;
   assert.deepEqual(result.series.winnerIds, ["series-accounting-winner"]);
   assert.equal(result.ranking.length, 2);
+  assert.deepEqual(result.ranking.map((player) => player.id), [
+    "series-accounting-winner",
+    "series-accounting-withdrawn",
+  ]);
   assert.equal(result.ranking.find((player) => player.id === "series-accounting-withdrawn").series.status, "withdrawn");
   assert.equal(room.players.get("series-accounting-winner").sessionPoints, 25);
   assert.equal(room.players.get("series-accounting-winner").sessionWins, 1);
