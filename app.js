@@ -16,6 +16,7 @@ const $ = (s) => document.querySelector(s),
   roundTiming = window.WordrushRoundTiming,
   roundOutcome = window.WordrushRoundOutcome,
   profileMigration = window.WordrushProfileMigration,
+  playStreak = window.WordrushPlayStreak,
   suddenDeathOutcome = window.WordrushSuddenDeathOutcome,
   suddenDeathSeries = window.WordrushSuddenDeathSeries;
 let customAdult = false;
@@ -364,9 +365,7 @@ for (const key of [
   const value = Number(profile[key]);
   profile[key] = Number.isFinite(value) && value >= 0 ? value : 0;
 }
-profile.days = Array.isArray(profile.days)
-  ? profile.days.filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day)).slice(-400)
-  : [];
+profile.days = playStreak.normalizePlayDates(profile.days);
 profile.completedMultiplayerRounds = Array.isArray(profile.completedMultiplayerRounds)
   ? profile.completedMultiplayerRounds.filter((id) => typeof id === "string").slice(-50)
   : [];
@@ -391,13 +390,8 @@ function updateIdentity() {
   });
 }
 function updateProfile() {
-  const dates = [...new Set(profile.days)].sort().reverse();
-  profile.streak = dates.length ? 1 : 0;
-  for (let i = 1; i < dates.length; i++) {
-    const gap = (new Date(dates[i - 1]) - new Date(dates[i])) / 86400000;
-    if (gap !== 1) break;
-    profile.streak++;
-  }
+  profile.days = playStreak.normalizePlayDates(profile.days);
+  profile.streak = playStreak.calculateCurrentStreak(profile.days);
   localStorage.setItem("wordrush-profile", JSON.stringify(profile));
   if ($("#homeScore"))
     $("#homeScore").textContent = profile.score.toLocaleString();
@@ -407,13 +401,8 @@ function updateProfile() {
   window.wordrushStatsEvent?.();
 }
 function recordPlayDay() {
-  const now = new Date();
-  const today = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-  ].join("-");
-  if (!profile.days.includes(today)) profile.days.push(today);
+  const today = playStreak.localDateKey(new Date());
+  if (today) profile.days = playStreak.normalizePlayDates([...profile.days, today]);
 }
 function recordAcceptedWord(word) {
   const elapsed = Date.now() - s.startedAt;

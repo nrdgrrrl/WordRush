@@ -2546,6 +2546,7 @@ const server = http.createServer((req, res) => {
     "/sudden-death-series.js",
     "/round-outcome.js",
     "/profile-migration.js",
+    "/play-streak.js",
     "/multiplayer-result-state.js",
     "/round-timing.js",
     "/board-core.js",
