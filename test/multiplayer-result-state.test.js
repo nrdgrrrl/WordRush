@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { authoritativeGameplaySeconds } = require("../round-timing");
 const {
   normalizeNextRound,
   normalizeResultAction,
@@ -355,4 +356,22 @@ test("series result accounting only accepts active matching participants once", 
       false,
     );
   }
+});
+
+test("authoritative multiplayer duration is recorded once across duplicate deliveries", () => {
+  const ranking = [{ id: "duration-player", score: 10 }];
+  const resultId = "duration-result";
+  const deliveries = [[], [resultId]];
+  let totalGameSeconds = 0;
+  for (const completedResultIds of deliveries) {
+    if (!shouldRecordMultiplayerResult({
+      ranking,
+      guestId: "duration-player",
+      resultId,
+      completedResultIds,
+    }))
+      continue;
+    totalGameSeconds += authoritativeGameplaySeconds(42, 120);
+  }
+  assert.equal(totalGameSeconds, 42);
 });

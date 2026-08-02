@@ -13,6 +13,7 @@ const $ = (s) => document.querySelector(s),
   isPartyRound = sharedConfig.isPartyRound,
   shouldEndOnRejectedWord = sharedConfig.shouldEndOnRejectedWord,
   multiplayerResultState = window.WordrushMultiplayerResultState,
+  roundTiming = window.WordrushRoundTiming,
   suddenDeathOutcome = window.WordrushSuddenDeathOutcome,
   suddenDeathSeries = window.WordrushSuddenDeathSeries;
 let customAdult = false;
@@ -160,6 +161,7 @@ const s = {
   previousPointer: null,
   trace: [],
   traceFrame: 0,
+  soloRoundId: 0,
   startedAt: 0,
   endsAt: 0,
   rush: false,
@@ -191,6 +193,7 @@ const s = {
   dictionaryWords: [],
 };
 let soloGenerationRequest = 0;
+let soloRoundGeneration = 0;
 let soloSubmissionEpoch = 0;
 let soloSubmissionTail = Promise.resolve();
 let soloSubmissionErrorCount = 0;
@@ -212,14 +215,18 @@ function invalidateSoloSubmissionQueue() {
   s.acceptingSoloSubmissions = false;
   return soloSubmissionEpoch;
 }
-function isCurrentSoloSubmission(epoch, startedAt, endsAt) {
+function isCurrentSoloSubmission(epoch, roundId, startedAt, endsAt) {
   return (
     s.acceptingSoloSubmissions &&
     !s.done &&
     !s.onlineRoundKey &&
     soloSubmissionEpoch === epoch &&
+    s.soloRoundId === roundId &&
+    roundId > 0 &&
     s.startedAt === startedAt &&
-    s.endsAt === endsAt
+    s.endsAt === endsAt &&
+    startedAt > 0 &&
+    endsAt > startedAt
   );
 }
 function enqueueSoloSubmission(commit) {
@@ -635,7 +642,7 @@ function renderHeroScores(
 }
 function currentSuddenDeathRoundKey() {
   if (s.onlineRoundKey) return "online:" + s.onlineRoundKey;
-  return s.startedAt ? "solo:" + s.startedAt : null;
+  return s.soloRoundId ? "solo:" + s.soloRoundId : null;
 }
 function renderSuddenDeath(details) {
   const callout = $("#suddenDeathCallout");
@@ -812,6 +819,14 @@ function end() {
     return;
   }
   if (s.done) return;
+  if (
+    !s.onlineRoundKey &&
+    (!s.soloRoundId || !s.startedAt || !s.endsAt || s.endsAt <= s.startedAt)
+  )
+    return;
+  const soloGameplaySeconds = !s.onlineRoundKey
+    ? roundTiming.elapsedGameplaySeconds(s.startedAt, Date.now(), s.config?.seconds)
+    : 0;
   if (!s.onlineRoundKey) invalidateSoloSubmissionQueue();
   s.done = 1;
   clearInterval(s.timer);
@@ -840,7 +855,7 @@ function end() {
     : "Find words to unlock achievements.";
   profile.score += s.score;
   profile.rounds++;
-  profile.totalGameSeconds += (Date.now() - s.startedAt) / 1000;
+  profile.totalGameSeconds += soloGameplaySeconds;
   profile.gamesWon += s.score > 0 ? 1 : 0;
   profile.gamesLost += s.score > 0 ? 0 : 1;
   if (s.score > 0) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
@@ -1027,6 +1042,10 @@ function abandonActiveRound() {
   clearInterval(s.rushCountdown);
   cancelRoundIntro();
   s.done = 1;
+  s.soloRoundId = 0;
+  s.startedAt = 0;
+  s.endsAt = 0;
+  s.acceptingSoloSubmissions = false;
   activeOnlineRoundKey = null;
   s.onlineRoundKey = null;
   s.onlineSeries = null;
@@ -1180,10 +1199,13 @@ async function start(
   s.roundWordTimes = [];
   s.pick = [];
   s.done = 0;
-  s.startedAt = Date.now();
-  s.endsAt = s.startedAt + s.time * 1000;
+  s.soloRoundId = ++soloRoundGeneration;
+  s.startedAt = 0;
+  s.endsAt = 0;
   s.b = generated.board;
-  s.acceptingSoloSubmissions = true;
+  s.acceptingSoloSubmissions = false;
+  clearInterval(s.timer);
+  s.timer = 0;
   $("#gameMode").textContent = config.label;
   $("#gameTitle").textContent = "Round 01 · " + s.n + "×" + s.n;
   $("#ruleBanner").textContent = config.rule;
@@ -1191,7 +1213,7 @@ async function start(
   $("#gameScore").textContent = 0;
   $("#timer").textContent = formatTimer(s.time);
   $("#stopRush").hidden = !s.rush;
-  $("#endGame").hidden = false;
+  $("#endGame").hidden = true;
   $("#endGame").textContent = "End round";
   $("#endGame").setAttribute("aria-label", "End round");
   $("#gameBack").setAttribute("aria-label", "Back to home");
@@ -1210,7 +1232,20 @@ async function start(
       minimum_length: config.min,
     },
     onStart: () => {
+      const timing = roundTiming.startGameplay(Date.now(), config.seconds);
+      s.startedAt = timing.startedAt;
+      s.endsAt = timing.endsAt;
+      s.acceptingSoloSubmissions = true;
+      s.time = config.seconds;
       show("gameScreen", { preserveRoundIntro: true });
+      clearInterval(s.timer);
+      $("#endGame").hidden = false;
+      $("#timer").textContent = formatTimer(s.time);
+      s.timer = setInterval(() => {
+        s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
+        $("#timer").textContent = formatTimer(s.time);
+        if (s.time <= 0) end();
+      }, 250);
       emit("round-started", {
         mode,
         multiplayer: false,
@@ -1220,12 +1255,6 @@ async function start(
         minimum_length: config.min,
         duration_seconds: config.seconds,
       });
-      clearInterval(s.timer);
-      s.timer = setInterval(() => {
-        s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
-        $("#timer").textContent = formatTimer(s.time);
-        if (s.time <= 0) end();
-      }, 250);
     },
   });
 }
@@ -1276,6 +1305,7 @@ async function submit() {
     }),
     validPath = pickedPathIsValid(trace, w),
     roundEpoch = soloSubmissionEpoch,
+    roundId = s.soloRoundId,
     roundStartedAt = s.startedAt,
     roundEndsAt = s.endsAt,
     dictionaryId = s.dictionaryId,
@@ -1287,7 +1317,7 @@ async function submit() {
       : Promise.resolve(false);
   void enqueueSoloSubmission(async () => {
     const inDictionary = await dictionaryRequest;
-    if (!isCurrentSoloSubmission(roundEpoch, roundStartedAt, roundEndsAt)) return;
+    if (!isCurrentSoloSubmission(roundEpoch, roundId, roundStartedAt, roundEndsAt)) return;
     if (roundEndsAt && Date.now() >= roundEndsAt) {
       end();
       return;
@@ -1364,6 +1394,7 @@ async function submit() {
           if (
             soloSubmissionEpoch !== fatalEpoch ||
             s.done ||
+            s.soloRoundId !== roundId ||
             s.startedAt !== roundStartedAt ||
             s.suddenDeathRoundKey !== fatalRoundKey
           )
@@ -1985,6 +2016,19 @@ window.wordrushOnlineFinish = (
     profile.completedMultiplayerRounds,
   ) ? profile.completedMultiplayerRounds : [];
   const accountingResultId = result.resultId || result.accountingId || result.roundId;
+  const participantGameplaySeconds = Number(
+    accountingParticipant?.series?.gameplaySeconds,
+  );
+  const authoritativeGameSeconds = series
+    ? roundTiming.authoritativeGameplaySeconds(
+        Number.isFinite(participantGameplaySeconds) && participantGameplaySeconds >= 0
+          ? participantGameplaySeconds
+          : result.gameSeconds,
+      )
+    : roundTiming.authoritativeGameplaySeconds(
+        result.gameSeconds,
+        s.config?.seconds,
+      );
   const shouldRecord = multiplayerResultState.shouldRecordMultiplayerResult({
     ranking: normalizedRanking,
     guestId,
@@ -1996,11 +2040,7 @@ window.wordrushOnlineFinish = (
   if (shouldRecord) {
     profile.score += mine;
     profile.rounds++;
-    profile.totalGameSeconds += series
-      ? Math.max(0, Number(accountingParticipant?.series?.gameplaySeconds) || Number(result.gameSeconds) || 0)
-      : s.startedAt
-      ? Math.max(0, (Date.now() - s.startedAt) / 1000)
-      : Math.max(0, Number(result.gameSeconds) || 0);
+    profile.totalGameSeconds += authoritativeGameSeconds;
     profile.gamesWon += won ? 1 : 0;
     profile.gamesLost += won ? 0 : 1;
     profile.multiplayerWins = (profile.multiplayerWins || 0) + (won ? 1 : 0);
