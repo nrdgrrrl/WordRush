@@ -14,6 +14,8 @@ const $ = (s) => document.querySelector(s),
   shouldEndOnRejectedWord = sharedConfig.shouldEndOnRejectedWord,
   multiplayerResultState = window.WordrushMultiplayerResultState,
   roundTiming = window.WordrushRoundTiming,
+  roundOutcome = window.WordrushRoundOutcome,
+  profileMigration = window.WordrushProfileMigration,
   suddenDeathOutcome = window.WordrushSuddenDeathOutcome,
   suddenDeathSeries = window.WordrushSuddenDeathSeries;
 let customAdult = false;
@@ -320,6 +322,7 @@ const profile = (() => {
         gamesLost: 0,
         multiplayerWins: 0,
         multiplayerLosses: 0,
+        outcomeSemanticsVersion: 1,
         speedAchievement: false,
         maxGridWin: 0,
         completedMultiplayerRounds: [],
@@ -344,6 +347,7 @@ const profile = (() => {
       gamesLost: 0,
       multiplayerWins: 0,
       multiplayerLosses: 0,
+      outcomeSemanticsVersion: 1,
       speedAchievement: false,
       maxGridWin: 0,
       completedMultiplayerRounds: [],
@@ -351,6 +355,7 @@ const profile = (() => {
     };
   }
 })();
+Object.assign(profile, profileMigration.withOutcomeSemanticsVersion(profile));
 for (const key of [
   "score", "words", "streak", "longest", "rounds", "correct", "incorrect",
   "totalWordLength", "totalGameSeconds", "gamesWon", "gamesLost",
@@ -802,7 +807,7 @@ function triggerSuddenDeathExplosion(details, roundKey = s.suddenDeathRoundKey) 
     suddenDeathExplosionTimer = 0;
   }, 4500);
 }
-function end() {
+function end(completionReason) {
   if (
     window.wordrushSocket?.readyState === 1 &&
     window.wordrushSessionCode &&
@@ -819,6 +824,11 @@ function end() {
     return;
   }
   if (s.done) return;
+  if (
+    !s.onlineRoundKey &&
+    !roundOutcome.SOLO_COMPLETION_REASONS.includes(completionReason)
+  )
+    return;
   if (
     !s.onlineRoundKey &&
     (!s.soloRoundId || !s.startedAt || !s.endsAt || s.endsAt <= s.startedAt)
@@ -856,9 +866,12 @@ function end() {
   profile.score += s.score;
   profile.rounds++;
   profile.totalGameSeconds += soloGameplaySeconds;
-  profile.gamesWon += s.score > 0 ? 1 : 0;
-  profile.gamesLost += s.score > 0 ? 0 : 1;
-  if (s.score > 0) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
+  const soloOutcome = roundOutcome.classifySoloOutcome(s.config, completionReason);
+  const soloDeltas = roundOutcome.outcomeAccounting(soloOutcome);
+  profile.gamesWon += soloDeltas.gamesWon;
+  profile.gamesLost += soloDeltas.gamesLost;
+  if (soloDeltas.updatesMaxGridWin)
+    profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
   recordPlayDay();
   updateProfile();
   $("#again").disabled = false;
@@ -1244,7 +1257,7 @@ async function start(
       s.timer = setInterval(() => {
         s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
         $("#timer").textContent = formatTimer(s.time);
-        if (s.time <= 0) end();
+        if (s.time <= 0) end("timeout");
       }, 250);
       emit("round-started", {
         mode,
@@ -1319,7 +1332,7 @@ async function submit() {
     const inDictionary = await dictionaryRequest;
     if (!isCurrentSoloSubmission(roundEpoch, roundId, roundStartedAt, roundEndsAt)) return;
     if (roundEndsAt && Date.now() >= roundEndsAt) {
-      end();
+      end("timeout");
       return;
     }
     const duplicate = s.found.has(w);
@@ -1352,7 +1365,8 @@ async function submit() {
         multiplayer: false,
         randomRush: config.randomRush,
       });
-      if (hasScoreTarget(config) && s.score >= config.target) end();
+      if (hasScoreTarget(config) && s.score >= config.target)
+        end("target_reached");
     } else {
       s.rejectedAttempt = w;
       s.rejectionReason = rejectReason;
@@ -1399,7 +1413,7 @@ async function submit() {
             s.suddenDeathRoundKey !== fatalRoundKey
           )
             return;
-          end();
+          end("fatal_rejection");
         }, 300);
       }
     }
@@ -1538,7 +1552,7 @@ $("#exitParty").onclick = () => {
   $("#again").textContent = "Play again →";
   show("homeScreen");
 };
-$("#endGame").onclick = end;
+$("#endGame").onclick = () => end("manual");
 document
   .querySelectorAll("[data-mode]")
   .forEach((x) => (x.onclick = () => {
@@ -2007,14 +2021,6 @@ window.wordrushOnlineFinish = (
       " word" +
       (ownWords.length === 1 ? "" : "s") +
       " found by you.";
-  const won = accountingParticipant
-    ? result.cooperative ||
-      (series
-        ? series.winnerIds?.includes(accountingParticipant.id)
-        : suddenDeath
-        ? suddenDeathOutcome.winnerIds(suddenDeath).includes(accountingParticipant.id)
-        : accountingParticipant.score === normalizedRanking[0]?.score)
-    : false;
   profile.completedMultiplayerRounds = Array.isArray(
     profile.completedMultiplayerRounds,
   ) ? profile.completedMultiplayerRounds : [];
@@ -2041,14 +2047,26 @@ window.wordrushOnlineFinish = (
     completedResultIds: profile.completedMultiplayerRounds,
   });
   if (shouldRecord) {
+    const outcome = roundOutcome.classifyMultiplayerParticipant({
+      participantId: guestId,
+      ranking: normalizedRanking,
+      cooperative: Boolean(result.cooperative),
+      suddenDeath: result.suddenDeath,
+      series,
+      seriesComplete: Boolean(result.seriesComplete),
+      reason: result.reason,
+      recorded: !skipped,
+    });
+    const deltas = roundOutcome.outcomeAccounting(outcome, { multiplayer: true });
     profile.score += mine;
     profile.rounds++;
     profile.totalGameSeconds += authoritativeGameSeconds;
-    profile.gamesWon += won ? 1 : 0;
-    profile.gamesLost += won ? 0 : 1;
-    profile.multiplayerWins = (profile.multiplayerWins || 0) + (won ? 1 : 0);
-    profile.multiplayerLosses = (profile.multiplayerLosses || 0) + (won ? 0 : 1);
-    if (won) profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
+    profile.gamesWon += deltas.gamesWon;
+    profile.gamesLost += deltas.gamesLost;
+    profile.multiplayerWins = (profile.multiplayerWins || 0) + deltas.multiplayerWins;
+    profile.multiplayerLosses = (profile.multiplayerLosses || 0) + deltas.multiplayerLosses;
+    if (deltas.updatesMaxGridWin)
+      profile.maxGridWin = Math.max(profile.maxGridWin || 0, s.n);
     if (accountingResultId)
       profile.completedMultiplayerRounds = [
         ...profile.completedMultiplayerRounds,

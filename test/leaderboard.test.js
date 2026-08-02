@@ -161,3 +161,134 @@ test("current trusted schema persists across all ranking periods", () => {
   assert.equal(reloaded.profile("winner").totalWords, 2);
   assert.equal(reloaded.profile("nobody"), null);
 });
+
+test("explicit multiplayer outcomes support wins, losses, and neutral co-op records", () => {
+  const file = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-leaderboard-outcomes-")),
+    "scores.json",
+  );
+  const board = new Leaderboard(file);
+  board.recordScores([
+    {
+      id: "explicit-win",
+      name: "Explicit Win",
+      score: 10,
+      words: 2,
+      multiplayer: true,
+      multiplayerOutcome: "win",
+    },
+    {
+      id: "explicit-loss",
+      name: "Explicit Loss",
+      score: 8,
+      words: 1,
+      multiplayer: true,
+      multiplayerOutcome: "loss",
+    },
+    {
+      id: "explicit-neutral",
+      name: "Explicit Neutral",
+      score: 6,
+      words: 3,
+      multiplayer: true,
+      multiplayerOutcome: "neutral",
+    },
+  ]);
+  assert.deepEqual(board.profile("explicit-win"), {
+    id: "explicit-win",
+    name: "Explicit Win",
+    avatar: "🐈",
+    score: 10,
+    totalScore: 10,
+    totalWords: 2,
+    rounds: 1,
+    correct: 0,
+    incorrect: 0,
+    longest: 0,
+    totalWordLength: 0,
+    totalGameSeconds: 0,
+    multiplayerWins: 1,
+    multiplayerLosses: 0,
+    multiplayerWinRatio: 1,
+  });
+  assert.equal(board.profile("explicit-loss").multiplayerLosses, 1);
+  assert.equal(board.profile("explicit-neutral").rounds, 1);
+  assert.equal(board.profile("explicit-neutral").totalScore, 6);
+  assert.equal(board.profile("explicit-neutral").multiplayerWins, 0);
+  assert.equal(board.profile("explicit-neutral").multiplayerLosses, 0);
+  assert.equal(board.profile("explicit-neutral").multiplayerWinRatio, 0);
+});
+
+test("invalid explicit multiplayer outcomes reject before any totals mutate", () => {
+  const file = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-leaderboard-invalid-outcome-")),
+    "scores.json",
+  );
+  const board = new Leaderboard(file);
+  board.recordScore({ id: "stable", score: 10 });
+  const beforeData = JSON.stringify(board.data);
+  const beforeFile = fs.readFileSync(file, "utf8");
+  assert.throws(
+    () =>
+      board.recordScore({
+        id: "stable",
+        score: 999,
+        words: 99,
+        multiplayer: true,
+        multiplayerOutcome: "draw",
+      }),
+    /MULTIPLAYER_OUTCOME_INVALID/,
+  );
+  assert.equal(JSON.stringify(board.data), beforeData);
+  assert.equal(fs.readFileSync(file, "utf8"), beforeFile);
+
+  for (const outcome of ["win", "loss"]) {
+    assert.throws(
+      () =>
+        board.recordScore({
+          id: "stable",
+          score: 999,
+          words: 99,
+          multiplayerOutcome: outcome,
+        }),
+      /MULTIPLAYER_OUTCOME_REQUIRES_MULTIPLAYER/,
+    );
+    assert.equal(JSON.stringify(board.data), beforeData);
+    assert.equal(fs.readFileSync(file, "utf8"), beforeFile);
+  }
+
+  const neutral = board.recordScore({
+    id: "neutral-no-flag",
+    score: 7,
+    words: 2,
+    multiplayerOutcome: "neutral",
+  });
+  assert.equal(neutral.totalScore, 7);
+  assert.equal(neutral.totalWords, 2);
+  assert.equal(neutral.multiplayerWins, 0);
+  assert.equal(neutral.multiplayerLosses, 0);
+
+  const beforeBatch = JSON.stringify(board.data);
+  const beforeBatchFile = fs.readFileSync(file, "utf8");
+  assert.throws(
+    () =>
+      board.recordScores([
+        { id: "batch-player", score: 4, multiplayerOutcome: "neutral" },
+        { id: "stable", score: 999, multiplayerOutcome: "win" },
+      ]),
+    /MULTIPLAYER_OUTCOME_REQUIRES_MULTIPLAYER/,
+  );
+  assert.equal(JSON.stringify(board.data), beforeBatch);
+  assert.equal(fs.readFileSync(file, "utf8"), beforeBatchFile);
+
+  assert.throws(
+    () =>
+      board.recordScores([
+        { id: "batch-player", score: 4, multiplayerOutcome: "neutral" },
+        { id: "stable", score: 999, multiplayerOutcome: "loss" },
+      ]),
+    /MULTIPLAYER_OUTCOME_REQUIRES_MULTIPLAYER/,
+  );
+  assert.equal(JSON.stringify(board.data), beforeBatch);
+  assert.equal(fs.readFileSync(file, "utf8"), beforeBatchFile);
+});

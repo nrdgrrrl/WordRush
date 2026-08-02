@@ -2600,7 +2600,94 @@ test("tied zero-score participants remain in deterministic admission order", asy
     [...room.round.participants.keys()],
     ["zero-tie-host", "zero-tie-first", "zero-tie-second"],
   );
+  assert.deepEqual(
+    finished.ranking.map((player) => player.session),
+    [
+      { wins: 1, losses: 0, points: 0 },
+      { wins: 1, losses: 0, points: 0 },
+      { wins: 1, losses: 0, points: 0 },
+    ],
+  );
+  const board = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE);
+  for (const id of ["zero-tie-host", "zero-tie-first", "zero-tie-second"]) {
+    assert.equal(board.profile(id).multiplayerWins, 1);
+    assert.equal(board.profile(id).multiplayerLosses, 0);
+  }
   await closeTestRoom(host, [host, ...guests]);
+});
+
+test("co-op records ordinary totals while keeping every outcome counter neutral", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "coop-outcome-host",
+    "coop-outcome-guest",
+  ]);
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "coop" });
+  await startedPromise;
+  const room = rooms.get(code);
+  room.round.board = ["C", "A", "T", ...Array(13).fill("X")];
+  await startRoundImmediately(host);
+  const accepted = next(host, "word_accepted");
+  message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  await accepted;
+  const finished = await finishTestRound(host, [host, guests[0]]);
+  assert.equal(finished.cooperative, true);
+  assert.equal(finished.ranking.find((player) => player.id === "coop-outcome-host").session.points, 9);
+  assert.equal(finished.ranking.find((player) => player.id === "coop-outcome-host").session.wins, 0);
+  assert.equal(finished.ranking.find((player) => player.id === "coop-outcome-host").session.losses, 0);
+  const board = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE);
+  const hostProfile = board.profile("coop-outcome-host");
+  const guestProfile = board.profile("coop-outcome-guest");
+  assert.equal(hostProfile.rounds, 1);
+  assert.equal(hostProfile.totalScore, 9);
+  assert.equal(hostProfile.totalWords, 1);
+  assert.equal(hostProfile.multiplayerWins, 0);
+  assert.equal(hostProfile.multiplayerLosses, 0);
+  assert.equal(guestProfile.rounds, 1);
+  assert.equal(guestProfile.multiplayerWins, 0);
+  assert.equal(guestProfile.multiplayerLosses, 0);
+  await closeTestRoom(host, [host, guests[0]]);
+});
+
+test("target multiplayer completion uses authoritative ranking for the completed result", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "target-outcome-winner",
+    "target-outcome-loser",
+  ]);
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", {
+    mode: "custom",
+    config: {
+      label: "Target Outcome",
+      min: 3,
+      size: 4,
+      seconds: 120,
+      rule: "First point wins",
+      target: 1,
+    },
+  });
+  await startedPromise;
+  const room = rooms.get(code);
+  room.round.board = ["C", "A", "T", ...Array(13).fill("X")];
+  await startRoundImmediately(host);
+  const finishedPromises = [host, guests[0]].map((ws) => next(ws, "round_finished"));
+  const accepted = next(host, "word_accepted");
+  message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  await accepted;
+  const [finished] = await Promise.all(finishedPromises);
+  assert.equal(finished.reason, "race");
+  assert.deepEqual(
+    finished.ranking.map((player) => ({
+      id: player.id,
+      wins: player.session.wins,
+      losses: player.session.losses,
+    })),
+    [
+      { id: "target-outcome-winner", wins: 1, losses: 0 },
+      { id: "target-outcome-loser", wins: 0, losses: 1 },
+    ],
+  );
+  await closeTestRoom(host, [host, guests[0]]);
 });
 
 test("a deliberately departed participant remains in the completed round", async () => {
@@ -3548,6 +3635,64 @@ test("single-player Sudden Death has no winner", async () => {
   assert.equal(board.profile("sudden-one-loser").multiplayerWins, 0);
   assert.equal(board.profile("sudden-one-loser").multiplayerLosses, 1);
   await closeTestRoom(host, [host]);
+});
+
+test("Sudden Death timeout and manual endings use authoritative score ranking", async () => {
+  const timeoutRound = await createRoomWithPlayers([
+    "sudden-timeout-winner",
+    "sudden-timeout-loser",
+  ]);
+  const timeoutRoom = await startSuddenDeathTestRound(
+    timeoutRound.host,
+    timeoutRound.code,
+  );
+  timeoutRoom.round.board = ["C", "A", "T", ...Array(21).fill("X")];
+  await startRoundImmediately(timeoutRound.host);
+  const accepted = next(timeoutRound.host, "word_accepted");
+  message(timeoutRound.host, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  await accepted;
+  timeoutRoom.round.endsAt = Date.now() - 1;
+  const timeoutFinished = [timeoutRound.host, timeoutRound.guests[0]].map((ws) =>
+    next(ws, "round_finished"),
+  );
+  message(timeoutRound.host, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  const [timeoutResult] = await Promise.all(timeoutFinished);
+  assert.equal(timeoutResult.reason, "timeout");
+  assert.equal(
+    timeoutResult.ranking.find((player) => player.id === "sudden-timeout-winner").session.wins,
+    1,
+  );
+  assert.equal(
+    timeoutResult.ranking.find((player) => player.id === "sudden-timeout-loser").session.losses,
+    1,
+  );
+  await closeTestRoom(timeoutRound.host, [timeoutRound.host, timeoutRound.guests[0]]);
+
+  const manualRound = await createRoomWithPlayers([
+    "sudden-manual-first",
+    "sudden-manual-second",
+  ]);
+  await startSuddenDeathTestRound(manualRound.host, manualRound.code);
+  const manualFinished = await finishTestRound(
+    manualRound.host,
+    [manualRound.host, manualRound.guests[0]],
+  );
+  assert.equal(manualFinished.reason, "manual");
+  assert.deepEqual(
+    manualFinished.ranking.map((player) => ({
+      id: player.id,
+      wins: player.session.wins,
+      losses: player.session.losses,
+    })),
+    [
+      { id: "sudden-manual-first", wins: 1, losses: 0 },
+      { id: "sudden-manual-second", wins: 1, losses: 0 },
+    ],
+  );
+  await closeTestRoom(manualRound.host, [
+    manualRound.host,
+    manualRound.guests[0],
+  ]);
 });
 
 test("Sudden Death Series freezes its roster, settles stale transitions, and restores active state", async () => {
