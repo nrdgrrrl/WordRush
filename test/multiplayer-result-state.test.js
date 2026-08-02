@@ -247,6 +247,62 @@ test("classifies live results and authoritative finished snapshots by delivery c
   );
 });
 
+test("blocks multiplayer results throughout an active solo lifecycle, including intro", () => {
+  const soloLifecycle = {
+    soloRoundId: 7,
+    done: false,
+    onlineRoundKey: null,
+    sessionCode: "",
+  };
+  const isActiveSoloRound = (state) =>
+    state.soloRoundId > 0 &&
+    !state.done &&
+    !state.onlineRoundKey &&
+    !state.sessionCode;
+
+  for (const authoritativeSnapshot of [false, true]) {
+    assert.equal(
+      classifyResultDelivery({
+        resultRoundId: "stale-multiplayer-round",
+        authoritativeSnapshot,
+        activeSoloRound: isActiveSoloRound({
+          ...soloLifecycle,
+          startedAt: 0,
+        }),
+      }),
+      "stale",
+    );
+    assert.equal(
+      classifyResultDelivery({
+        resultRoundId: "stale-multiplayer-round",
+        authoritativeSnapshot,
+        activeSoloRound: isActiveSoloRound({
+          ...soloLifecycle,
+          startedAt: 12_000,
+        }),
+      }),
+      "stale",
+    );
+  }
+
+  assert.equal(
+    isActiveSoloRound({ ...soloLifecycle, soloRoundId: 0, startedAt: 0 }),
+    false,
+  );
+  assert.equal(
+    isActiveSoloRound({ ...soloLifecycle, done: true, startedAt: 12_000 }),
+    false,
+  );
+  assert.equal(
+    isActiveSoloRound({
+      ...soloLifecycle,
+      onlineRoundKey: "online-round",
+      startedAt: 0,
+    }),
+    false,
+  );
+});
+
 test("authoritative replacement starts with a fresh next action", () => {
   const previousAction = {
     nextRound: {

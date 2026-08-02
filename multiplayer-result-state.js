@@ -86,6 +86,7 @@
     authoritativeSnapshot = false,
     activeSoloRound = false,
   }) {
+    if (activeSoloRound) return "stale";
     if (authoritativeSnapshot) {
       if (!resultRoundId) return "stale";
       if (completed && localRoundId === resultRoundId) return "refresh";
@@ -96,7 +97,6 @@
       return "stale";
     if (completed && resultRoundId && localRoundId === resultRoundId)
       return "refresh";
-    if (activeSoloRound) return "stale";
     return "accept";
   }
 

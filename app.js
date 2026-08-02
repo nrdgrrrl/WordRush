@@ -1843,7 +1843,10 @@ window.wordrushOnlineFinish = (
     completed: Boolean(s.done),
     authoritativeSnapshot,
     activeSoloRound:
-      !s.onlineRoundKey && !s.done && s.startedAt && !window.wordrushSessionCode,
+      s.soloRoundId > 0 &&
+      !s.done &&
+      !s.onlineRoundKey &&
+      !window.wordrushSessionCode,
   });
   if (delivery === "stale")
     return false;
