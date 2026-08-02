@@ -34,6 +34,11 @@ function multiplayerOutcomeFromEntry(entry) {
   if (Object.prototype.hasOwnProperty.call(value, "multiplayerOutcome")) {
     if (!MULTIPLAYER_OUTCOMES.includes(value.multiplayerOutcome))
       throw new Error("MULTIPLAYER_OUTCOME_INVALID");
+    if (
+      value.multiplayerOutcome !== "neutral" &&
+      !bodyBoolean(value.multiplayer)
+    )
+      throw new Error("MULTIPLAYER_OUTCOME_REQUIRES_MULTIPLAYER");
     return value.multiplayerOutcome;
   }
   if (!bodyBoolean(value.multiplayer)) return "neutral";

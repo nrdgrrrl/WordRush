@@ -225,7 +225,7 @@ test("invalid explicit multiplayer outcomes reject before any totals mutate", ()
     "scores.json",
   );
   const board = new Leaderboard(file);
-  board.recordScore({ id: "stable", score: 10, multiplayerOutcome: "win" });
+  board.recordScore({ id: "stable", score: 10 });
   const beforeData = JSON.stringify(board.data);
   const beforeFile = fs.readFileSync(file, "utf8");
   assert.throws(
@@ -242,14 +242,53 @@ test("invalid explicit multiplayer outcomes reject before any totals mutate", ()
   assert.equal(JSON.stringify(board.data), beforeData);
   assert.equal(fs.readFileSync(file, "utf8"), beforeFile);
 
+  for (const outcome of ["win", "loss"]) {
+    assert.throws(
+      () =>
+        board.recordScore({
+          id: "stable",
+          score: 999,
+          words: 99,
+          multiplayerOutcome: outcome,
+        }),
+      /MULTIPLAYER_OUTCOME_REQUIRES_MULTIPLAYER/,
+    );
+    assert.equal(JSON.stringify(board.data), beforeData);
+    assert.equal(fs.readFileSync(file, "utf8"), beforeFile);
+  }
+
+  const neutral = board.recordScore({
+    id: "neutral-no-flag",
+    score: 7,
+    words: 2,
+    multiplayerOutcome: "neutral",
+  });
+  assert.equal(neutral.totalScore, 7);
+  assert.equal(neutral.totalWords, 2);
+  assert.equal(neutral.multiplayerWins, 0);
+  assert.equal(neutral.multiplayerLosses, 0);
+
+  const beforeBatch = JSON.stringify(board.data);
+  const beforeBatchFile = fs.readFileSync(file, "utf8");
   assert.throws(
     () =>
       board.recordScores([
-        { id: "new-player", score: 4, multiplayerOutcome: "neutral" },
-        { id: "stable", score: 999, multiplayerOutcome: "invalid" },
+        { id: "batch-player", score: 4, multiplayerOutcome: "neutral" },
+        { id: "stable", score: 999, multiplayerOutcome: "win" },
       ]),
-    /MULTIPLAYER_OUTCOME_INVALID/,
+    /MULTIPLAYER_OUTCOME_REQUIRES_MULTIPLAYER/,
   );
-  assert.equal(JSON.stringify(board.data), beforeData);
-  assert.equal(fs.readFileSync(file, "utf8"), beforeFile);
+  assert.equal(JSON.stringify(board.data), beforeBatch);
+  assert.equal(fs.readFileSync(file, "utf8"), beforeBatchFile);
+
+  assert.throws(
+    () =>
+      board.recordScores([
+        { id: "batch-player", score: 4, multiplayerOutcome: "neutral" },
+        { id: "stable", score: 999, multiplayerOutcome: "loss" },
+      ]),
+    /MULTIPLAYER_OUTCOME_REQUIRES_MULTIPLAYER/,
+  );
+  assert.equal(JSON.stringify(board.data), beforeBatch);
+  assert.equal(fs.readFileSync(file, "utf8"), beforeBatchFile);
 });
