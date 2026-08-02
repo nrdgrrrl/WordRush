@@ -28,6 +28,17 @@ function clean(value, fallback, max = 20) {
 function bodyBoolean(value) {
   return value === true || value === 1 || value === "1" || value === "true";
 }
+const MULTIPLAYER_OUTCOMES = Object.freeze(["win", "loss", "neutral"]);
+function multiplayerOutcomeFromEntry(entry) {
+  const value = entry && typeof entry === "object" ? entry : {};
+  if (Object.prototype.hasOwnProperty.call(value, "multiplayerOutcome")) {
+    if (!MULTIPLAYER_OUTCOMES.includes(value.multiplayerOutcome))
+      throw new Error("MULTIPLAYER_OUTCOME_INVALID");
+    return value.multiplayerOutcome;
+  }
+  if (!bodyBoolean(value.multiplayer)) return "neutral";
+  return bodyBoolean(value.multiplayerWin) ? "win" : "loss";
+}
 function nonNegativeNumber(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
@@ -80,8 +91,24 @@ class Leaderboard {
     fs.renameSync(temporary, this.file);
   }
 
-  recordScore({ id, name, avatar, score = 0, words = 0, correct = 0, incorrect = 0, longest = 0, totalWordLength = 0, gameSeconds = 0, multiplayer = false, multiplayerWin = false, at = new Date() }, { save = true } = {}) {
+  recordScore(entry = {}, { save = true } = {}) {
     if (!this.trusted) throw new Error("LEADERBOARD_REQUIRES_EXPLICIT_RESET");
+    const multiplayerOutcome = multiplayerOutcomeFromEntry(entry);
+    const {
+      id,
+      name,
+      avatar,
+      score = 0,
+      words = 0,
+      correct = 0,
+      incorrect = 0,
+      longest = 0,
+      totalWordLength = 0,
+      gameSeconds = 0,
+      multiplayer = false,
+      multiplayerWin = false,
+      at = new Date(),
+    } = entry;
     const playerId = clean(id, "guest", 80);
     const player = (this.data.players[playerId] ||= {
       id: playerId, name: "Guest", avatar: "🐈", totalScore: 0, totalWords: 0,
@@ -99,7 +126,8 @@ class Leaderboard {
     player.correct += values.correct; player.incorrect += values.incorrect;
     player.longest = Math.max(player.longest, values.longest); player.totalWordLength += values.totalWordLength;
     player.totalGameSeconds += values.gameSeconds;
-    if (bodyBoolean(multiplayer)) bodyBoolean(multiplayerWin) ? player.multiplayerWins++ : player.multiplayerLosses++;
+    if (multiplayerOutcome === "win") player.multiplayerWins++;
+    else if (multiplayerOutcome === "loss") player.multiplayerLosses++;
     const scoreDate = new Date(at);
     const key = weekKey(Number.isNaN(scoreDate.valueOf()) ? new Date() : scoreDate);
     player.weekly[key] = (player.weekly[key] || 0) + values.score;
@@ -109,6 +137,8 @@ class Leaderboard {
 
   recordScores(entries) {
     if (!this.trusted) throw new Error("LEADERBOARD_REQUIRES_EXPLICIT_RESET");
+    if (!Array.isArray(entries)) throw new Error("LEADERBOARD_ENTRIES_INVALID");
+    entries.forEach(multiplayerOutcomeFromEntry);
     const players = entries.map((entry) => this.recordScore(entry, { save: false }));
     this.save();
     return players;
@@ -132,4 +162,14 @@ class Leaderboard {
   }
 }
 
-module.exports = { DEFAULT_FILE, EMPTY_TRUSTED_DATA, Leaderboard, SCHEMA_VERSION, TRUST_MODEL, validTrustedData, weekKey };
+module.exports = {
+  DEFAULT_FILE,
+  EMPTY_TRUSTED_DATA,
+  Leaderboard,
+  MULTIPLAYER_OUTCOMES,
+  SCHEMA_VERSION,
+  TRUST_MODEL,
+  multiplayerOutcomeFromEntry,
+  validTrustedData,
+  weekKey,
+};

@@ -36,9 +36,12 @@ const {
 const {
   createSuddenDeathOutcome,
   normalizeSuddenDeathOutcome,
-  winnerIds,
 } = require("./sudden-death-outcome");
 const suddenDeathSeries = require("./sudden-death-series");
+const {
+  classifyMultiplayerParticipant,
+  outcomeAccounting,
+} = require("./round-outcome");
 const {
   generateQualityRoundBoard,
 } = require("./production-board-generator");
@@ -894,15 +897,27 @@ function seriesSessionSnapshot(room, participant) {
 function recordSuddenDeathSeriesAccounting(room, series) {
   if (series.accountingRecorded) return false;
   series.accountingRecorded = true;
-  const winners = new Set(series.winnerIds);
+  const authoritativeRanking = series.participants.map((participant) => ({
+    id: participant.id,
+    score: participant.aggregateScore,
+    series: { status: participant.status },
+  }));
   const entries = [];
   for (const participant of series.participants) {
     if (participant.status !== "active") continue;
     const player = room.players.get(participant.id);
     if (!player) continue;
+    const outcome = classifyMultiplayerParticipant({
+      participantId: participant.id,
+      ranking: authoritativeRanking,
+      series: { winnerIds: series.winnerIds },
+      seriesComplete: true,
+      recorded: true,
+    });
+    const deltas = outcomeAccounting(outcome, { multiplayer: true });
     player.sessionPoints += participant.aggregateScore;
-    if (winners.has(participant.id)) player.sessionWins += 1;
-    else player.sessionLosses += 1;
+    player.sessionWins += deltas.multiplayerWins;
+    player.sessionLosses += deltas.multiplayerLosses;
     const words = participant.acceptedWords || [];
     entries.push({
       id: participant.id,
@@ -916,7 +931,7 @@ function recordSuddenDeathSeriesAccounting(room, series) {
       totalWordLength: words.reduce((sum, item) => sum + item.word.length, 0),
       gameSeconds: participant.gameplaySeconds,
       multiplayer: true,
-      multiplayerWin: winners.has(participant.id),
+      multiplayerOutcome: outcome,
     });
   }
   if (entries.length) {
@@ -1456,7 +1471,6 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
   room.status = "finished";
   const recorded = reason !== "skipped";
   const suddenDeathOutcome = normalizeSuddenDeathOutcome(suddenDeath);
-  const suddenDeathWinnerIds = new Set(winnerIds(suddenDeathOutcome));
   for (const player of room.round.participants.values())
     player.score = playerScore(room, player);
   const participantOrder = new Map(
@@ -1466,17 +1480,31 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
     (a, b) =>
       b.score - a.score || participantOrder.get(a.id) - participantOrder.get(b.id),
   );
-  const winningScore = rankedPlayers[0]?.score;
+  const authoritativeRanking = rankedPlayers.map((player) => ({
+    id: player.id,
+    score: player.score,
+  }));
+  const outcomes = new Map(
+    authoritativeRanking.map(({ id }) => [
+      id,
+      classifyMultiplayerParticipant({
+        participantId: id,
+        ranking: authoritativeRanking,
+        cooperative: room.mode === "coop",
+        suddenDeath: reason === "invalid_word" ? suddenDeathOutcome : null,
+        reason,
+        recorded,
+      }),
+    ]),
+  );
   if (recorded) {
     rankedPlayers.forEach((player) => {
       player.sessionPoints += player.score;
-      const won = suddenDeathOutcome
-        ? suddenDeathWinnerIds.has(player.id)
-        : room.mode === "coop" || player.score === winningScore;
-      if (won)
-        player.sessionWins += 1;
-      else if (!suddenDeathOutcome || player.id === suddenDeathOutcome.loser.id)
-        player.sessionLosses += 1;
+      const deltas = outcomeAccounting(outcomes.get(player.id), {
+        multiplayer: true,
+      });
+      player.sessionWins += deltas.multiplayerWins;
+      player.sessionLosses += deltas.multiplayerLosses;
     });
   }
   const gameSeconds = Math.min(
@@ -1539,9 +1567,7 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
             ),
             gameSeconds,
             multiplayer: true,
-            multiplayerWin: suddenDeathOutcome
-              ? suddenDeathWinnerIds.has(rankedPlayer.id)
-              : result.cooperative || rankedPlayer.score === winningScore,
+            multiplayerOutcome: outcomes.get(rankedPlayer.id) || "neutral",
           };
         }),
       );
@@ -2518,6 +2544,8 @@ const server = http.createServer((req, res) => {
     "/game-config.js",
     "/sudden-death-outcome.js",
     "/sudden-death-series.js",
+    "/round-outcome.js",
+    "/profile-migration.js",
     "/multiplayer-result-state.js",
     "/round-timing.js",
     "/board-core.js",
