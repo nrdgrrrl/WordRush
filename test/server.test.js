@@ -224,7 +224,10 @@ async function closeTestRoom(host, players) {
   for (const ws of players) if (ws.readyState <= 1) ws.close();
 }
 test.before(
-  () => new Promise((resolve) => server.listen(0, "127.0.0.1", resolve)),
+  () => {
+    generationTestHooks.requestedSeed = 0x12345678;
+    return new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  },
 );
 test.after(
   () =>
@@ -254,6 +257,7 @@ test.afterEach(() => {
   generationTestHooks.lexicon = null;
   generationTestHooks.randomMode = null;
   generationTestHooks.yieldScheduler = null;
+  generationTestHooks.requestedSeed = 0x12345678;
   generationTestHooks.onContract = null;
   generationTestHooks.onResult = null;
   generationTestHooks.onCancellation = null;
@@ -3190,7 +3194,7 @@ test("authoritative multiplayer results populate trusted leaderboard persistence
   assert.equal(started.config.label.length > 0, true);
 });
 
-test("leaderboard save failures are reported once, recover, and do not block round results", async () => {
+test("leaderboard save failures retry automatically, recover, and do not block round results", async () => {
   const leaderboardFile = process.env.WORDRUSH_LEADERBOARD_FILE;
   const temporary = leaderboardFile + ".tmp";
   const originalRenameSync = fs.renameSync;
@@ -3229,13 +3233,14 @@ test("leaderboard save failures are reported once, recover, and do not block rou
     assert.equal(fs.existsSync(temporary), false);
 
     fs.renameSync = originalRenameSync;
-    finishedRounds.push(await finishPersistenceRound("issue-58-recovery"));
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
     const persistenceRecoveries = infos.filter((message) =>
       message.startsWith("Leaderboard persistence recovered:"),
     );
     assert.deepEqual(persistenceRecoveries, [
-      "Leaderboard persistence recovered: code=EIO roundId=" + finishedRounds[2].roundId,
+      "Leaderboard persistence recovered: code=EIO roundId=" + finishedRounds[1].roundId,
     ]);
+    finishedRounds.push(await finishPersistenceRound("issue-58-recovery"));
   } finally {
     fs.renameSync = originalRenameSync;
     console.warn = originalWarn;

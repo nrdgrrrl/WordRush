@@ -81,6 +81,14 @@ test("reset leaderboard rejects nested and dangling symlinked parents without to
   assert.deepEqual(fs.readdirSync(sourceDir), ["leaderboard.json"]);
   assert.equal(fs.existsSync(path.join(dir, "missing-parent")), false);
 });
+test("reset leaderboard refuses a missing parent directory", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-reset-"));
+  const file = path.join(dir, "missing", "leaderboard.json");
+  const result = run(file);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /parent directory must already exist/);
+  assert.equal(fs.existsSync(path.dirname(file)), false);
+});
 test("resetting a missing file uses the executing account and creates a usable trusted file", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-reset-"));
   const file = path.join(dir, "leaderboard.json");

@@ -94,6 +94,7 @@ const generationTestHooks = {
   lexicon: null,
   randomMode: null,
   yieldScheduler: null,
+  requestedSeed: null,
   onContract: null,
   onResult: null,
   onCancellation: null,
@@ -935,7 +936,7 @@ function recordSuddenDeathSeriesAccounting(room, series) {
     });
   }
   if (entries.length) {
-    recordLeaderboardScores(entries, room.round?.id || series.id);
+    recordLeaderboardScores(() => entries, room.round?.id || series.id);
   }
   return true;
 }
@@ -1175,7 +1176,9 @@ async function generateRoundBoard(contract, options = {}) {
   return { result, seed };
 }
 async function generateProductionRoundBoard(contract, options = {}) {
-  const requestedSeed = options.requestedSeed ?? crypto.randomInt(0x100000000);
+  const requestedSeed = options.requestedSeed ??
+    generationTestHooks.requestedSeed ??
+    crypto.randomInt(0x100000000);
   generationTestHooks.onContract?.({
     size: contract.size,
     minimum: contract.minimum,
@@ -1546,7 +1549,7 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
   room.lastResult = result;
   if (recorded) {
     recordLeaderboardScores(
-      result.ranking.map((rankedPlayer) => {
+      () => result.ranking.map((rankedPlayer) => {
         const words = rankedPlayer.words || [];
         return {
           id: rankedPlayer.id,
@@ -2715,33 +2718,70 @@ module.exports = {
 const { Leaderboard } = require("./leaderboard");
 const leaderboard = new Leaderboard();
 let leaderboardSaveFailure = null;
+let leaderboardSaveRetryTimer = null;
+let leaderboardSaveRetryAttempt = 0;
+const LEADERBOARD_SAVE_RETRY_BASE_MS = 1_000;
+const LEADERBOARD_SAVE_RETRY_MAX_MS = 30_000;
 function boundedLeaderboardLogValue(value, fallback, max = 80) {
   const text = String(value ?? fallback).replace(/[\u0000-\u001f\u007f]/g, "").trim();
   return (text || fallback).slice(0, max);
 }
+function clearLeaderboardSaveRetry() {
+  if (leaderboardSaveRetryTimer) clearTimeout(leaderboardSaveRetryTimer);
+  leaderboardSaveRetryTimer = null;
+  leaderboardSaveRetryAttempt = 0;
+}
+function markLeaderboardPersistenceRecovered(roundId) {
+  if (!leaderboardSaveFailure) return;
+  console.info(
+    "Leaderboard persistence recovered: code=" +
+      leaderboardSaveFailure.code +
+      " roundId=" +
+      boundedLeaderboardLogValue(roundId || leaderboardSaveFailure.roundId, "unknown"),
+  );
+  leaderboardSaveFailure = null;
+  clearLeaderboardSaveRetry();
+}
+function scheduleLeaderboardSaveRetry() {
+  if (leaderboardSaveRetryTimer) return;
+  const delay = Math.min(
+    LEADERBOARD_SAVE_RETRY_BASE_MS * 2 ** leaderboardSaveRetryAttempt,
+    LEADERBOARD_SAVE_RETRY_MAX_MS,
+  );
+  leaderboardSaveRetryAttempt += 1;
+  leaderboardSaveRetryTimer = setTimeout(() => {
+    leaderboardSaveRetryTimer = null;
+    try {
+      leaderboard.save();
+      markLeaderboardPersistenceRecovered();
+    } catch (error) {
+      recordLeaderboardPersistenceFailure(error, leaderboardSaveFailure?.roundId);
+    }
+  }, delay);
+  leaderboardSaveRetryTimer.unref?.();
+}
+function recordLeaderboardPersistenceFailure(error, roundId) {
+  const code = boundedLeaderboardLogValue(error?.code, "UNKNOWN", 32);
+  if (!leaderboardSaveFailure || leaderboardSaveFailure.code !== code)
+    console.warn(
+      "Leaderboard persistence failed: code=" +
+        code +
+        " roundId=" +
+        boundedLeaderboardLogValue(roundId, "unknown"),
+    );
+  leaderboardSaveFailure = {
+    code,
+    roundId: boundedLeaderboardLogValue(roundId, "unknown"),
+  };
+  scheduleLeaderboardSaveRetry();
+}
 function recordLeaderboardScores(entries, roundId) {
   try {
-    leaderboard.recordScores(entries);
-    if (leaderboardSaveFailure) {
-      console.info(
-        "Leaderboard persistence recovered: code=" +
-          leaderboardSaveFailure.code +
-          " roundId=" +
-          boundedLeaderboardLogValue(roundId, "unknown"),
-      );
-      leaderboardSaveFailure = null;
-    }
+    leaderboard.recordScores(typeof entries === "function" ? entries() : entries);
+    markLeaderboardPersistenceRecovered(roundId);
     return true;
   } catch (error) {
-    const code = boundedLeaderboardLogValue(error?.code, "UNKNOWN", 32);
-    if (!leaderboardSaveFailure || leaderboardSaveFailure.code !== code)
-      console.warn(
-        "Leaderboard persistence failed: code=" +
-          code +
-          " roundId=" +
-          boundedLeaderboardLogValue(roundId, "unknown"),
-      );
-    leaderboardSaveFailure = { code };
+    recordLeaderboardPersistenceFailure(error, roundId);
     return false;
   }
 }
