@@ -19,8 +19,11 @@
   let renderedView = null;
   let currentSuddenDeath = null;
   let currentSeries = null;
+  let currentCooperative = false;
+  let currentTeamScore = 0;
   const suddenDeathOutcome = window.WordrushSuddenDeathOutcome;
   const suddenDeathSeries = window.WordrushSuddenDeathSeries;
+  const cooperativeResults = window.WordrushCooperativeResults;
 
   function localRow() {
     const profile = window.wordrushProfile?.() || {
@@ -51,7 +54,7 @@
     identity.textContent = (player.avatar || "🐈") + " " + player.name;
     const score = document.createElement("b");
     score.className = "reveal-player-total";
-    score.textContent = "0";
+    score.textContent = currentCooperative ? "0 contribution" : "0";
     heading.append(identity, score);
     const outcomeBadge = suddenDeath
       ? suddenDeathOutcome.badgeForPlayer(suddenDeath, player)
@@ -111,28 +114,42 @@
     const words = players.flatMap((player) =>
       (player.words || []).map((item) => ({ ...item, player })),
     );
-    const longest = words.sort((a, b) =>
-      String(b.word || "").length - String(a.word || "").length ||
-      (Number(b.points) || 0) - (Number(a.points) || 0),
-    )[0];
+    const longestLength = Math.max(
+      0,
+      ...words.map((item) => String(item.word || "").length),
+    );
+    const longest = words.filter((item) =>
+      String(item.word || "").length === longestLength,
+    );
+    const longestPlayers = new Set(longest.map((item) => item.player.id)).size;
     if ($("#resultTopLabel"))
       $("#resultTopLabel").textContent = series
         ? "SERIES RESULT"
         : skipped
         ? "ROUND RESULT"
+        : currentCooperative
+        ? "TEAM OUTCOME"
         : outcome
           ? "TOP SCORE · OUTCOME ABOVE"
           : "ROUND LEADER";
     if ($("#resultTopPlayer"))
       $("#resultTopPlayer").textContent = skipped
         ? "Not recorded"
+        : currentCooperative
+        ? currentTeamScore.toLocaleString() + " shared points"
         : topPlayer
           ? (topPlayer.avatar || "🐈") + " " + topPlayer.name
           : "—";
+    if ($("#resultLongestLabel"))
+      $("#resultLongestLabel").textContent = longestPlayers > 1
+        ? "LONGEST WORD · CO-WINNERS"
+        : "LONGEST WORD";
     if ($("#resultLongestWord"))
-      $("#resultLongestWord").textContent = longest
-      ? String(longest.word).toUpperCase() + " · " + longest.points +
-        " pts · " + (longest.player.avatar || "🐈") + " " + longest.player.name
+      $("#resultLongestWord").textContent = longest.length
+        ? longest.map((item) =>
+          String(item.word).toUpperCase() + " · " + item.points +
+          " pts · " + (item.player.avatar || "🐈") + " " + item.player.name,
+        ).join(" • ")
         : "—";
   }
   function renderSeriesFinal(series, ranking) {
@@ -194,7 +211,12 @@
       makePlayerCard(player, currentSuddenDeath, currentSeries),
     );
     host.replaceChildren(...cards);
-    $("#revealTotal").textContent = "0";
+    $("#revealTotalLabel").textContent = currentCooperative
+      ? "TEAM SCORE"
+      : "TOTAL SCORE";
+    $("#revealTotal").textContent = currentCooperative
+      ? currentTeamScore.toLocaleString()
+      : "0";
     const playerTotals = players.map(() => 0);
     const maximumWords = Math.max(
       0,
@@ -202,12 +224,15 @@
     );
     if (maximumWords === 0) {
       const scoreTotal = players.reduce((sum, player, playerIndex) => {
-        const score = Number(player.score) || 0;
+        const score = currentCooperative
+          ? Number(player.contribution) || 0
+          : Number(player.score) || 0;
         cards[playerIndex].querySelector(".reveal-player-total").textContent =
-          score.toLocaleString();
+          score.toLocaleString() + (currentCooperative ? " contribution" : "");
         return sum + score;
       }, 0);
-      $("#revealTotal").textContent = scoreTotal.toLocaleString();
+      if (!currentCooperative)
+        $("#revealTotal").textContent = scoreTotal.toLocaleString();
       return;
     }
     let wordIndex = 0;
@@ -221,14 +246,17 @@
         appendWord(cards[playerIndex], item);
         playerTotals[playerIndex] += Number(item.points) || 0;
         cards[playerIndex].querySelector(".reveal-player-total").textContent =
-          playerTotals[playerIndex].toLocaleString();
+          playerTotals[playerIndex].toLocaleString() +
+          (currentCooperative ? " contribution" : "");
         total += Number(item.points) || 0;
       });
-      const totalEl = $("#revealTotal");
-      totalEl.textContent = total.toLocaleString();
-      totalEl.classList.remove("score-pop");
-      void totalEl.offsetWidth;
-      totalEl.classList.add("score-pop");
+      if (!currentCooperative) {
+        const totalEl = $("#revealTotal");
+        totalEl.textContent = total.toLocaleString();
+        totalEl.classList.remove("score-pop");
+        void totalEl.offsetWidth;
+        totalEl.classList.add("score-pop");
+      }
       wordIndex++;
       revealTimer = setTimeout(
         revealNextGroup,
@@ -331,6 +359,8 @@
     resultRows = [];
     currentSuddenDeath = null;
     currentSeries = null;
+    currentCooperative = false;
+    currentTeamScore = 0;
     renderedView = null;
     revealToken++;
     clearTimeout(revealTimer);
@@ -349,10 +379,13 @@
       });
   });
   document.addEventListener("wordrush:round-complete", ({ detail }) => {
-    resultRows = (detail.ranking || []).map((player) => ({
-      ...player,
-      words: player.words || [],
-    }));
+    const presentation = cooperativeResults.normalizeResultPresentation({
+      result: detail.result,
+      ranking: detail.ranking,
+    });
+    resultRows = presentation.players;
+    currentCooperative = presentation.cooperative;
+    currentTeamScore = presentation.teamScore || 0;
     if (detail.result?.results)
       settings = {
         ...settings,

@@ -101,6 +101,69 @@ test("leaderboard persists scores and separates weekly and total rankings", () =
   assert.equal(weekKey(new Date("2026-07-14T12:00:00Z")), "2026-07-13");
 });
 
+test("leaderboard cleans partial temporary files after a write failure", () => {
+  const file = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-leaderboard-write-failure-")),
+    "scores.json",
+  );
+  const board = new Leaderboard(file);
+  board.recordScore({ id: "persisted", score: 5 });
+  const before = fs.readFileSync(file, "utf8");
+  const temporary = file + ".tmp";
+  const originalWriteFileSync = fs.writeFileSync;
+  try {
+    fs.writeFileSync = (target, ...args) => {
+      if (target === temporary) {
+        originalWriteFileSync(target, "partial", ...args.slice(1));
+        const error = new Error("injected write failure");
+        error.code = "EIO";
+        throw error;
+      }
+      return originalWriteFileSync(target, ...args);
+    };
+    assert.throws(() => board.recordScore({ id: "failed-write", score: 7 }), /injected write failure/);
+  } finally {
+    fs.writeFileSync = originalWriteFileSync;
+  }
+  assert.equal(fs.readFileSync(file, "utf8"), before);
+  assert.equal(fs.existsSync(temporary), false);
+  assert.equal(board.profile("failed-write").totalScore, 7);
+});
+
+test("leaderboard flushes accumulated in-memory scores after a rename failure", () => {
+  const file = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-leaderboard-rename-failure-")),
+    "scores.json",
+  );
+  const board = new Leaderboard(file);
+  board.recordScore({ id: "persisted", score: 5 });
+  const before = fs.readFileSync(file, "utf8");
+  const temporary = file + ".tmp";
+  const originalRenameSync = fs.renameSync;
+  try {
+    fs.renameSync = (source, destination) => {
+      if (source === temporary && destination === file) {
+        const error = new Error("injected rename failure");
+        error.code = "EIO";
+        throw error;
+      }
+      return originalRenameSync(source, destination);
+    };
+    assert.throws(() => board.recordScore({ id: "failed-rename", score: 7 }), /injected rename failure/);
+  } finally {
+    fs.renameSync = originalRenameSync;
+  }
+  assert.equal(fs.readFileSync(file, "utf8"), before);
+  assert.equal(fs.existsSync(temporary), false);
+  assert.equal(board.profile("failed-rename").totalScore, 7);
+
+  board.recordScore({ id: "later-write", score: 3 });
+  const reloaded = new Leaderboard(file);
+  assert.equal(reloaded.profile("persisted").totalScore, 5);
+  assert.equal(reloaded.profile("failed-rename").totalScore, 7);
+  assert.equal(reloaded.profile("later-write").totalScore, 3);
+});
+
 test("leaderboard sanitizes identity text and caps untrusted score payloads", () => {
   const file = path.join(
     fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-leaderboard-limits-")),

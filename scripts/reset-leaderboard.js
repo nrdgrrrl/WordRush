@@ -34,6 +34,23 @@ function isEmptyTrusted(file) {
     return false;
   }
 }
+function symlinkedParent(file) {
+  const root = path.parse(file).root;
+  const relativeParent = path.relative(root, path.dirname(file));
+  let current = root;
+  for (const component of relativeParent.split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    let stat;
+    try {
+      stat = fs.lstatSync(current);
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+    if (stat.isSymbolicLink()) return current;
+  }
+  return null;
+}
 
 if (!process.argv.includes("--confirm-reset")) fail("pass --confirm-reset to authorize destructive reset");
 else if (!target || resolved === path.parse(resolved).root) fail("empty or root paths are not allowed");
@@ -42,6 +59,8 @@ else if (path.basename(resolved) !== "leaderboard.json") fail("unexpected target
 else {
   let stat = null;
   try {
+    const parent = symlinkedParent(resolved);
+    if (parent) { fail(`symlinked parent paths are not allowed: ${parent}`); process.exit(2); }
     stat = fs.lstatSync(resolved);
     if (stat.isSymbolicLink()) { fail("symlink targets are not allowed"); process.exit(2); }
     if (stat.isDirectory()) { fail("directory targets are not allowed"); process.exit(2); }
