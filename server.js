@@ -51,6 +51,7 @@ const {
 } = require("./daily-challenges");
 const { RelayChallengeStore } = require("./relay-challenges");
 const { applyWordClaim, validateTeamAssignments } = require("./heist-rules");
+const { bountyClaimEffect, selectBountyIndexes } = require("./challenge-rules");
 const PORT = Number(process.env.PORT || 8000),
   HOST = process.env.HOST || "127.0.0.1",
   MAX_PLAYERS = 10,
@@ -623,6 +624,8 @@ function prunePreAdmissionChallenges(now = Date.now()) {
 function playerScore(room, player) {
   return room.mode === "coop"
     ? room.teamScore
+    : room.mode === "heist" && room.round?.heist
+      ? Number(room.round.heist.teamScores?.[room.round.heist.teamByPlayer?.[player.id]]) || 0
     : room.mode === "longhaul" && Array.isArray(player.words)
       ? recordedScore(player)
       : Number(player.score) || 0;
@@ -633,6 +636,22 @@ function publicChainState(round) {
     lastAcceptedWord: round.lastAcceptedWord,
     requiredLetter: round.requiredLetter,
     chainResetLetter: round.chainResetLetter,
+  };
+}
+function publicHeistState(round) {
+  if (!round?.heist) return null;
+  return {
+    teams: round.heist.teams,
+    teamByPlayer: round.heist.teamByPlayer,
+    teamScores: round.heist.teamScores,
+    claims: round.heist.claims,
+  };
+}
+function publicBountyState(round) {
+  if (!round?.bounty) return null;
+  return {
+    bountyIndexes: round.bounty.bountyIndexes,
+    claimedIndexes: round.bounty.claimedIndexes,
   };
 }
 function publicSeriesState(room) {
@@ -662,9 +681,8 @@ function state(room) {
     ...(room.status === "playing" && room.round?.config?.chain
       ? { chain: publicChainState(room.round) }
       : {}),
-    ...(room.status === "playing" && room.round?.heist
-      ? { heist: { teams: room.round.heist.teams, teamByPlayer: room.round.heist.teamByPlayer, teamScores: room.round.heist.teamScores, claims: room.round.heist.claims } }
-      : {}),
+    ...(room.status === "playing" && room.round?.heist ? { heist: publicHeistState(room.round) } : {}),
+    ...(room.status === "playing" && room.round?.bounty ? { bounty: publicBountyState(room.round) } : {}),
     players: publicPlayers.map((p) => ({
       id: p.id,
       name: p.name,
@@ -703,9 +721,8 @@ function displayState(room) {
     config: roomConfig(room),
     series: publicSeriesState(room),
     lastResult: room.status === "finished" ? room.lastResult : null,
-    ...(room.status === "playing" && room.round?.heist
-      ? { heist: { teams: room.round.heist.teams, teamScores: room.round.heist.teamScores, claims: room.round.heist.claims } }
-      : {}),
+    ...(room.status === "playing" && room.round?.heist ? { heist: publicHeistState(room.round) } : {}),
+    ...(room.status === "playing" && room.round?.bounty ? { bounty: publicBountyState(room.round) } : {}),
     players: publicPlayers.map((p) => ({
       name: p.name,
       avatar: p.avatar || "🐈",
@@ -1435,10 +1452,24 @@ async function startRound(
               { id: "sun", playerIds: players.filter((_, index) => index % 2 === 0) },
               { id: "moon", playerIds: players.filter((_, index) => index % 2 === 1) },
             ];
-            const assignments = Object.fromEntries(teams.flatMap((team) => team.playerIds.map((id) => [id, team.id])));
-            const valid = validateTeamAssignments(players, assignments);
-            return { teams: valid.teams, teamByPlayer: assignments, teamScores: { sun: 0, moon: 0 }, claims: [] };
+            const valid = validateTeamAssignments(players, teams);
+            const teamByPlayer = Object.fromEntries(
+              valid.teams.flatMap((team) => team.playerIds.map((id) => [id, team.id])),
+            );
+            return { teams: valid.teams, teamByPlayer, teamScores: { sun: 0, moon: 0 }, claims: [] };
           })(),
+        }
+      : {}),
+    ...(selected === "bounty"
+      ? {
+          bounty: {
+            bountyIndexes: selectBountyIndexes(
+              result.board.map((_, index) => index),
+              3,
+              result.selectedCandidateSeed ?? result.requestedSeed ?? result.board.join(""),
+            ),
+            claimedIndexes: [],
+          },
         }
       : {}),
   };
@@ -2488,6 +2519,11 @@ async function handle(ws, message) {
         : player.found,
     });
     const config = roomConfig(room);
+    if (result.valid && room.mode === "heist") {
+      const claimed = room.round.heist.claims.find((entry) => entry.word === result.word);
+      if (claimed && claimed.teamId !== room.round.heist.teamByPlayer[client.id])
+        result = { ...result, valid: false, reason: "heist_claimed", points: 0 };
+    }
     if (result.valid && requiresChain(config) &&
       !chainWordMatches(room.round.requiredLetter, result.word))
       result = { ...result, valid: false, reason: "chain", points: 0 };
@@ -2510,6 +2546,8 @@ async function handle(ws, message) {
               chain: publicChainState(room.round),
             }
           : {}),
+        ...(room.round.heist ? { heist: publicHeistState(room.round) } : {}),
+        ...(room.round.bounty ? { bounty: publicBountyState(room.round) } : {}),
       });
       if (shouldEndOnRejectedWord(config, result.reason)) {
         if (room.suddenDeathSeries)
@@ -2538,6 +2576,15 @@ async function handle(ws, message) {
         result.word,
         result.points,
       );
+    let awardedPoints = result.points;
+    if (room.mode === "bounty") {
+      const effect = bountyClaimEffect(room.round.bounty, message.path);
+      room.round.bounty = {
+        bountyIndexes: [...room.round.bounty.bountyIndexes],
+        claimedIndexes: [...effect.claimedIndexes],
+      };
+      awardedPoints += effect.newlyClaimedIndexes.length * 25;
+    }
     if (room.mode === "heist") {
       const claim = applyWordClaim(room.round.heist, {
         teamId: room.round.heist.teamByPlayer[player.id],
@@ -2549,12 +2596,12 @@ async function handle(ws, message) {
         teamScores: { ...claim.teamScores },
         claims: [...claim.claims],
       };
-      player.score += result.points;
+      player.score = playerScore(room, player);
     } else if (room.mode === "coop") {
-      room.teamScore += result.points;
+      room.teamScore += awardedPoints;
       for (const teammate of room.players.values())
         teammate.score = room.teamScore;
-    } else player.score += result.points;
+    } else player.score += awardedPoints;
     player.words = player.words || [];
     player.words.push({ word: result.word, points: result.points });
     player.score = playerScore(room, player);
@@ -2562,7 +2609,7 @@ async function handle(ws, message) {
       type: "word_accepted",
       playerId: client.id,
       word: result.word,
-      points: result.points,
+      points: awardedPoints,
       scores: [...room.players.values()].map((p) => ({
         id: p.id,
         name: p.name,
@@ -2574,6 +2621,8 @@ async function handle(ws, message) {
         ? { series: publicSeriesState(room) }
         : {}),
       ...(requiresChain(config) ? { chain: publicChainState(room.round) } : {}),
+      ...(room.round.heist ? { heist: publicHeistState(room.round) } : {}),
+      ...(room.round.bounty ? { bounty: publicBountyState(room.round) } : {}),
     });
     if (hasScoreTarget(roomConfig(room)) && player.score >= roomConfig(room).target)
       finishRound(room, "race");

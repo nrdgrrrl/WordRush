@@ -549,6 +549,55 @@ test("Word Relay uses one frozen board and rejects stale or invalid turns", asyn
   assert.deepEqual(await staleResponse.json(), { error: "RELAY_STALE_REVISION" });
 });
 
+test("Bounty Tiles and Room Heist keep challenge scoring authoritative", async () => {
+  const host = await client("challenge-host");
+  const guest = await client("challenge-guest");
+  const createdPromise = next(host, "room_created");
+  message(host, "create_room");
+  const created = await createdPromise;
+  const joinedPromise = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code, name: "challenge-guest" });
+  await joinedPromise;
+
+  const bountyStarted = next(host, "round_started");
+  message(host, "start_game", { mode: "bounty" });
+  await bountyStarted;
+  const bountyRoom = rooms.get(created.code);
+  bountyRoom.round.board = ["C", "A", "T", ...Array(13).fill("X")];
+  bountyRoom.round.bounty = { bountyIndexes: [0], claimedIndexes: [] };
+  const bountyStartNow = next(host, "round_start_now");
+  message(host, "start_round_now");
+  await bountyStartNow;
+  const bountyAccepted = next(host, "word_accepted");
+  const bountyRejected = next(host, "word_rejected");
+  message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  const bountyResult = await Promise.race([bountyAccepted, bountyRejected]);
+  assert.equal(bountyResult.type, "word_accepted", JSON.stringify(bountyResult));
+  assert.equal(bountyResult.points, 34);
+  assert.deepEqual(bountyResult.bounty.claimedIndexes, [0]);
+  const bountyFinished = next(host, "round_finished");
+  message(host, "end_round");
+  await bountyFinished;
+
+  const heistStarted = next(host, "round_started");
+  message(host, "start_game", { mode: "heist" });
+  await heistStarted;
+  const heistRoom = rooms.get(created.code);
+  heistRoom.round.board = ["P", "L", "A", "N", "X", "X", "X", "E", "X", "X", "X", "T", ...Array(4).fill("X")];
+  const heistStartNow = next(host, "round_start_now");
+  message(host, "start_round_now");
+  await heistStartNow;
+  const heistAccepted = next(host, "word_accepted");
+  message(host, "submit_word", { word: "PLANET", path: [0, 1, 2, 3, 7, 11] });
+  const heistResult = await heistAccepted;
+  assert.equal(heistResult.heist.teamScores.sun, 36);
+  const heistRejected = next(guest, "word_rejected");
+  message(guest, "submit_word", { word: "PLANET", path: [0, 1, 2, 3, 7, 11] });
+  assert.equal((await heistRejected).reason, "heist_claimed");
+  host.close();
+  guest.close();
+});
+
 test("solo and multiplayer rounds use the same server generator contract", async () => {
   const contracts = [];
   const results = [];

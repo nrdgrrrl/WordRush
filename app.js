@@ -144,6 +144,36 @@ async function requestSharedChallenge(ref) {
   }
   return { challenge: payload.challenge, target: payload.target || null, shareRef: ref };
 }
+async function requestRelayChallenge(id = null) {
+  const response = await fetch(
+    id
+      ? "/api/relay-challenges/" + encodeURIComponent(id)
+      : "/api/relay-challenges",
+    id ? undefined : { method: "POST" },
+  );
+  const payload = await response.json().catch(() => null);
+  const challenge = payload && payload.id ? payload : null;
+  if (
+    !response.ok ||
+    !challenge ||
+    !/^[A-Za-z0-9_-]{20,40}$/.test(challenge.id) ||
+    !challenge.config ||
+    challenge.config.chain !== true ||
+    !Array.isArray(challenge.board) ||
+    challenge.board.length !== challenge.config.size * challenge.config.size ||
+    !challenge.board.every((letter) => /^[A-Z]$/.test(letter)) ||
+    !challenge.dictionary?.dictionaryId ||
+    !Number.isSafeInteger(challenge.revision) ||
+    !challenge.state ||
+    !Array.isArray(challenge.state.found) ||
+    typeof challenge.state.requiredLetter !== "string"
+  ) {
+    const error = new Error(payload?.error || "Word Relay is unavailable");
+    error.code = payload?.error;
+    throw error;
+  }
+  return { challenge };
+}
 async function applySoloBoardTestFixture(generated) {
   let fixtureRequested = false;
   try {
@@ -235,6 +265,8 @@ const s = {
   dictionaryWords: [],
   dailyChallenge: null,
   echo: null,
+  relayChallenge: null,
+  heist: null,
   frozenIndexes: new Set(),
   bounty: null,
 };
@@ -547,6 +579,7 @@ function render() {
     })
     .join("");
   renderChainStatus();
+  renderChallengeStatus();
 }
 function renderChainStatus() {
   const status = $("#chainStatus");
@@ -574,6 +607,31 @@ function renderChainStatus() {
   }
   guidance.hidden = !text;
   guidance.textContent = text;
+}
+function renderChallengeStatus() {
+  const relay = $("#relayStatus");
+  if (relay) {
+    relay.hidden = !s.relayChallenge;
+    if (s.relayChallenge) {
+      const required = s.relayChallenge.state.requiredLetter || "Any";
+      $("#relayRequiredLetter").textContent = required;
+      $("#relayTurnCount").textContent = String(s.relayChallenge.state.turns || 0);
+    }
+  }
+  const heist = $("#heistStatus");
+  if (heist) {
+    heist.hidden = !s.heist;
+    if (!s.heist) return;
+    const teamId = s.heist.teamByPlayer?.[window.wordrushGuestId] || "sun";
+    const team = s.heist.teams?.find((entry) => entry.id === teamId);
+    $("#heistTeam").textContent = teamId.toUpperCase();
+    $("#heistTeamScore").textContent = String(s.heist.teamScores?.[teamId] || 0);
+    $("#heistOtherTeam").textContent = teamId === "sun" ? "MOON" : "SUN";
+    $("#heistOtherScore").textContent = String(s.heist.teamScores?.[teamId === "sun" ? "moon" : "sun"] || 0);
+    $("#heistMembers").textContent = team?.playerIds?.length
+      ? team.playerIds.length + " players"
+      : "Your team";
+  }
 }
 function renderResults(
   ranking,
@@ -1232,6 +1290,8 @@ window.wordrushAbandonOnlineRound = () => {
   s.onlineResultRoundId = null;
   s.onlineNextRound = null;
   s.onlineResultAction = null;
+  s.relayChallenge = null;
+  s.heist = null;
   // A host can close the room while another player is still looking at the
   // board. The room shutdown is authoritative, so do not leave that player
   // stranded on a dead game screen.
@@ -1260,10 +1320,12 @@ async function start(
   dictionaryId = DEFAULT_DICTIONARY_ID,
   skipRoundIntro = false,
   dailyChallenge = null,
+  relayChallenge = null,
 ) {
   const generationRequest = ++soloGenerationRequest;
   if (
     !dailyChallenge &&
+    !relayChallenge &&
     window.wordrushStartSessionGame?.({
       mode,
       config: rawConfig || null,
@@ -1291,6 +1353,9 @@ async function start(
     }
     nextConfig = { ...result.config };
     nextCustomAdult = usesAdultLexicon(result.config);
+  } else if (relayChallenge) {
+    nextConfig = { ...relayChallenge.challenge.config };
+    nextCustomAdult = false;
   } else {
     return;
   }
@@ -1310,6 +1375,8 @@ async function start(
     [generated, dictionary] = await Promise.all([
       dailyChallenge
         ? Promise.resolve(dailyChallenge.challenge)
+        : relayChallenge
+          ? Promise.resolve(relayChallenge.challenge)
         : requestSoloBoard({
             mode: generationInputs.mode,
             config: generationInputs.config,
@@ -1318,7 +1385,7 @@ async function start(
           }),
       fetchDictionary(generationInputs.dictionaryId),
     ]);
-    if (!dailyChallenge) generated = await applySoloBoardTestFixture(generated);
+    if (!dailyChallenge && !relayChallenge) generated = await applySoloBoardTestFixture(generated);
   } catch (error) {
     if (generationRequest !== soloGenerationRequest) return;
     const failureMessage =
@@ -1353,6 +1420,18 @@ async function start(
         shareRef: dailyChallenge.shareRef,
       }
     : null;
+  s.relayChallenge = relayChallenge
+    ? {
+        id: relayChallenge.challenge.id,
+        revision: relayChallenge.challenge.revision,
+        state: {
+          found: [...relayChallenge.challenge.state.found],
+          requiredLetter: relayChallenge.challenge.state.requiredLetter,
+          turns: relayChallenge.challenge.state.turns,
+        },
+      }
+    : null;
+  s.heist = null;
   s.echo = s.dailyChallenge
     ? { target: dailyChallenge?.echo || null, checkpoints: [] }
     : null;
@@ -1378,17 +1457,22 @@ async function start(
   s.chainRemainingByInitial = config.chain
     ? { ...generated.playableWordStarts }
     : {};
+  if (s.relayChallenge) {
+    s.found = new Set(s.relayChallenge.state.found);
+    s.requiredLetter = s.relayChallenge.state.requiredLetter || "";
+  }
   s.rejectedAttempt = "";
   s.rejectionReason = "";
   s.roundWordTimes = [];
   s.pick = [];
   s.frozenIndexes = new Set();
+  s.b = generated.board;
   s.bounty = mode === "bounty"
     ? {
         bountyIndexes: challengeRules.selectBountyIndexes(
           s.b.map((_, index) => index),
           3,
-          generated.seed,
+          generated.seed ?? generated.quality?.selectedCandidateSeed ?? generated.id,
         ),
         claimedIndexes: [],
       }
@@ -1397,16 +1481,19 @@ async function start(
   s.soloRoundId = ++soloRoundGeneration;
   s.startedAt = 0;
   s.endsAt = 0;
-  s.b = generated.board;
   s.acceptingSoloSubmissions = false;
   clearInterval(s.timer);
   s.timer = 0;
   $("#gameMode").textContent = config.label;
   $("#gameTitle").textContent = s.dailyChallenge
     ? "Daily Rush · " + s.dailyChallenge.date
+    : s.relayChallenge
+      ? "Word Relay · turn " + (s.relayChallenge.state.turns + 1)
     : "Round 01 · " + s.n + "×" + s.n;
   $("#ruleBanner").textContent = config.rule;
-  $("#gameHint").textContent = "Minimum " + config.min + " letters";
+  $("#gameHint").textContent = s.relayChallenge
+    ? "Pass the final letter · minimum " + config.min
+    : "Minimum " + config.min + " letters";
   $("#gameScore").textContent = 0;
   $("#timer").textContent = formatTimer(s.time);
   $("#stopRush").hidden = !s.rush;
@@ -1495,6 +1582,26 @@ async function startDailyRush(shared = null, raceEcho = false) {
     daily,
   );
 }
+async function startWordRelay(id = null) {
+  try {
+    const relay = await requestRelayChallenge(id);
+    const challenge = relay.challenge;
+    return start(
+      "relay",
+      null,
+      false,
+      false,
+      challenge.dictionary.dictionaryId,
+      false,
+      null,
+      relay,
+    );
+  } catch (error) {
+    toast(error.code === "RELAY_NOT_FOUND"
+      ? "That Word Relay link has expired."
+      : "Word Relay is not ready yet. Please try again.");
+  }
+}
 function pickedPathIsValid(trace, word) {
   return (
     trace.length === word.length &&
@@ -1508,6 +1615,77 @@ function pickedPathIsValid(trace, word) {
         (position === 0 || near(trace[position - 1]).includes(index)),
     )
   );
+}
+async function submitRelayWord(trace, word) {
+  if (!s.relayChallenge || !s.acceptingSoloSubmissions || s.done) return;
+  const normalized = String(word || "").toUpperCase();
+  const validPath = pickedPathIsValid(trace, normalized);
+  if (normalized.length < s.config.min || !validPath || s.found.has(normalized)) {
+    toast(
+      normalized.length < s.config.min
+        ? "Wrong word · need " + s.config.min + " letters"
+        : !validPath
+          ? "Wrong word · tiles must connect"
+          : "Already found — try a new word",
+      "wrong",
+    );
+    pulseIncorrectWord(trace);
+    return;
+  }
+  if (s.requiredLetter && !chainWordMatches(s.requiredLetter, normalized)) {
+    toast("Wrong word · start with " + s.requiredLetter, "wrong");
+    pulseIncorrectWord(trace);
+    return;
+  }
+  const challenge = s.relayChallenge;
+  try {
+    const response = await fetch("/api/relay-challenges/" + encodeURIComponent(challenge.id), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ revision: challenge.revision, word: normalized, path: trace }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.state) {
+      const reason = payload?.error;
+      toast(
+        reason === "RELAY_STALE_REVISION"
+          ? "Relay changed — reload the challenge"
+          : reason === "chain"
+            ? "Wrong word · follow the chain"
+            : "That word was not accepted",
+        "wrong",
+      );
+      pulseIncorrectWord(trace);
+      return;
+    }
+    s.relayChallenge = {
+      id: payload.id,
+      revision: payload.revision,
+      state: {
+        found: [...payload.state.found],
+        requiredLetter: payload.state.requiredLetter,
+        turns: payload.state.turns,
+      },
+    };
+    s.found = new Set(s.relayChallenge.state.found);
+    s.requiredLetter = s.relayChallenge.state.requiredLetter || "";
+    s.lastAcceptedWord = normalized;
+    const points = normalized.length * normalized.length;
+    s.score += points;
+    recordAcceptedWord(normalized);
+    updateProfile();
+    renderChainStatus();
+    renderChallengeStatus();
+    $("#gameScore").textContent = s.score;
+    $("#preview").textContent = normalized + " +" + points;
+    $("#preview").classList.add("found");
+    pulseAcceptedWord(trace);
+    toast("Turn saved · share the relay link");
+    emit("word-accepted", { word: normalized, points, mode: "relay", multiplayer: false, randomRush: false });
+  } catch {
+    toast("Relay connection failed — try again", "wrong");
+    pulseIncorrectWord(trace);
+  }
 }
 async function submit() {
   let trace = s.pick.slice(),
@@ -1526,6 +1704,11 @@ async function submit() {
       }),
     );
     clearPick();
+    return;
+  }
+  if (s.relayChallenge) {
+    clearPick();
+    await submitRelayWord(trace, w);
     return;
   }
   if (!s.acceptingSoloSubmissions) {
@@ -1733,6 +1916,7 @@ function pulseDuplicateWord(trace) { pulseWord(trace, "word-duplicate"); }
 $("#quickPlay")?.addEventListener("click", () => start("classic"));
 $("#dailyRush")?.addEventListener("click", () => startDailyRush());
 $("#echoRace")?.addEventListener("click", () => startDailyRush(null, true));
+$("#wordRelay")?.addEventListener("click", () => startWordRelay());
 $("#stopRush").onclick = stopRush;
 $("#stopRushResults").onclick = stopRush;
 let partyConfig = { size: 4, min: 3, seconds: 120 };
@@ -1870,10 +2054,36 @@ $("#shareDailyChallenge")?.addEventListener("click", async () => {
   }
 });
 $("#raceDailyEcho")?.addEventListener("click", () => startDailyRush(null, true));
+$("#shareRelayChallenge")?.addEventListener("click", async () => {
+  if (!s.relayChallenge) return;
+  const url = new URL(location.href);
+  url.search = "?relay=" + encodeURIComponent(s.relayChallenge.id);
+  url.hash = "";
+  try {
+    if (navigator.share) {
+      await navigator.share({
+        title: "WordRush Word Relay",
+        text: "Take the next turn in my Word Relay.",
+        url: url.toString(),
+      });
+    } else if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url.toString());
+      toast("Relay link copied.");
+    } else {
+      window.prompt("Copy this Word Relay link", url.toString());
+    }
+  } catch (error) {
+    if (error?.name !== "AbortError") toast("Could not share the relay link.");
+  }
+});
 $("#endGame").onclick = () => end("manual");
 document
   .querySelectorAll("[data-mode]")
   .forEach((x) => (x.onclick = () => {
+    if (x.dataset.mode === "heist" && !window.wordrushSessionCode) {
+      toast("Room Heist needs an active multiplayer room.");
+      return;
+    }
     if (x.dataset.mode !== "classic") return start(x.dataset.mode);
     if (window.wordrushStartSessionGame?.({
       mode: "classic",
@@ -1976,8 +2186,16 @@ async function launchSharedChallengeFromUrl() {
     toast("That challenge link is unavailable.");
   }
 }
+async function launchSharedRelayFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const refs = params.getAll("relay");
+  if (refs.length !== 1 || params.has("challenge") || params.has("join") ||
+      !/^[A-Za-z0-9_-]{20,40}$/.test(refs[0])) return;
+  await startWordRelay(refs[0]);
+}
 show("homeScreen");
 launchSharedChallengeFromUrl();
+launchSharedRelayFromUrl();
 document.addEventListener("click", (event) => {
   const target = event.target.closest?.("[data-screen]");
   if (target) show(target.dataset.screen);
@@ -2003,11 +2221,24 @@ function applyOnlineChainState(chain, clearRejection = false) {
 }
 window.wordrushUpdateOnlineChain = (chain, clearRejection = true) =>
   applyOnlineChainState(chain, clearRejection);
-window.wordrushRecordOnlineWord = (word, points, chain) => {
+window.wordrushUpdateOnlineChallenge = ({ heist = null, bounty = null } = {}) => {
+  let changed = false;
+  if (heist) {
+    s.heist = { ...heist, teamByPlayer: { ...(heist.teamByPlayer || {}) }, teamScores: { ...(heist.teamScores || {}) }, claims: [...(heist.claims || [])] };
+    changed = true;
+  }
+  if (bounty) {
+    s.bounty = { bountyIndexes: [...(bounty.bountyIndexes || [])], claimedIndexes: [...(bounty.claimedIndexes || [])] };
+    changed = true;
+  }
+  if (changed) render();
+};
+window.wordrushRecordOnlineWord = (word, points, chain, challengeState) => {
   if (s.pendingOnlineTrace?.word === word) {
     pulseAcceptedWord(s.pendingOnlineTrace.trace);
   }
   s.pendingOnlineTrace = null;
+  window.wordrushUpdateOnlineChallenge(challengeState);
   applyOnlineChainState(chain, true);
   s.lastAcceptedWord = word;
   const recorded = multiplayerWordReconciliation.recordLocalAcceptedWord(
@@ -2028,12 +2259,13 @@ window.wordrushRecordOnlineWord = (word, points, chain) => {
     randomRush: s.onlineRandomRush,
   });
 };
-window.wordrushRecordOnlineIncorrect = (reason, word = "", chain) => {
+window.wordrushRecordOnlineIncorrect = (reason, word = "", chain, challengeState) => {
   if (s.pendingOnlineTrace) {
     if (reason === "duplicate") pulseDuplicateWord(s.pendingOnlineTrace.trace);
     else pulseIncorrectWord(s.pendingOnlineTrace.trace);
   }
   s.pendingOnlineTrace = null;
+  window.wordrushUpdateOnlineChallenge(challengeState);
   applyOnlineChainState(chain, false);
   s.rejectedAttempt = String(word || "").toUpperCase();
   s.rejectionReason = reason;
@@ -2103,6 +2335,8 @@ window.wordrushOnlineRound = (
   dictionaryMetadata = null,
   chain = null,
   series = null,
+  heist = null,
+  bounty = null,
 ) => {
   cancelSoloRushContinuation();
   randomModeQueue = [];
@@ -2130,6 +2364,9 @@ window.wordrushOnlineRound = (
   s.onlineNextRound = null;
   s.onlineResultAction = null;
   s.pendingOnlineTrace = null;
+  s.relayChallenge = null;
+  s.heist = heist ? { ...heist, teamByPlayer: { ...(heist.teamByPlayer || {}) }, teamScores: { ...(heist.teamScores || {}) }, claims: [...(heist.claims || [])] } : null;
+  s.bounty = bounty ? { bountyIndexes: [...(bounty.bountyIndexes || [])], claimedIndexes: [...(bounty.claimedIndexes || [])] } : null;
   s.lastAcceptedWord = "";
   s.requiredLetter = "";
   s.chainResetLetter = "";
