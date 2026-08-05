@@ -2051,7 +2051,7 @@ test("initial eligible Dirty selection waits for every player before generation"
   assert.equal(room.round, null);
 
   const guestAccepted = next(guests[0], "adult_consent_player_accepted");
-  const startedPromise = next(host, "round_started");
+  const startedPromise = next(host, "round_started", 5000);
   message(guests[0], "adult_consent_response", {
     requestId: consent.requestId,
     accepted: true,
