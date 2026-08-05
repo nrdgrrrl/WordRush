@@ -224,7 +224,10 @@ async function closeTestRoom(host, players) {
   for (const ws of players) if (ws.readyState <= 1) ws.close();
 }
 test.before(
-  () => new Promise((resolve) => server.listen(0, "127.0.0.1", resolve)),
+  () => {
+    generationTestHooks.requestedSeed = 0x12345678;
+    return new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  },
 );
 test.after(
   () =>
@@ -254,6 +257,7 @@ test.afterEach(() => {
   generationTestHooks.lexicon = null;
   generationTestHooks.randomMode = null;
   generationTestHooks.yieldScheduler = null;
+  generationTestHooks.requestedSeed = 0x12345678;
   generationTestHooks.onContract = null;
   generationTestHooks.onResult = null;
   generationTestHooks.onCancellation = null;
@@ -2632,6 +2636,18 @@ test("co-op records ordinary totals while keeping every outcome counter neutral"
   await accepted;
   const finished = await finishTestRound(host, [host, guests[0]]);
   assert.equal(finished.cooperative, true);
+  assert.equal(finished.teamScore, 9);
+  assert.deepEqual(
+    finished.ranking.map((player) => player.score),
+    [9, 9],
+  );
+  assert.deepEqual(
+    finished.ranking.map((player) => player.words.reduce(
+      (total, item) => total + item.points,
+      0,
+    )),
+    [9, 0],
+  );
   assert.equal(finished.ranking.find((player) => player.id === "coop-outcome-host").session.points, 9);
   assert.equal(finished.ranking.find((player) => player.id === "coop-outcome-host").session.wins, 0);
   assert.equal(finished.ranking.find((player) => player.id === "coop-outcome-host").session.losses, 0);
@@ -2796,6 +2812,35 @@ test("a guest whose reconnect grace expires remains in the round result", async 
   assert.deepEqual(
     finished.ranking.map((player) => player.id),
     ["expiry-result-host", "expiry-result-guest"],
+  );
+  await closeTestRoom(host, [host]);
+});
+
+test("accepted score snapshots retain reconnecting seat state", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "reconnecting-score-host",
+    "reconnecting-score-guest",
+  ]);
+  const guest = guests[0];
+  const room = await startClassicTestRound(host, code);
+  room.round.board = ["C", "A", "T", ...Array(13).fill("X")];
+  await startRoundImmediately(host);
+  const disconnected = nextMatching(
+    host,
+    "room_state",
+    (state) => state.players.find((player) =>
+      player.id === "reconnecting-score-guest",
+    )?.connected === false,
+  );
+  guest.close();
+  await disconnected;
+  const accepted = next(host, "word_accepted");
+  message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
+  assert.equal(
+    (await accepted).scores.find((player) =>
+      player.id === "reconnecting-score-guest",
+    )?.connected,
+    false,
   );
   await closeTestRoom(host, [host]);
 });
@@ -3147,6 +3192,66 @@ test("authoritative multiplayer results populate trusted leaderboard persistence
   host.close();
   guest.close();
   assert.equal(started.config.label.length > 0, true);
+});
+
+test("leaderboard save failures retry automatically, recover, and do not block round results", async () => {
+  const leaderboardFile = process.env.WORDRUSH_LEADERBOARD_FILE;
+  const temporary = leaderboardFile + ".tmp";
+  const originalRenameSync = fs.renameSync;
+  const originalWarn = console.warn;
+  const originalInfo = console.info;
+  const warnings = [];
+  const infos = [];
+  const finishedRounds = [];
+  async function finishPersistenceRound(id) {
+    const { host, code } = await createRoomWithPlayers([id]);
+    await startClassicTestRound(host, code);
+    const finished = await finishTestRound(host, [host]);
+    await closeTestRoom(host, [host]);
+    return finished;
+  }
+  try {
+    fs.renameSync = (source, destination) => {
+      if (source === temporary && destination === leaderboardFile) {
+        const error = new Error("injected leaderboard rename failure");
+        error.code = "EIO";
+        throw error;
+      }
+      return originalRenameSync(source, destination);
+    };
+    console.warn = (message) => warnings.push(String(message));
+    console.info = (message) => infos.push(String(message));
+
+    finishedRounds.push(await finishPersistenceRound("issue-58-first"));
+    finishedRounds.push(await finishPersistenceRound("issue-58-second"));
+    const persistenceWarnings = warnings.filter((message) =>
+      message.startsWith("Leaderboard persistence failed:"),
+    );
+    assert.deepEqual(persistenceWarnings, [
+      "Leaderboard persistence failed: code=EIO roundId=" + finishedRounds[0].roundId,
+    ]);
+    assert.equal(fs.existsSync(temporary), false);
+
+    fs.renameSync = originalRenameSync;
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    const persistenceRecoveries = infos.filter((message) =>
+      message.startsWith("Leaderboard persistence recovered:"),
+    );
+    assert.deepEqual(persistenceRecoveries, [
+      "Leaderboard persistence recovered: code=EIO roundId=" + finishedRounds[1].roundId,
+    ]);
+    finishedRounds.push(await finishPersistenceRound("issue-58-recovery"));
+  } finally {
+    fs.renameSync = originalRenameSync;
+    console.warn = originalWarn;
+    console.info = originalInfo;
+  }
+
+  const reloaded = new Leaderboard(leaderboardFile);
+  for (const id of ["issue-58-first", "issue-58-second", "issue-58-recovery"])
+    assert.equal(reloaded.profile(id).rounds, 1);
+  assert.equal(finishedRounds.length, 3);
+  assert.ok(finishedRounds.every((round) => round.type === "round_finished"));
 });
 
 test("a disconnected guest needs its private token to reclaim a room seat", async () => {

@@ -168,7 +168,7 @@ test.before(
 );
 test.after(() => new Promise((resolve) => server.close(resolve)));
 
-test("browser can start, play, persist stats, and toggle dark mode", async () => {
+test("browser can start, play, persist stats, and use the tile-banner profile button", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const errors = [];
@@ -265,9 +265,19 @@ test("browser can start, play, persist stats, and toggle dark mode", async () =>
     await page.locator('[data-stat="averageWordLength"] strong').textContent(),
     /^\d+\.\d$/,
   );
-  await page.locator('[data-screen="homeScreen"]').first().click();
-  await page.locator("#themeToggle").click();
-  assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
+  await page.locator('nav [data-screen="homeScreen"]').click();
+  assert.equal(await page.locator("main > header").count(), 0);
+  assert.equal(await page.locator("#themeToggle").count(), 0);
+  assert.equal(await page.locator("#homeScreen .hero-art #profileButton").count(), 1);
+  const heroAvatarOverlapsTile = await page.evaluate(() => {
+    const avatar = document.querySelector("#profileButton")?.getBoundingClientRect();
+    return [...document.querySelectorAll(".hero-art span, .hero-art b")].some((tile) => {
+      const box = tile.getBoundingClientRect();
+      return avatar && box.left < avatar.right && box.right > avatar.left &&
+        box.top < avatar.bottom && box.bottom > avatar.top;
+    });
+  });
+  assert.equal(heroAvatarOverlapsTile, false);
   assert.deepEqual(errors, []);
   await browser.close();
 });
@@ -353,7 +363,7 @@ test("random rush owns results continuation and stops on navigation", async () =
   assert.equal(await page.locator("#gameScreen.active").count(), 0);
   assert.equal(await countEvents("round-started"), startsBeforeLeave);
 
-  await page.locator('header [data-screen="homeScreen"]').click();
+  await page.locator('nav [data-screen="homeScreen"]').click();
   await page.waitForSelector("#homeScreen.active");
   const introsBeforeReplacement = await countEvents("round-intro");
   await page.locator('button[data-mode="minimum"]').click();
@@ -1061,13 +1071,13 @@ test("host ending a round and closing an active session synchronizes every playe
       return startNow(...args);
     };
   });
-  await guest.locator('header [data-screen="homeScreen"]').click();
+  await guest.locator('nav [data-screen="homeScreen"]').click();
   await guest.waitForSelector("#homeScreen.active");
   await guest.locator("#resumeMultiplayer").click();
   await guest.waitForSelector("#roundIntroScreen.active");
   assert.equal(await guest.locator("#gameScreen.active").count(), 0);
   assert.deepEqual(await roundActivation(guest), { starts: 0, intervals: 0 });
-  await guest.locator('header [data-screen="homeScreen"]').click();
+  await guest.locator('nav [data-screen="homeScreen"]').click();
   await guest.waitForSelector("#homeScreen.active");
   await host.locator("#introStart").click();
   await Promise.all([
@@ -1156,7 +1166,10 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
         avatar: "🦊",
         score: 49,
         session: { wins: 2, losses: 1, points: 149 },
-        words: [{ word: "PLANETS", points: 49 }],
+        words: [
+          { word: "PLANETS", points: 49 },
+          { word: "STARS", points: 25 },
+        ],
       },
       {
         id: "moon",
@@ -1164,7 +1177,7 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
         avatar: "🐈",
         score: 25,
         session: { wins: 1, losses: 2, points: 103 },
-        words: [{ word: "STARS", points: 25 }],
+        words: [{ word: "MOONLIT", points: 49 }],
       },
     ], { results: { view: "static", speed: "fast" } });
   });
@@ -1173,7 +1186,10 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
   assert.equal(await page.locator("#staticResultsView").isHidden(), false);
   assert.equal(await page.locator("#animatedResultsView").isHidden(), true);
   assert.equal(await page.locator("#staticResultsButton").getAttribute("aria-pressed"), "true");
-  assert.match(await page.locator("#resultLongestWord").textContent(), /PLANETS · 49 pts/);
+  const longest = await page.locator("#resultLongestWord").textContent();
+  assert.match(longest, /PLANETS · 49 pts · 🦊 Comet/);
+  assert.match(longest, /MOONLIT · 49 pts · 🐈 Moon/);
+  assert.match(await page.locator("#resultLongestLabel").textContent(), /CO-WINNERS/);
   assert.match(await page.locator("#resultTopPlayer").textContent(), /Comet/);
   assert.match(await page.locator(".result-session-record").first().textContent(), /2W · 1L · 149 session pts/);
   assert.match(await page.locator(".result-session-record").nth(1).textContent(), /1W · 2L · 103 session pts/);
@@ -1189,6 +1205,7 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
   assert.equal(await page.locator("#staticResultsView").isHidden(), true);
   assert.equal(await page.locator("#animatedResultsButton").getAttribute("aria-pressed"), "true");
   await page.waitForSelector(".reveal-word.word-length-long");
+  await page.waitForSelector(".reveal-word.word-length-medium");
   assert.equal(await page.locator(".reveal-word.word-length-medium").count(), 1);
   assert.equal(await page.locator(".reveal-session-record").count(), 2);
   await browser.close();

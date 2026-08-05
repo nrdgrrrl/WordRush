@@ -30,27 +30,6 @@ button {
   color: inherit;
   background: none;
 }
-header {
-  height: 76px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--line);
-}
-.brand {
-  font-weight: bold;
-  letter-spacing: 2px;
-}
-.brand b {
-  display: inline-grid;
-  place-items: center;
-  background: var(--ink);
-  color: var(--lime);
-  border-radius: 50%;
-  width: 28px;
-  height: 28px;
-  font-style: italic;
-}
 .avatar {
   background: #8ac7df;
   border-radius: 50%;
@@ -460,6 +439,8 @@ nav small {
   align-items: center;
   justify-content: center;
   gap: 5px;
+  box-sizing: border-box;
+  padding-right: 52px;
   position: relative;
   background: linear-gradient(125deg, #30264f, #d85f78 52%, #f6c85f);
   transform: rotate(-1deg);
@@ -490,6 +471,21 @@ nav small {
   color: #30264f;
   font-size: 17px;
   animation-delay: -2.4s;
+}
+.hero-art .avatar {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
+  border: 2px solid #fff9f0;
+  box-shadow: 0 3px 0 #211a36;
+  font-size: 18px;
+}
+.hero-art .avatar:focus-visible {
+  outline: 3px solid var(--lime);
+  outline-offset: 3px;
 }
 @keyframes hero-tile-float {
   0%, 100% { transform: translateY(2px) rotate(var(--tilt, 0deg)); }
@@ -634,9 +630,10 @@ nav small {
   font-size: 24px;
 }
 @media (max-width: 380px) {
-  .hero-art { gap: 3px; }
+  .hero-art { gap: 3px; padding-right: 44px; }
   .hero-art span { width: 28px; height: 38px; font-size: 18px; }
   .hero-art b { width: 24px; height: 24px; font-size: 13px; }
+  .hero-art .avatar { top: 4px; right: 6px; width: 28px; height: 28px; font-size: 16px; }
   .game-mode-card { min-height: 80px; padding: 12px; }
   .game-mode-card > span { width: 34px; font-size: 27px; }
   .game-mode-card strong { font-size: 14px; }
@@ -805,14 +802,6 @@ html[data-theme="dark"] .hero-art {
 }
 html[data-theme="dark"] nav {
   background: rgba(27, 29, 26, 0.97);
-}
-.theme-toggle {
-  font-size: 21px;
-  color: var(--muted);
-  padding: 4px 9px;
-}
-.theme-toggle:hover {
-  color: var(--coral);
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]) body {
@@ -1125,6 +1114,15 @@ body[data-mode="chain"] .tile {
 .live-player.is-opponent b {
   color: #5268c7;
 }
+.live-player.is-reconnecting {
+  opacity: 0.7;
+  outline-style: dashed;
+}
+.player-connection-status {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
 @media (max-height: 650px) {
   .live-player b {
     font-size: 28px;
@@ -1390,9 +1388,6 @@ html[data-theme="dark"] .tile.selected {
   }
 }
 
-body:has(#gameScreen.active) header {
-  display: none;
-}
 body:has(#gameScreen.active) .app-shell {
   padding-bottom: 0;
 }

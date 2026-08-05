@@ -94,6 +94,7 @@ const generationTestHooks = {
   lexicon: null,
   randomMode: null,
   yieldScheduler: null,
+  requestedSeed: null,
   onContract: null,
   onResult: null,
   onCancellation: null,
@@ -935,11 +936,7 @@ function recordSuddenDeathSeriesAccounting(room, series) {
     });
   }
   if (entries.length) {
-    try {
-      leaderboard.recordScores(entries);
-    } catch {
-      // Preserve the authoritative one-time guard if persistence is unavailable.
-    }
+    recordLeaderboardScores(() => entries, room.round?.id || series.id);
   }
   return true;
 }
@@ -1179,7 +1176,9 @@ async function generateRoundBoard(contract, options = {}) {
   return { result, seed };
 }
 async function generateProductionRoundBoard(contract, options = {}) {
-  const requestedSeed = options.requestedSeed ?? crypto.randomInt(0x100000000);
+  const requestedSeed = options.requestedSeed ??
+    generationTestHooks.requestedSeed ??
+    crypto.randomInt(0x100000000);
   generationTestHooks.onContract?.({
     size: contract.size,
     minimum: contract.minimum,
@@ -1549,31 +1548,28 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
   }
   room.lastResult = result;
   if (recorded) {
-    try {
-      leaderboard.recordScores(
-        result.ranking.map((rankedPlayer) => {
-          const words = rankedPlayer.words || [];
-          return {
-            id: rankedPlayer.id,
-            name: rankedPlayer.name,
-            avatar: rankedPlayer.avatar,
-            score: rankedPlayer.score,
-            words: words.length,
-            correct: words.length,
-            longest: Math.max(0, ...words.map((item) => item.word.length)),
-            totalWordLength: words.reduce(
-              (sum, item) => sum + item.word.length,
-              0,
-            ),
-            gameSeconds,
-            multiplayer: true,
-            multiplayerOutcome: outcomes.get(rankedPlayer.id) || "neutral",
-          };
-        }),
-      );
-    } catch {
-      // A leaderboard write must never prevent the round result broadcast.
-    }
+    recordLeaderboardScores(
+      () => result.ranking.map((rankedPlayer) => {
+        const words = rankedPlayer.words || [];
+        return {
+          id: rankedPlayer.id,
+          name: rankedPlayer.name,
+          avatar: rankedPlayer.avatar,
+          score: rankedPlayer.score,
+          words: words.length,
+          correct: words.length,
+          longest: Math.max(0, ...words.map((item) => item.word.length)),
+          totalWordLength: words.reduce(
+            (sum, item) => sum + item.word.length,
+            0,
+          ),
+          gameSeconds,
+          multiplayer: true,
+          multiplayerOutcome: outcomes.get(rankedPlayer.id) || "neutral",
+        };
+      }),
+      result.roundId,
+    );
   }
   broadcast(room, { type: "round_finished", ...result });
   if (result.nextRound) scheduleQueuedNextRound(room, result.nextRound);
@@ -2477,6 +2473,7 @@ async function handle(ws, message) {
         name: p.name,
         avatar: p.avatar || "🐈",
         score: playerScore(room, p),
+        connected: p.ws?.readyState === 1,
       })),
       ...(room.suddenDeathSeries
         ? { series: publicSeriesState(room) }
@@ -2548,6 +2545,9 @@ const server = http.createServer((req, res) => {
     "/profile-migration.js",
     "/play-streak.js",
     "/multiplayer-result-state.js",
+    "/multiplayer-word-reconciliation.js",
+    "/multiplayer-player-presentation.js",
+    "/cooperative-results.js",
     "/round-timing.js",
     "/board-core.js",
     "/analytics.js",
@@ -2717,6 +2717,74 @@ module.exports = {
 
 const { Leaderboard } = require("./leaderboard");
 const leaderboard = new Leaderboard();
+let leaderboardSaveFailure = null;
+let leaderboardSaveRetryTimer = null;
+let leaderboardSaveRetryAttempt = 0;
+const LEADERBOARD_SAVE_RETRY_BASE_MS = 1_000;
+const LEADERBOARD_SAVE_RETRY_MAX_MS = 30_000;
+function boundedLeaderboardLogValue(value, fallback, max = 80) {
+  const text = String(value ?? fallback).replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  return (text || fallback).slice(0, max);
+}
+function clearLeaderboardSaveRetry() {
+  if (leaderboardSaveRetryTimer) clearTimeout(leaderboardSaveRetryTimer);
+  leaderboardSaveRetryTimer = null;
+  leaderboardSaveRetryAttempt = 0;
+}
+function markLeaderboardPersistenceRecovered(roundId) {
+  if (!leaderboardSaveFailure) return;
+  console.info(
+    "Leaderboard persistence recovered: code=" +
+      leaderboardSaveFailure.code +
+      " roundId=" +
+      boundedLeaderboardLogValue(roundId || leaderboardSaveFailure.roundId, "unknown"),
+  );
+  leaderboardSaveFailure = null;
+  clearLeaderboardSaveRetry();
+}
+function scheduleLeaderboardSaveRetry() {
+  if (leaderboardSaveRetryTimer) return;
+  const delay = Math.min(
+    LEADERBOARD_SAVE_RETRY_BASE_MS * 2 ** leaderboardSaveRetryAttempt,
+    LEADERBOARD_SAVE_RETRY_MAX_MS,
+  );
+  leaderboardSaveRetryAttempt += 1;
+  leaderboardSaveRetryTimer = setTimeout(() => {
+    leaderboardSaveRetryTimer = null;
+    try {
+      leaderboard.save();
+      markLeaderboardPersistenceRecovered();
+    } catch (error) {
+      recordLeaderboardPersistenceFailure(error, leaderboardSaveFailure?.roundId);
+    }
+  }, delay);
+  leaderboardSaveRetryTimer.unref?.();
+}
+function recordLeaderboardPersistenceFailure(error, roundId) {
+  const code = boundedLeaderboardLogValue(error?.code, "UNKNOWN", 32);
+  if (!leaderboardSaveFailure || leaderboardSaveFailure.code !== code)
+    console.warn(
+      "Leaderboard persistence failed: code=" +
+        code +
+        " roundId=" +
+        boundedLeaderboardLogValue(roundId, "unknown"),
+    );
+  leaderboardSaveFailure = {
+    code,
+    roundId: boundedLeaderboardLogValue(roundId, "unknown"),
+  };
+  scheduleLeaderboardSaveRetry();
+}
+function recordLeaderboardScores(entries, roundId) {
+  try {
+    leaderboard.recordScores(typeof entries === "function" ? entries() : entries);
+    markLeaderboardPersistenceRecovered(roundId);
+    return true;
+  } catch (error) {
+    recordLeaderboardPersistenceFailure(error, roundId);
+    return false;
+  }
+}
 function recordAnalyticsConsentChoice(choice) {
   const cleanChoice = choice === "granted" ? "granted" : choice === "denied" ? "denied" : "";
   if (!cleanChoice) return null;

@@ -86,3 +86,10 @@ test("Sudden Death copy remains available when motion is reduced", () => {
     survivors: [],
   }), /Loser.*NOPE.*Alpha/);
 });
+
+test("Sudden Death ending remains opaque for its existing 4.5-second presentation", () => {
+  const css = fs.readFileSync(path.join(__dirname, "..", "custom.css"), "utf8");
+  assert.match(css, /\.sudden-death-explosion\.is-active \{ animation: sudden-death-screen 4\.5s ease-out both; \}/);
+  assert.match(css, /@keyframes sudden-death-screen \{[\s\S]*?100% \{ opacity: 1; transform: scale\(1\) rotate\(0\); \}/);
+  assert.match(css, /background: radial-gradient\(circle, rgb\(255 244 174\).*rgb\(91 45 127\) 100%\);/);
+});

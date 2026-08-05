@@ -14,6 +14,7 @@
   const reconnectStorageKey = "wordrush-display-reconnect";
   const suddenDeathOutcome = window.WordrushSuddenDeathOutcome;
   const suddenDeathSeries = window.WordrushSuddenDeathSeries;
+  const cooperativeResults = window.WordrushCooperativeResults;
   let renderedFinishedRoundId = null;
 
   const savedReconnectCredential = () => {
@@ -134,7 +135,13 @@
     if (result.series?.id || state.series?.phase === "finished")
       return renderSeriesFinished(state, result);
     const replaySuddenDeath = renderedFinishedRoundId !== result.roundId;
-    const ranking = [...(result.ranking || state.players || [])]
+    const presentation = cooperativeResults.normalizeResultPresentation({
+      result,
+      ranking: result.ranking || state.players,
+    });
+    const cooperative = presentation.cooperative;
+    const teamScore = presentation.teamScore || 0;
+    const ranking = [...presentation.players]
       .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
     const wordEntries = ranking.flatMap((player) =>
       (player.words || []).map((item) => ({ player, item })),
@@ -143,9 +150,10 @@
       0,
       ...wordEntries.map(({ item }) => String(item.word || "").length),
     );
-    const longest = wordEntries
-      .filter(({ item }) => String(item.word || "").length === longestLength)
-      .sort((a, b) => Number(b.item.points || 0) - Number(a.item.points || 0))[0];
+    const longest = wordEntries.filter(({ item }) =>
+      String(item.word || "").length === longestLength,
+    );
+    const longestPlayers = new Set(longest.map(({ player }) => player.id)).size;
     const winner = ranking[0];
     const leaders = winner
       ? ranking.filter((player) => Number(player.score || 0) === Number(winner.score || 0))
@@ -157,15 +165,15 @@
         : suddenDeath.outcome === "survivors"
           ? "Sudden Death survivors!"
           : "Sudden Death — no winner"
-      : result.cooperative
+      : cooperative
       ? "Team word power!"
       : leaders.length > 1
         ? `${leaders.map((player) => `${escape(player.avatar || "🐈")} ${escape(player.name)}`).join(" & ")} tie for the crown!`
       : winner
         ? `${escape(winner.avatar || "🐈")} ${escape(winner.name)} takes the crown!`
         : "What a word rush!";
-    const longestBanner = longest
-      ? `<div class="longest-banner"><span>🏆 LONGEST WORD</span><strong>${escape(longest.item.word)}</strong><b>${escape(longest.player.avatar || "🐈")} ${escape(longest.player.name)} · ${longestLength} letters · ${Number(longest.item.points || 0).toLocaleString()} pts</b></div>`
+    const longestBanner = longest.length
+      ? `<div class="longest-banner"><span>🏆 LONGEST WORD${longestPlayers > 1 ? " · CO-WINNERS" : ""}</span><strong>${longest.map(({ item }) => escape(item.word)).join(" · ")}</strong><b>${longest.map(({ player, item }) => `${escape(player.avatar || "🐈")} ${escape(player.name)} · ${longestLength} letters · ${Number(item.points || 0).toLocaleString()} pts`).join("<br>")}</b></div>`
       : `<div class="longest-banner empty"><span>✨ NEXT ROUND</span><strong>No words yet</strong><b>A fresh board is waiting.</b></div>`;
     const suddenDeathBanner = result.suddenDeath
       ? "<div class=\"sudden-death-banner" + (replaySuddenDeath ? "" : " no-replay") + "\"><strong>💥 SUDDEN DEATH!</strong><span>" +
@@ -183,13 +191,21 @@
       const outcomeBadge = suddenDeathOutcome.badgeForPlayer(suddenDeath, player);
       const cardClass = "final-player-card rank-" + Math.min(index + 1, 4) +
         (outcomeBadge ? " sudden-death-result-card" : "");
-      const rankBadge = outcomeBadge || (["👑", "🥈", "🥉"][index] || index + 1);
-      return `<article class="${cardClass}"><header><span class="final-rank"${outcomeBadge ? ` data-outcome="${outcomeBadge.toLowerCase()}"` : ""}>${rankBadge}</span><div><strong>${escape(player.avatar || "🐈")} ${escape(player.name)}</strong><small>${words.length} word${words.length === 1 ? "" : "s"}</small>${sessionRecord}</div><b class="final-score">${Number(player.score || 0).toLocaleString()}</b></header><div class="tv-word-list${density}">${wordChips}</div></article>`;
+      const rankBadge = outcomeBadge || (cooperative ? "•" : (["👑", "🥈", "🥉"][index] || index + 1));
+      const playerScore = cooperative
+        ? Number(player.contribution || 0).toLocaleString() + " CONTRIBUTION"
+        : Number(player.score || 0).toLocaleString();
+      return `<article class="${cardClass}"><header><span class="final-rank"${outcomeBadge ? ` data-outcome="${outcomeBadge.toLowerCase()}"` : ""}>${rankBadge}</span><div><strong>${escape(player.avatar || "🐈")} ${escape(player.name)}</strong><small>${words.length} word${words.length === 1 ? "" : "s"}</small>${sessionRecord}</div><b class="final-score">${playerScore}</b></header><div class="tv-word-list${density}">${wordChips}</div></article>`;
     }).join("");
     eyebrow.textContent = "FINAL RESULTS";
     screen.className = "screen finished results-party";
-    screen.innerHTML = `<div class="finish-title"><p class="kicker">ROUND COMPLETE!</p><h1>${headline}</h1></div>${longestBanner}${suddenDeathBanner}<div class="final-player-grid players-${Math.min(ranking.length, 4)}">${playerCards}</div><div class="word-color-key"><span class="length-short">3–4 letters</span><span class="length-medium">5–6 letters</span><span class="length-long">7+ letters</span></div>`;
-    connection.textContent = "Final scores · live room connection";
+    const teamScoreBanner = cooperative
+      ? `<div class="team-score-banner"><span>SHARED TEAM SCORE</span><strong>${teamScore.toLocaleString()}</strong></div>`
+      : "";
+    screen.innerHTML = `<div class="finish-title"><p class="kicker">ROUND COMPLETE!</p><h1>${headline}</h1></div>${teamScoreBanner}${longestBanner}${suddenDeathBanner}<div class="final-player-grid players-${Math.min(ranking.length, 4)}">${playerCards}</div><div class="word-color-key"><span class="length-short">3–4 letters</span><span class="length-medium">5–6 letters</span><span class="length-long">7+ letters</span></div>`;
+    connection.textContent = cooperative
+      ? "Shared team score · live room connection"
+      : "Final scores · live room connection";
     renderedFinishedRoundId = result.roundId || null;
   };
   const render = (state) => {

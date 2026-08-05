@@ -13,6 +13,8 @@ const $ = (s) => document.querySelector(s),
   isPartyRound = sharedConfig.isPartyRound,
   shouldEndOnRejectedWord = sharedConfig.shouldEndOnRejectedWord,
   multiplayerResultState = window.WordrushMultiplayerResultState,
+  multiplayerWordReconciliation = window.WordrushMultiplayerWordReconciliation,
+  cooperativeResults = window.WordrushCooperativeResults,
   roundTiming = window.WordrushRoundTiming,
   roundOutcome = window.WordrushRoundOutcome,
   profileMigration = window.WordrushProfileMigration,
@@ -327,6 +329,7 @@ const profile = (() => {
         speedAchievement: false,
         maxGridWin: 0,
         completedMultiplayerRounds: [],
+        multiplayerWordRounds: [],
         days: [],
       },
       JSON.parse(localStorage.getItem("wordrush-profile") || "{}"),
@@ -352,6 +355,7 @@ const profile = (() => {
       speedAchievement: false,
       maxGridWin: 0,
       completedMultiplayerRounds: [],
+      multiplayerWordRounds: [],
       days: [],
     };
   }
@@ -369,6 +373,9 @@ profile.days = playStreak.normalizePlayDates(profile.days);
 profile.completedMultiplayerRounds = Array.isArray(profile.completedMultiplayerRounds)
   ? profile.completedMultiplayerRounds.filter((id) => typeof id === "string").slice(-50)
   : [];
+profile.multiplayerWordRounds = multiplayerWordReconciliation.normalizeRoundRecords(
+  profile.multiplayerWordRounds,
+);
 profile.name = typeof profile.name === "string" ? profile.name.slice(0, 20) : "";
 if (!profile.name || profile.name === "Jordan")
   profile.name = randomGuestName();
@@ -404,15 +411,24 @@ function recordPlayDay() {
   const today = playStreak.localDateKey(new Date());
   if (today) profile.days = playStreak.normalizePlayDates([...profile.days, today]);
 }
-function recordAcceptedWord(word) {
+function recordAcceptedWord(word, { trackSpeed = true } = {}) {
   const elapsed = Date.now() - s.startedAt;
-  s.roundWordTimes.push(elapsed);
-  if (s.roundWordTimes.filter((time) => elapsed - time <= 60000).length >= 20)
-    profile.speedAchievement = true;
+  if (trackSpeed) {
+    s.roundWordTimes.push(elapsed);
+    if (s.roundWordTimes.filter((time) => elapsed - time <= 60000).length >= 20)
+      profile.speedAchievement = true;
+  }
   profile.words++;
   profile.correct++;
   profile.totalWordLength += word.length;
   profile.longest = Math.max(profile.longest, word.length);
+}
+function recordReconciledOnlineWords(words) {
+  const delta = multiplayerWordReconciliation.wordStatsDelta(words);
+  profile.words += delta.words;
+  profile.correct += delta.correct;
+  profile.totalWordLength += delta.totalWordLength;
+  profile.longest = Math.max(profile.longest, delta.longest);
 }
 function formatTimer(seconds) {
   const safe = Math.max(0, Math.ceil(Number(seconds) || 0));
@@ -483,6 +499,8 @@ function renderResults(
     onlineCreator = false,
     suddenDeath = null,
     series = null,
+    cooperative = false,
+    teamScore = 0,
   } = {},
 ) {
   const sourceRows = ranking?.length
@@ -520,7 +538,7 @@ function renderResults(
     : nextRushLabel
     ? onlineHeading || "Up next: " + nextRushLabel
     : profile.name + ".";
-  renderHeroScores(rows, skipped, suddenDeath, series);
+  renderHeroScores(rows, skipped, suddenDeath, series, cooperative, teamScore);
   const suddenDeathData = suddenDeathOutcome.normalizeSuddenDeathOutcome(suddenDeath);
   const target = $("#resultPlayers");
   target.replaceChildren();
@@ -535,7 +553,7 @@ function renderResults(
       (suddenDeathData ? " sudden-death-result-card" : "");
     const rank = document.createElement("span");
     rank.className = "result-rank";
-    rank.textContent = skipped
+    rank.textContent = skipped || cooperative
       ? "•"
       : outcomeBadge || (["👑", "🥈", "🥉"][index] || String(index + 1));
     if (outcomeBadge) rank.dataset.outcome = outcomeBadge.toLowerCase();
@@ -562,7 +580,9 @@ function renderResults(
     }
     const score = document.createElement("b");
     score.className = "result-player-score";
-    score.textContent = series
+    score.textContent = cooperative
+      ? (Number(player.contribution) || 0).toLocaleString() + " contribution"
+      : series
       ? (Number(player.series?.strikes) || 0) + " STRIKES"
       : Number(player.score || 0).toLocaleString();
     row.append(rank, identity, score);
@@ -581,9 +601,26 @@ function renderHeroScores(
   skipped = false,
   suddenDeath = null,
   series = null,
+  cooperative = false,
+  teamScore = 0,
 ) {
   const target = $("#resultHeroScores");
   if (!target) return;
+  if (cooperative) {
+    const card = document.createElement("article");
+    card.className = "result-hero-score-card is-winner";
+    const badge = document.createElement("small");
+    badge.className = "hero-score-badge";
+    badge.textContent = "TEAM SCORE";
+    const name = document.createElement("b");
+    name.className = "hero-score-name";
+    name.textContent = "Shared team";
+    const score = document.createElement("strong");
+    score.textContent = (Number(teamScore) || 0).toLocaleString();
+    card.append(badge, name, score);
+    target.replaceChildren(card);
+    return;
+  }
   const ordered = series
     ? suddenDeathSeries.rankParticipants(players, { winnerIds: series.winnerIds })
     : [...players].sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
@@ -1665,8 +1702,16 @@ window.wordrushRecordOnlineWord = (word, points, chain) => {
   s.pendingOnlineTrace = null;
   applyOnlineChainState(chain, true);
   s.lastAcceptedWord = word;
-  recordAcceptedWord(word);
-  updateProfile();
+  const recorded = multiplayerWordReconciliation.recordLocalAcceptedWord(
+    profile.multiplayerWordRounds,
+    s.onlineRoundKey,
+    word,
+  );
+  profile.multiplayerWordRounds = recorded.records;
+  if (recorded.recorded) {
+    recordAcceptedWord(word);
+    updateProfile();
+  }
   emit("word-accepted", {
     word,
     points: Number(points) || word.length * word.length,
@@ -1925,8 +1970,13 @@ window.wordrushOnlineFinish = (
         }
       : null,
   }));
+  const resultPresentation = cooperativeResults.normalizeResultPresentation({
+    result,
+    ranking: normalizedRanking,
+  });
+  const presentationRanking = resultPresentation.players;
   const accountingParticipant = multiplayerResultState.resultAccountingParticipant(
-    normalizedRanking,
+    presentationRanking,
     guestId,
     series,
   );
@@ -1934,6 +1984,17 @@ window.wordrushOnlineFinish = (
     ? Number(accountingParticipant?.score) || 0
     : accountingParticipant?.score ?? s.score;
   const ownWords = accountingParticipant?.words || [];
+  const wordReconciliation = accountingParticipant
+    ? multiplayerWordReconciliation.reconcileAcceptedWords(
+        profile.multiplayerWordRounds,
+        result.roundId || s.onlineRoundKey,
+        ownWords,
+      )
+    : null;
+  if (wordReconciliation) {
+    profile.multiplayerWordRounds = wordReconciliation.records;
+    recordReconciledOnlineWords(wordReconciliation.missingWords);
+  }
   const suddenDeath =
     result.reason === "invalid_word" ? result.suddenDeath : null;
   const resultAction = multiplayerResultState.reconcileResultAction({
@@ -1961,14 +2022,18 @@ window.wordrushOnlineFinish = (
     : "ROUND COMPLETE!";
   $("#resultScoreLabel").textContent = skipped
     ? "CURRENT SCORES"
+    : resultPresentation.cooperative
+    ? "TEAM SCORE"
     : "FINAL SCORES";
-  renderResults(normalizedRanking, {
+  renderResults(presentationRanking, {
     skipped,
     onlineNextRound: resultAction.nextRound,
     onlineSourceRoundId: result.roundId || s.onlineRoundKey,
     onlineCreator: Boolean(window.wordrushSessionCreator),
     suddenDeath,
     series,
+    cooperative: resultPresentation.cooperative,
+    teamScore: resultPresentation.teamScore,
   });
   renderSuddenDeath(suddenDeath);
   if (suddenDeath && multiplayerResultState.shouldReplaySuddenDeath(delivery))
@@ -2028,7 +2093,7 @@ window.wordrushOnlineFinish = (
         s.config?.seconds,
       );
   const shouldRecord = multiplayerResultState.shouldRecordMultiplayerResult({
-    ranking: normalizedRanking,
+    ranking: presentationRanking,
     guestId,
     series,
     skipped,
@@ -2062,8 +2127,8 @@ window.wordrushOnlineFinish = (
         accountingResultId,
       ].slice(-50);
     recordPlayDay();
-    updateProfile();
   }
+  if (shouldRecord || wordReconciliation?.changed) updateProfile();
   show("resultsScreen");
   renderOnlineResultAction(resultAction, skipped);
   $("#exitParty").hidden = true;
@@ -2081,13 +2146,6 @@ window.wordrushOnlineFinish = (
 
 const themePreference = localStorage.getItem("wordrush-theme");
 if (themePreference) document.documentElement.dataset.theme = themePreference;
-$("#themeToggle")?.addEventListener("click", () => {
-  const next =
-    document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-  document.documentElement.dataset.theme = next;
-  localStorage.setItem("wordrush-theme", next);
-  emit("theme-change", { theme: next });
-});
 
 $("#profileButton")?.addEventListener("click", () => {
   updateIdentity();

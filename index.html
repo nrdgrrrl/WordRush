@@ -79,21 +79,12 @@
   </head>
   <body>
     <main class="app-shell">
-      <header>
-        <button class="brand" data-screen="homeScreen"><b>W</b> WORDRUSH</button
-        ><button
-          class="theme-toggle"
-          id="themeToggle"
-          aria-label="Toggle dark mode"
-        >
-          ☾</button
-        ><button class="avatar" id="profileButton" aria-label="Edit profile">
-          🐈
-        </button>
-      </header>
       <section class="screen active" id="homeScreen">
         <h1 class="hero-art" aria-label="Wordrush">
           <span>W</span><span>O</span><span>R</span><span>D</span><b>✦</b><span>R</span><span>U</span><span>S</span><span>H</span>
+          <button class="avatar" id="profileButton" aria-label="Edit profile">
+            🐈
+          </button>
         </h1>
         <div class="stats home-stats">
           <div><b id="homeScore">0</b><small>all-time score</small></div>
@@ -303,7 +294,7 @@
           </div>
         </div>
         <div class="result-highlights" aria-label="Round highlights">
-          <article><span>🔠</span><div><small>LONGEST WORD</small><b id="resultLongestWord">—</b></div></article>
+          <article><span>🔠</span><div><small id="resultLongestLabel">LONGEST WORD</small><b id="resultLongestWord">—</b></div></article>
           <article><span>👑</span><div><small id="resultTopLabel">ROUND LEADER</small><b id="resultTopPlayer">—</b></div></article>
         </div>
         <section class="series-final-panel" id="seriesFinalPanel" hidden aria-label="Sudden Death Series final results">
@@ -330,7 +321,7 @@
             </div>
           </div>
           <div class="reveal-total">
-            <small>TOTAL SCORE</small><strong id="revealTotal">0</strong>
+            <small id="revealTotalLabel">TOTAL SCORE</small><strong id="revealTotal">0</strong>
           </div>
           <div class="reveal-players" id="revealPlayers"></div>
         </div>
@@ -743,6 +734,9 @@
     <script src="profile-migration.js"></script>
     <script src="play-streak.js"></script>
     <script src="multiplayer-result-state.js"></script>
+    <script src="multiplayer-word-reconciliation.js"></script>
+    <script src="multiplayer-player-presentation.js"></script>
+    <script src="cooperative-results.js"></script>
     <script src="round-timing.js"></script>
     <script src="board-core.js"></script>
     <script src="analytics.js"></script>

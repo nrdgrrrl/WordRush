@@ -259,6 +259,7 @@
   }
   function renderPlayers(players, series = roomSeries) {
     const list = players || [];
+    const seatSummary = window.WordrushMultiplayerPlayerPresentation.summarizeSeats(list);
     const seriesLive = $("#seriesLiveStandings");
     if (seriesLive) {
       seriesLive.hidden = !series;
@@ -286,11 +287,20 @@
       if (livePlayers) {
         const row = document.createElement("div");
         row.className = "live-player is-opponent";
+        const seat = window.WordrushMultiplayerPlayerPresentation.describeSeat(player);
+        if (!seat.connected) row.classList.add("is-reconnecting");
         const score = document.createElement("b");
         score.textContent = series
           ? (Number(player.strikes ?? player.series?.strikes) || 0) + " strikes"
           : Number(player.score || 0).toLocaleString();
-        row.append(playerIdentity(player), score);
+        row.append(playerIdentity(player));
+        if (!seat.connected) {
+          const status = document.createElement("small");
+          status.className = "player-connection-status";
+          status.textContent = seat.status;
+          row.append(status);
+        }
+        row.append(score);
         livePlayers.append(row);
       }
     });
@@ -300,6 +310,8 @@
       if (!lobbyPlayers) return;
       const row = document.createElement("div");
       row.className = "live-player";
+      const seat = window.WordrushMultiplayerPlayerPresentation.describeSeat(player);
+      if (!seat.connected) row.classList.add("is-reconnecting");
       row.dataset.playerId = player.id;
       row.setAttribute("role", "listitem");
       if (player.id === creatorId) row.classList.add("is-host");
@@ -318,6 +330,12 @@
         host.textContent = "♛ Host";
         badges.append(host);
       }
+      if (!seat.connected) {
+        const status = document.createElement("span");
+        status.className = "lobby-player-role player-connection-status";
+        status.textContent = seat.status;
+        badges.append(status);
+      }
       const seriesParticipant = series?.participants?.find((item) => item.id === player.id);
       if (seriesParticipant) {
         const seriesBadge = document.createElement("span");
@@ -335,21 +353,31 @@
     if (sessionCode) {
       $("#multiplayerBanner").hidden = false;
       $("#multiplayerBannerText").textContent =
-        (players || []).length +
-        " player" +
-        ((players || []).length === 1 ? "" : "s") +
-        " in session";
+        seatSummary.connectedCount +
+        " connected · " +
+        seatSummary.retainedCount +
+        " seat" +
+        (seatSummary.retainedCount === 1 ? "" : "s") +
+        " reserved";
       $("#roomTitle").textContent = "Multiplayer · " + sessionCode;
       $("#roomSubtitle").textContent =
-        (players || []).length +
+        seatSummary.connectedCount +
         " player" +
-        ((players || []).length === 1 ? "" : "s") +
-        " connected";
+        (seatSummary.connectedCount === 1 ? "" : "s") +
+        " connected · " +
+        seatSummary.retainedCount +
+        " seat" +
+        (seatSummary.retainedCount === 1 ? "" : "s") +
+        " reserved";
       $("#sessionPlayersText").textContent =
-        (players || []).length +
+        seatSummary.connectedCount +
         " player" +
-        ((players || []).length === 1 ? "" : "s") +
-        " connected";
+        (seatSummary.connectedCount === 1 ? "" : "s") +
+        " connected · " +
+        seatSummary.retainedCount +
+        " seat" +
+        (seatSummary.retainedCount === 1 ? "" : "s") +
+        " reserved";
     }
   }
   function updateLobbyControls() {

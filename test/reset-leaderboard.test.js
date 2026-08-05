@@ -31,7 +31,7 @@ test("reset leaderboard backs up populated data and is idempotent", () => {
   assert.equal(second.status, 0, second.stderr);
   assert.equal(fs.readdirSync(dir).filter((name) => name.includes(".backup-")).length, 1);
 });
-test("reset leaderboard handles missing files and rejects unsafe targets", () => {
+test("reset leaderboard accepts a normal parent path and rejects unsafe targets", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-reset-"));
   const missing = path.join(dir, "leaderboard.json");
   assert.equal(run(missing).status, 0);
@@ -42,6 +42,52 @@ test("reset leaderboard handles missing files and rejects unsafe targets", () =>
   fs.unlinkSync(missing);
   fs.symlinkSync(missing, link);
   assert.equal(run(link).status, 2);
+});
+test("reset leaderboard rejects a symlinked parent before modifying its repository target", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-reset-"));
+  const repoFixture = fs.mkdtempSync(path.join(__dirname, "..", ".reset-leaderboard-test-"));
+  const source = path.join(repoFixture, "leaderboard.json");
+  const alias = path.join(dir, "repo-alias");
+  fs.writeFileSync(source, "repository source");
+  fs.symlinkSync(repoFixture, alias, "dir");
+  try {
+    const result = run(path.join(alias, "leaderboard.json"));
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /symlinked parent paths are not allowed/);
+    assert.equal(fs.readFileSync(source, "utf8"), "repository source");
+    assert.deepEqual(fs.readdirSync(repoFixture), ["leaderboard.json"]);
+  } finally {
+    fs.rmSync(repoFixture, { recursive: true, force: true });
+  }
+});
+test("reset leaderboard rejects nested and dangling symlinked parents without touching sources", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-reset-"));
+  const sourceDir = path.join(dir, "source");
+  const source = path.join(sourceDir, "leaderboard.json");
+  const nestedAlias = path.join(dir, "nested-alias");
+  const outerAlias = path.join(dir, "outer-alias");
+  const danglingAlias = path.join(dir, "dangling-alias");
+  fs.mkdirSync(sourceDir);
+  fs.writeFileSync(source, "nested source");
+  fs.symlinkSync(sourceDir, nestedAlias, "dir");
+  fs.symlinkSync(nestedAlias, outerAlias, "dir");
+  fs.symlinkSync(path.join(dir, "missing-parent"), danglingAlias, "dir");
+  for (const file of [path.join(outerAlias, "leaderboard.json"), path.join(danglingAlias, "leaderboard.json")]) {
+    const result = run(file);
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /symlinked parent paths are not allowed/);
+  }
+  assert.equal(fs.readFileSync(source, "utf8"), "nested source");
+  assert.deepEqual(fs.readdirSync(sourceDir), ["leaderboard.json"]);
+  assert.equal(fs.existsSync(path.join(dir, "missing-parent")), false);
+});
+test("reset leaderboard refuses a missing parent directory", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-reset-"));
+  const file = path.join(dir, "missing", "leaderboard.json");
+  const result = run(file);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /parent directory must already exist/);
+  assert.equal(fs.existsSync(path.dirname(file)), false);
 });
 test("resetting a missing file uses the executing account and creates a usable trusted file", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-reset-"));

@@ -92,8 +92,15 @@ class Leaderboard {
     if (!this.trusted) throw new Error("LEADERBOARD_REQUIRES_EXPLICIT_RESET");
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const temporary = this.file + ".tmp";
-    fs.writeFileSync(temporary, JSON.stringify(this.data, null, 2) + "\n", { mode: 0o600 });
-    fs.renameSync(temporary, this.file);
+    try {
+      fs.writeFileSync(temporary, JSON.stringify(this.data, null, 2) + "\n", { mode: 0o600 });
+      fs.renameSync(temporary, this.file);
+    } catch (error) {
+      try {
+        fs.unlinkSync(temporary);
+      } catch {}
+      throw error;
+    }
   }
 
   recordScore(entry = {}, { save = true } = {}) {
