@@ -3,11 +3,9 @@
   const SPEEDS = { slow: 1800, medium: 900, fast: 350 };
 
   function readSoloSettings() {
-    const storedView = localStorage.getItem("wordrush-results-view");
-    const storedSpeed = localStorage.getItem("wordrush-results-speed");
     return {
-      view: storedView === "static" || storedView === "reveal" ? storedView : "reveal",
-      speed: Object.hasOwn(SPEEDS, storedSpeed) ? storedSpeed : "medium",
+      view: "static",
+      speed: "medium",
     };
   }
 
@@ -240,24 +238,10 @@
   }
 
   function applyResults(restartReveal = false) {
-    const reveal = settings.view === "reveal";
-    $("#staticResultsView").hidden = reveal;
-    $("#animatedResultsView").hidden = !reveal;
-    $("#staticResultsButton").classList.toggle("active", !reveal);
-    $("#staticResultsButton").setAttribute("aria-pressed", String(!reveal));
-    $("#animatedResultsButton").classList.toggle("active", reveal);
-    $("#animatedResultsButton").setAttribute("aria-pressed", String(reveal));
-    document.querySelectorAll("[data-speed]").forEach((button) => {
-      const active = button.dataset.speed === settings.speed;
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-pressed", String(active));
-    });
-    if (reveal && (restartReveal || renderedView !== "reveal")) renderReveal();
-    else if (!reveal) {
-      revealToken++;
-      clearTimeout(revealTimer);
-    }
-    renderedView = reveal ? "reveal" : "static";
+    $("#staticResultsView").hidden = false;
+    revealToken++;
+    clearTimeout(revealTimer);
+    renderedView = "static";
   }
 
   function updateGuestControls() {
@@ -302,15 +286,9 @@
       window.wordrushCanSetResultsSettings === false
     )
       return;
-    const previousView = settings.view;
-    const previousSpeed = settings.speed;
     settings = {
-      view: Object.hasOwn(next, "view")
-        ? next.view === "static"
-          ? "static"
-          : "reveal"
-        : settings.view,
-      speed: Object.hasOwn(SPEEDS, next.speed) ? next.speed : settings.speed,
+      view: "static",
+      speed: "medium",
     };
     persistSoloSettings();
     if (
@@ -322,8 +300,7 @@
         JSON.stringify({ type: "set_results_settings", ...settings }),
       );
     }
-    const viewChanged = previousView !== settings.view;
-    applyResults(viewChanged);
+    applyResults();
   }
 
   document.addEventListener("wordrush:round-started", () => {
@@ -353,12 +330,6 @@
       ...player,
       words: player.words || [],
     }));
-    if (detail.result?.results)
-      settings = {
-        ...settings,
-        ...detail.result.results,
-        view: detail.result.results.view === "static" ? "static" : "reveal",
-      };
     const skipped =
       detail.result?.reason === "skipped" || detail.result?.recorded === false;
     currentSuddenDeath = suddenDeathOutcome.normalizeSuddenDeathOutcome(
@@ -367,33 +338,17 @@
     currentSeries = detail.result?.series || null;
     renderHighlights(rows(), skipped, currentSuddenDeath, currentSeries);
     renderSeriesFinal(currentSeries, rows());
-    applyResults(true);
+    applyResults();
   });
 
   window.addEventListener("wordrush:room-change", () => {
     updateGuestControls();
     if (!window.wordrushSessionCode) {
-      const solo = readSoloSettings();
-      const viewChanged = solo.view !== settings.view;
-      settings.view = solo.view;
-      settings.speed = solo.speed;
-      applyResults(viewChanged);
+      settings = readSoloSettings();
+      applyResults();
     }
   });
 
   window.wordrushResultsSettings = (next) => setSettings(next, false);
-  $("#staticResultsButton")?.addEventListener("click", () =>
-    setSettings({ view: "static" }, true),
-  );
-  $("#animatedResultsButton")?.addEventListener("click", () =>
-    setSettings({ view: "reveal" }, true),
-  );
-  document
-    .querySelectorAll("[data-speed]")
-    .forEach((button) =>
-      button.addEventListener("click", () =>
-        setSettings({ speed: button.dataset.speed }, true),
-      ),
-    );
   applyResults();
 })();

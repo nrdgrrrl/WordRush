@@ -1650,19 +1650,15 @@ html[data-theme="dark"] .scoreboard-row {
 }
 .series-final-panel {
   display: grid;
-  gap: 14px;
-  margin: 18px 0;
-  padding: 20px;
+  gap: 10px;
+  margin: 26px 0 12px;
+  padding: 12px;
   border: 2px solid rgba(246, 200, 95, .75);
   border-radius: 20px;
   background: rgba(91, 45, 127, .12);
 }
-.series-final-panel h2 {
-  margin: 8px 0 0;
-  font-size: 1.1rem;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-}
+.series-final-panel[hidden] { display: none; }
+.series-final-panel .eyebrow { margin: 0; font-size: .65rem; }
 .series-final-standing.is-winner {
   border: 2px solid #f6c85f;
   background: rgba(246, 200, 95, .16);
@@ -1682,6 +1678,13 @@ html[data-theme="dark"] .scoreboard-row {
   margin: 0;
   padding-left: 26px;
 }
+.series-history-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: .75rem;
+  font-weight: 800;
+}
+.series-history-details[open] summary { margin-bottom: 8px; }
 .series-history li {
   padding: 8px 12px;
   border-radius: 10px;

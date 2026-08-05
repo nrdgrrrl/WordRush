@@ -466,8 +466,8 @@ html[data-theme="dark"] .reveal-word {
 #resultsScreen .result-hero h1 {
   position: relative;
   z-index: 1;
-  margin: 6px auto 12px;
-  font-size: clamp(2.25rem, 10vw, 4rem);
+  margin: 4px auto 10px;
+  font-size: clamp(1.8rem, 8vw, 3rem);
   line-height: .92;
   letter-spacing: -.065em;
 }

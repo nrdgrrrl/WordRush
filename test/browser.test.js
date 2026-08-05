@@ -1216,8 +1216,9 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
   await page.waitForSelector("#resultsScreen.active");
   assert.equal(await page.locator(".result-player-card").count(), 2);
   assert.equal(await page.locator("#staticResultsView").isHidden(), false);
-  assert.equal(await page.locator("#animatedResultsView").isHidden(), true);
-  assert.equal(await page.locator("#staticResultsButton").getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator(".results-switcher").count(), 0);
+  assert.equal(await page.locator("#animatedResultsView").count(), 0);
+  assert.equal(await page.locator("#seriesFinalPanel").isHidden(), true);
   assert.match(await page.locator("#resultLongestWord").textContent(), /PLANETS · 49 pts/);
   assert.match(await page.locator("#resultTopPlayer").textContent(), /Comet/);
   assert.match(await page.locator(".result-session-record").first().textContent(), /2W · 1L · 149 session pts/);
@@ -1229,12 +1230,6 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
   }));
   assert.ok(presentation.heroRadius >= 20);
   assert.notEqual(presentation.first, presentation.second);
-  await page.locator("#animatedResultsButton").click();
-  assert.equal(await page.locator("#animatedResultsView").isHidden(), false);
-  assert.equal(await page.locator("#staticResultsView").isHidden(), true);
-  assert.equal(await page.locator("#animatedResultsButton").getAttribute("aria-pressed"), "true");
-  await page.waitForSelector(".reveal-word.word-length-long");
-  assert.equal(await page.locator(".reveal-word.word-length-medium").count(), 1);
-  assert.equal(await page.locator(".reveal-session-record").count(), 2);
+  assert.equal(await page.locator(".result-confetti i").count(), 5);
   await browser.close();
 });
