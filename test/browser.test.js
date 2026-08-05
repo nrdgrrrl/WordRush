@@ -370,13 +370,14 @@ test("global scoreboard displays an authoritative multiplayer result and all per
   await browser.close();
 });
 
-test("random rush owns results continuation and stops on navigation", async () => {
+test("random rush owns results continuation and stops on navigation", async (t) => {
   const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.clock.install();
   await page.goto(baseUrl);
   await page.evaluate(() => {
-    window.wordrushRushDelay = 250;
+    window.wordrushRushDelay = 5000;
     window.__rushEvents = [];
     for (const name of ["random-rush", "round-intro", "round-started", "screen-change"])
       document.addEventListener("wordrush:" + name, ({ detail }) =>
@@ -390,12 +391,7 @@ test("random rush owns results continuation and stops on navigation", async () =
     ).length;
   const countEvents = async (name) =>
     (await rushEvents()).filter((event) => event.name === name).length;
-  const waitPastRushDelay = async () => {
-    await page.evaluate(() => {
-      window.__rushWaitUntil = performance.now() + 350;
-    });
-    await page.waitForFunction(() => performance.now() >= window.__rushWaitUntil);
-  };
+  const waitPastRushDelay = () => page.clock.fastForward(5100);
 
   await page.locator('button[data-mode="minimum"]').click();
   await page.waitForSelector("#roundIntroScreen.active");
@@ -470,7 +466,7 @@ test("random rush owns results continuation and stops on navigation", async () =
   assert.match(await page.locator("#rushNextRoundTitle").textContent(), /\S/);
   assert.match(
     await page.locator("#rushNextRoundCountdown").textContent(),
-    /^Starts in 1s · tap to start now$/,
+    /^Starts in 5s · tap to start now$/,
   );
   const homeAutoAdvances = await countRushAction("auto_advance");
   await page.locator('#resultsScreen [data-screen="homeScreen"]').click();
@@ -507,6 +503,7 @@ test("random rush owns results continuation and stops on navigation", async () =
   await page.waitForSelector("#resultsScreen.active");
   const autoUpcoming = await page.locator("#rushNextRoundTitle").textContent();
   const autoAdvancesBeforeStay = await countRushAction("auto_advance");
+  await page.clock.fastForward(5100);
   await page.waitForSelector("#gameScreen.active", { timeout: 2000 });
   assert.equal(await countRushAction("auto_advance"), autoAdvancesBeforeStay + 1);
   assert.equal(await page.locator("#gameMode").textContent(), autoUpcoming);
