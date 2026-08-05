@@ -531,6 +531,24 @@ test("Daily Rush freezes a server-owned board and shares only a score target", a
   assert.deepEqual(await invalidShare.json(), { error: "CHALLENGE_SHARE_INVALID" });
 });
 
+test("Word Relay uses one frozen board and rejects stale or invalid turns", async () => {
+  const origin = "http://127.0.0.1:" + server.address().port;
+  const createdResponse = await fetch(origin + "/api/relay-challenges", { method: "POST" });
+  assert.equal(createdResponse.status, 201);
+  const created = await createdResponse.json();
+  assert.equal(created.config.chain, true);
+  const loadedResponse = await fetch(origin + "/api/relay-challenges/" + created.id);
+  assert.equal(loadedResponse.status, 200);
+  assert.deepEqual((await loadedResponse.json()).board, created.board);
+  const staleResponse = await fetch(origin + "/api/relay-challenges/" + created.id, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ revision: 1, word: "CAT", path: [] }),
+  });
+  assert.equal(staleResponse.status, 409);
+  assert.deepEqual(await staleResponse.json(), { error: "RELAY_STALE_REVISION" });
+});
+
 test("solo and multiplayer rounds use the same server generator contract", async () => {
   const contracts = [];
   const results = [];

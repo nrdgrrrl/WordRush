@@ -49,6 +49,7 @@ const {
   DailyChallengeStore,
   utcDateKey,
 } = require("./daily-challenges");
+const { RelayChallengeStore } = require("./relay-challenges");
 const PORT = Number(process.env.PORT || 8000),
   HOST = process.env.HOST || "127.0.0.1",
   MAX_PLAYERS = 10,
@@ -105,6 +106,7 @@ const generationTestHooks = {
 };
 const SUDDEN_SERIES_MODE = "sudden_series";
 const dailyChallenges = new DailyChallengeStore();
+const relayChallenges = new RelayChallengeStore();
 const pendingDailyChallenges = new Map();
 const nodeGenerationScheduler = () =>
   new Promise((resolve) => setImmediate(resolve));
@@ -389,6 +391,15 @@ async function getTodayDailyChallenge() {
   } finally {
     pendingDailyChallenges.delete(key);
   }
+}
+async function createRelayChallenge() {
+  const daily = await getTodayDailyChallenge();
+  return relayChallenges.create({
+    board: daily.board,
+    config: { ...daily.config, label: "WORD RELAY", rule: "Pass the final letter on", chain: true },
+    dictionary: daily.dictionary,
+    state: { found: [], requiredLetter: "", turns: 0 },
+  });
 }
 function roomConfig(room) {
   return (
@@ -2920,6 +2931,42 @@ function readJson(req, isCancelled) {
 }
 async function leaderboardRequest(req, res) {
   const url = new URL(req.url, "http://localhost");
+  if (url.pathname === "/api/relay-challenges" && req.method === "POST") {
+    if (!rateLimit("relay-create:" + clientIp(req), 10)) return deny(res, 429, "RATE_LIMITED");
+    try {
+      const challenge = await createRelayChallenge();
+      res.writeHead(201, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify(challenge));
+    } catch {
+      return deny(res, 503, "RELAY_UNAVAILABLE");
+    }
+  }
+  if (url.pathname.startsWith("/api/relay-challenges/") && req.method === "GET") {
+    const challenge = relayChallenges.get(url.pathname.slice("/api/relay-challenges/".length));
+    if (!challenge) return deny(res, 404, "RELAY_NOT_FOUND");
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify(challenge));
+  }
+  if (url.pathname.startsWith("/api/relay-challenges/") && req.method === "POST") {
+    const id = url.pathname.slice("/api/relay-challenges/".length);
+    const body = await readJson(req);
+    if (!body || Object.keys(body).some((key) => !["revision", "word", "path"].includes(key)))
+      return deny(res, 400, "RELAY_REQUEST_INVALID");
+    try {
+      const challenge = await relayChallenges.transition(id, body.revision, (state, record) => {
+        const result = validateSubmission({ board: record.board, size: record.config.size, word: body.word, path: body.path, mode: "classic", dictionaryId: record.dictionary.dictionaryId, minimum: record.config.min, found: new Set(state.found) });
+        if (!result.valid) throw Object.assign(new Error("RELAY_WORD_REJECTED"), { code: result.reason });
+        if (state.requiredLetter && !chainWordMatches(state.requiredLetter, result.word))
+          throw Object.assign(new Error("RELAY_WORD_REJECTED"), { code: "chain" });
+        return { found: [...state.found, result.word].slice(-500), requiredLetter: result.word.at(-1), turns: state.turns + 1 };
+      });
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify(challenge));
+    } catch (error) {
+      const code = error.message === "RELAY_CHALLENGE_STALE_REVISION" ? "RELAY_STALE_REVISION" : error.message === "RELAY_CHALLENGE_NOT_FOUND" ? "RELAY_NOT_FOUND" : error.message === "RELAY_WORD_REJECTED" ? error.code || "RELAY_WORD_REJECTED" : "RELAY_REQUEST_INVALID";
+      return deny(res, code === "RELAY_NOT_FOUND" ? 404 : 409, code);
+    }
+  }
   if (url.pathname === "/api/daily-challenge" && req.method === "GET") {
     if (!rateLimit("daily-challenge:" + clientIp(req), 30))
       return deny(res, 429, "RATE_LIMITED");
