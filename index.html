@@ -153,6 +153,9 @@
           <button class="game-mode-card mode-heist" data-mode="heist">
             <span>🦹</span><div><small>ROOM HEIST</small><strong>Steal the long-word haul</strong><em>Teams · 6+ letter claims</em></div><b>→</b>
           </button>
+          <button class="game-mode-card mode-relay" id="wordRelay" type="button">
+            <span>🔁</span><div><small>WORD RELAY</small><strong>Pass the chain onward</strong><em>One frozen board · share a turn</em></div><b>→</b>
+          </button>
           <div class="game-mode-card mode-random is-featured" id="randomPanel" role="button" tabindex="0" aria-label="Start Random Rush">
             <span>🎲</span><div><small>RANDOM RUSH</small><strong id="randomPreview">Minimum 4 · Sudden death</strong><em id="randomPreviewSub">3 minutes · 5×5 grid</em></div><button id="reroll" type="button" aria-label="Reroll Random Rush">↻</button>
           </div>
@@ -254,10 +257,20 @@
           ></div>
         </div>
         <div class="preview" id="preview">Trace a word</div>
-        <div class="chain-status" id="chainStatus" hidden aria-live="polite">
+          <div class="chain-status" id="chainStatus" hidden aria-live="polite">
           <div><span>Last accepted:</span><strong id="chainLastAccepted">None</strong></div>
           <div><span>Next letter:</span><strong id="chainRequiredLetter">Any</strong></div>
           <p id="chainGuidance" hidden></p>
+          </div>
+        <div class="challenge-status relay-status" id="relayStatus" hidden aria-live="polite">
+          <div><span>Next letter</span><strong id="relayRequiredLetter">Any</strong></div>
+          <div><span>Turns passed</span><strong id="relayTurnCount">0</strong></div>
+          <button class="secondary" id="shareRelayChallenge" type="button">Share relay link</button>
+        </div>
+        <div class="challenge-status heist-status" id="heistStatus" hidden aria-live="polite">
+          <div><span>Your team</span><strong id="heistTeam">SUN</strong><small id="heistMembers">Your team</small></div>
+          <div><span>Team score</span><strong id="heistTeamScore">0</strong></div>
+          <div><span id="heistOtherTeam">MOON</span><strong id="heistOtherScore">0</strong></div>
         </div>
         <div class="board">
           <svg

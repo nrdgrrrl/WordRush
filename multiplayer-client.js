@@ -720,6 +720,8 @@
             message.dictionary,
             message.chain,
             message.series,
+            message.heist,
+            message.bounty,
           );
           sessionDialog(false);
         }
@@ -755,6 +757,8 @@
           message.dictionary,
           message.chain,
           message.series,
+          message.heist,
+          message.bounty,
         );
         sessionDialog(false);
         toast("Round started · " + message.players.length + " players");
@@ -784,9 +788,13 @@
       }
       if (message.type === "word_accepted") {
         if (message.playerId === guestId)
-          window.wordrushRecordOnlineWord?.(message.word, message.points, message.chain);
+          window.wordrushRecordOnlineWord?.(message.word, message.points, message.chain, {
+            heist: message.heist,
+            bounty: message.bounty,
+          });
         else
           window.wordrushUpdateOnlineChain?.(message.chain, true);
+        window.wordrushUpdateOnlineChallenge?.({ heist: message.heist, bounty: message.bounty });
         renderPlayers(message.scores, roomSeries);
         const own = message.scores.find((score) => score.id === guestId);
         if (own && $("#gameScore")) $("#gameScore").textContent = own.score;
@@ -797,12 +805,14 @@
             message.reason,
             message.word,
             message.chain,
+            { heist: message.heist, bounty: message.bounty },
           );
         const rejection = {
           minimum: `Need at least ${message.minimum || 3} letters`,
           path: "Tiles must connect in order",
           duplicate: "Already found that word",
           chain: "Wrong word · follow the chain",
+          heist_claimed: "That long word is locked by the other team",
           dictionary: `${message.word || "That word"} is not in the Wordrush dictionary`,
         };
         toast(

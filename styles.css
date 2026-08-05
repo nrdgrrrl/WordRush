@@ -256,6 +256,36 @@ h2 {
   color: var(--coral);
   overflow-wrap: anywhere;
 }
+.challenge-status {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: -4px 0 9px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 88%, #ffd4e3);
+  font: 11px monospace;
+}
+.challenge-status[hidden] {
+  display: none;
+}
+.challenge-status div {
+  display: grid;
+  gap: 2px;
+}
+.challenge-status span,
+.challenge-status small {
+  color: var(--muted);
+}
+.challenge-status strong {
+  overflow-wrap: anywhere;
+}
+.challenge-status button {
+  align-self: center;
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 10px;
+}
 .board {
   background: var(--dark);
   padding: 8px;
@@ -599,6 +629,7 @@ nav small {
 .mode-curse { --mode-start: #c5d8ff; --mode-end: #8297e9; --mode-edge: #edf2ff; --mode-shadow: #596db7; }
 .mode-bounty { --mode-start: #fff0a1; --mode-end: #d9a7ff; --mode-edge: #fff7ce; --mode-shadow: #9b69c8; }
 .mode-heist { --mode-start: #b5f4db; --mode-end: #67c9bf; --mode-edge: #e5fff4; --mode-shadow: #418c88; }
+.mode-relay { --mode-start: #ffd4e3; --mode-end: #f19ab9; --mode-edge: #fff0f6; --mode-shadow: #b56d8b; }
 .mode-daily.is-featured {
   min-height: 96px;
   border-width: 3px;
@@ -868,6 +899,7 @@ html[data-theme="dark"] nav {
 .game-meta,
 .preview,
 .chain-status,
+.challenge-status,
 .game-foot {
   flex: none;
 }
