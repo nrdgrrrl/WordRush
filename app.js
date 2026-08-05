@@ -20,7 +20,8 @@ const $ = (s) => document.querySelector(s),
   profileMigration = window.WordrushProfileMigration,
   playStreak = window.WordrushPlayStreak,
   suddenDeathOutcome = window.WordrushSuddenDeathOutcome,
-  suddenDeathSeries = window.WordrushSuddenDeathSeries;
+  suddenDeathSeries = window.WordrushSuddenDeathSeries,
+  challengeRules = window.WordrushChallengeRules;
 let customAdult = false;
 function emit(name, detail = {}) {
   document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
@@ -233,6 +234,8 @@ const s = {
   dictionaryMetadata: null,
   dictionaryWords: [],
   dailyChallenge: null,
+  frozenIndexes: new Set(),
+  bounty: null,
 };
 let soloGenerationRequest = 0;
 let soloRoundGeneration = 0;
@@ -496,7 +499,14 @@ function render() {
   let g = $("#grid");
   g.style.gridTemplateColumns = "repeat(" + s.n + ",1fr)";
   g.innerHTML = s.b
-    .map((l, i) => '<button class="tile" data-i="' + i + '">' + l + "</button>")
+    .map((l, i) => {
+      const frozen = s.frozenIndexes.has(i);
+      const bounty = s.bounty?.bountyIndexes.includes(i);
+      const claimed = s.bounty?.claimedIndexes.includes(i);
+      const classes = ["tile", frozen ? "tile-frozen" : "", bounty ? "tile-bounty" : "", claimed ? "tile-bounty-claimed" : ""].filter(Boolean).join(" ");
+      const label = frozen ? " frozen" : claimed ? " bounty claimed" : bounty ? " charged bounty" : "";
+      return '<button class="' + classes + '" data-i="' + i + '" aria-label="' + l + label + '"' + (frozen ? " disabled" : "") + ">" + l + "</button>";
+    })
     .join("");
   renderChainStatus();
 }
@@ -1321,6 +1331,17 @@ async function start(
   s.rejectionReason = "";
   s.roundWordTimes = [];
   s.pick = [];
+  s.frozenIndexes = new Set();
+  s.bounty = mode === "bounty"
+    ? {
+        bountyIndexes: challengeRules.selectBountyIndexes(
+          s.b.map((_, index) => index),
+          3,
+          generated.seed,
+        ),
+        claimedIndexes: [],
+      }
+    : null;
   s.done = 0;
   s.soloRoundId = ++soloRoundGeneration;
   s.startedAt = 0;
@@ -1450,6 +1471,12 @@ async function submit() {
     clearPick();
     return;
   }
+  const blocked = challengeRules.blockedTraceResult(trace, s.frozenIndexes);
+  if (!blocked.valid) {
+    clearPick();
+    toast("That tile is frozen by the Curse.", "wrong");
+    return;
+  }
   const config = Object.freeze({
       min: s.config.min,
       target: s.config.target,
@@ -1486,12 +1513,26 @@ async function submit() {
     else if (requiresChain(config) &&
       !chainWordMatches(s.requiredLetter, w)) rejectReason = "chain";
     if (!rejectReason) {
-      const points = w.length * w.length;
+      let points = w.length * w.length;
       s.found.add(w);
       s.lastAcceptedWord = w;
       if (requiresChain(config)) advanceChainFields(s, w);
       s.rejectedAttempt = "";
       s.rejectionReason = "";
+      if (s.mode === "curse") {
+        s.frozenIndexes.add(trace.at(-1));
+        render();
+      }
+      if (s.bounty) {
+        const effect = challengeRules.bountyClaimEffect(s.bounty, trace);
+        s.bounty = {
+          bountyIndexes: [...s.bounty.bountyIndexes],
+          claimedIndexes: [...effect.claimedIndexes],
+        };
+        const bountyBonus = effect.newlyClaimedIndexes.length * 25;
+        points += bountyBonus;
+        if (bountyBonus) render();
+      }
       s.score += points;
       recordAcceptedWord(w);
       updateProfile();

@@ -595,6 +595,8 @@ nav small {
 }
 .mode-classic { --mode-start: #b7f5ff; --mode-end: #80b9ff; --mode-edge: #e7fbff; --mode-shadow: #5682bb; }
 .mode-daily { --mode-start: #ffe88b; --mode-end: #ffab72; --mode-edge: #fff5be; --mode-shadow: #c97848; }
+.mode-curse { --mode-start: #c5d8ff; --mode-end: #8297e9; --mode-edge: #edf2ff; --mode-shadow: #596db7; }
+.mode-bounty { --mode-start: #fff0a1; --mode-end: #d9a7ff; --mode-edge: #fff7ce; --mode-shadow: #9b69c8; }
 .mode-daily.is-featured {
   min-height: 96px;
   border-width: 3px;
@@ -1383,6 +1385,21 @@ html[data-theme="dark"] .tile.selected {
   box-shadow:
     inset 0 1px 0 #ffffffb8,
     0 4px 12px #f6c85f99;
+}
+.tile.tile-frozen {
+  color: #eef3ff;
+  border-color: #6675a8;
+  background: repeating-linear-gradient(135deg, #59668e 0 6px, #6978a7 6px 12px);
+  cursor: not-allowed;
+  opacity: .78;
+}
+.tile.tile-bounty {
+  outline: 3px solid #ffe767;
+  outline-offset: -5px;
+}
+.tile.tile-bounty-claimed {
+  outline-color: #8af3bf;
+  background-image: linear-gradient(135deg, #c5ffe0, #70d99d);
 }
 @media (prefers-reduced-motion: reduce) {
   #grid .tile,
