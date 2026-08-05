@@ -22,6 +22,10 @@ process.env.WORDRUSH_ANALYTICS_CONSENT_FILE = path.join(
   fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-consent-")),
   "analytics-consent.json",
 );
+process.env.WORDRUSH_DAILY_CHALLENGES_FILE = path.join(
+  fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-daily-server-")),
+  "daily-challenges.json",
+);
 const {
   server,
   rooms,
@@ -456,6 +460,10 @@ test("solo board endpoint rejects unsupported input and unknown dictionaries", a
       error: "SOLO_REQUEST_FIELD_NOT_ALLOWED",
     },
     {
+      body: { mode: "daily" },
+      error: "DAILY_CHALLENGE_REQUIRED",
+    },
+    {
       body: { mode: "classic", customWords: ["CAT"] },
       error: "SOLO_REQUEST_FIELD_NOT_ALLOWED",
     },
@@ -475,6 +483,52 @@ test("solo board endpoint rejects unsupported input and unknown dictionaries", a
   });
   assert.equal(unknown.status, 404);
   assert.deepEqual(await unknown.json(), { error: "UNKNOWN_DICTIONARY_ID" });
+});
+
+test("Daily Rush freezes a server-owned board and shares only a score target", async () => {
+  const origin = "http://127.0.0.1:" + server.address().port;
+  const firstResponse = await fetch(origin + "/api/daily-challenge");
+  assert.equal(firstResponse.status, 200);
+  const first = await firstResponse.json();
+  assert.match(first.challenge.id, /^daily-\d{4}-\d{2}-\d{2}$/);
+  assert.equal(first.challenge.mode, "daily");
+  assert.equal(first.challenge.config.seconds, 60);
+  assert.equal(first.challenge.board.length, 16);
+  assert.equal(first.challenge.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
+
+  const secondResponse = await fetch(origin + "/api/daily-challenge");
+  assert.equal(secondResponse.status, 200);
+  const second = await secondResponse.json();
+  assert.deepEqual(second.challenge, first.challenge);
+
+  const shareResponse = await fetch(origin + "/api/daily-challenge/shares", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      challengeId: first.challenge.id,
+      score: 241,
+      wordCount: 17,
+      longestLength: 8,
+    }),
+  });
+  assert.equal(shareResponse.status, 201);
+  const share = await shareResponse.json();
+  assert.match(share.ref, /^[A-Za-z0-9_-]{20,40}$/);
+
+  const linkedResponse = await fetch(origin + "/api/challenges/" + share.ref);
+  assert.equal(linkedResponse.status, 200);
+  const linked = await linkedResponse.json();
+  assert.deepEqual(linked.challenge, first.challenge);
+  assert.deepEqual(linked.target, { score: 241, wordCount: 17, longestLength: 8 });
+  assert.equal(Object.hasOwn(linked.target, "words"), false);
+
+  const invalidShare = await fetch(origin + "/api/daily-challenge/shares", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ challengeId: first.challenge.id, score: 1, name: "Nope" }),
+  });
+  assert.equal(invalidShare.status, 400);
+  assert.deepEqual(await invalidShare.json(), { error: "CHALLENGE_SHARE_INVALID" });
 });
 
 test("solo and multiplayer rounds use the same server generator contract", async () => {

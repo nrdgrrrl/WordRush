@@ -594,6 +594,11 @@ nav small {
   font-size: 26px;
 }
 .mode-classic { --mode-start: #b7f5ff; --mode-end: #80b9ff; --mode-edge: #e7fbff; --mode-shadow: #5682bb; }
+.mode-daily { --mode-start: #ffe88b; --mode-end: #ffab72; --mode-edge: #fff5be; --mode-shadow: #c97848; }
+.mode-daily.is-featured {
+  min-height: 96px;
+  border-width: 3px;
+}
 .mode-random { --mode-start: #e2ff84; --mode-end: #7fe5a6; --mode-edge: #f6ffc4; --mode-shadow: #48956b; }
 .mode-random.is-featured {
   min-height: 104px;
@@ -1581,6 +1586,31 @@ html[data-theme="dark"] .scoreboard-row {
   background: var(--coral);
   color: #1d1d1b;
   border-color: var(--coral);
+}
+.daily-challenge-result {
+  display: grid;
+  gap: 7px;
+  margin: 18px 0 0;
+  padding: 14px;
+  color: #2b1939;
+  border: 2px solid #ffd98c;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #fff4bd, #ffd39d);
+}
+.daily-challenge-result > small:first-child {
+  color: #8b4e29;
+  font: 900 10px monospace;
+  letter-spacing: .12em;
+}
+.daily-challenge-result > b { font-size: 15px; }
+.daily-challenge-result .secondary { margin: 0; }
+#dailyShareLink {
+  width: 100%;
+  color: inherit;
+  border: 1px solid #d9a36a;
+  border-radius: 8px;
+  background: #fff9e8;
+  padding: 8px;
 }
 
 #seriesTransitionScreen {

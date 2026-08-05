@@ -45,6 +45,10 @@ const {
 const {
   generateQualityRoundBoard,
 } = require("./production-board-generator");
+const {
+  DailyChallengeStore,
+  utcDateKey,
+} = require("./daily-challenges");
 const PORT = Number(process.env.PORT || 8000),
   HOST = process.env.HOST || "127.0.0.1",
   MAX_PLAYERS = 10,
@@ -100,6 +104,8 @@ const generationTestHooks = {
   onCancellation: null,
 };
 const SUDDEN_SERIES_MODE = "sudden_series";
+const dailyChallenges = new DailyChallengeStore();
+const pendingDailyChallenges = new Map();
 const nodeGenerationScheduler = () =>
   new Promise((resolve) => setImmediate(resolve));
 
@@ -288,6 +294,8 @@ function validateSoloBoardRequest(body) {
   if (typeof body.mode !== "string")
     return { valid: false, code: "UNKNOWN_MODE" };
   const mode = body.mode;
+  if (mode === "daily")
+    return { valid: false, code: "DAILY_CHALLENGE_REQUIRED" };
   let config;
   if (mode === "custom") {
     if (
@@ -338,6 +346,49 @@ function validateSoloBoardRequest(body) {
     };
   }
   return { valid: true, mode, config, dictionary };
+}
+
+async function getTodayDailyChallenge() {
+  const date = utcDateKey();
+  const key = "daily-" + date;
+  if (pendingDailyChallenges.has(key)) return pendingDailyChallenges.get(key);
+  const pending = dailyChallenges.getOrCreateDaily(date, async ({ id, date: recordDate }) => {
+    const config = configForPreset("daily");
+    const dictionary = getDictionary(DEFAULT_DICTIONARY_ID);
+    const contract = boardGenerationContract(config, dictionary.id);
+    const result = await generateProductionRoundBoard(contract);
+    if (!result.ok) {
+      const error = new Error("DAILY_BOARD_GENERATION_FAILED");
+      error.code = result.error?.code || "GENERATION_FAILED";
+      error.diagnostics = {
+        ...result.diagnostics,
+        dictionary: dictionary.metadata,
+      };
+      throw error;
+    }
+    return {
+      id,
+      date: recordDate,
+      mode: "daily",
+      config: { ...config },
+      board: [...result.board],
+      dictionary: {
+        dictionaryId: dictionary.id,
+        artifactSha256: dictionary.metadata.artifactSha256,
+      },
+      quality: {
+        requestedSeed: result.requestedSeed,
+        selectedCandidateSeed: result.selectedCandidateSeed,
+      },
+      createdAt: new Date().toISOString(),
+    };
+  });
+  pendingDailyChallenges.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    pendingDailyChallenges.delete(key);
+  }
 }
 function roomConfig(room) {
   return (
@@ -2549,6 +2600,7 @@ const server = http.createServer((req, res) => {
     "/multiplayer-player-presentation.js",
     "/cooperative-results.js",
     "/round-timing.js",
+    "/challenge-rules.js",
     "/board-core.js",
     "/analytics.js",
     "/trace-geometry.js",
@@ -2684,6 +2736,8 @@ module.exports = {
   generateProductionRoundBoard,
   selectRoundBoardForDevelopment,
   validateSoloBoardRequest,
+  getTodayDailyChallenge,
+  dailyChallenges,
   generationTestHooks,
   MAX_PLAYERS,
   displayTokens,
@@ -2866,6 +2920,52 @@ function readJson(req, isCancelled) {
 }
 async function leaderboardRequest(req, res) {
   const url = new URL(req.url, "http://localhost");
+  if (url.pathname === "/api/daily-challenge" && req.method === "GET") {
+    if (!rateLimit("daily-challenge:" + clientIp(req), 30))
+      return deny(res, 429, "RATE_LIMITED");
+    try {
+      const challenge = await getTodayDailyChallenge();
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      return res.end(JSON.stringify({ challenge }));
+    } catch (error) {
+      console.warn("Wordrush daily challenge generation failed", JSON.stringify({
+        failureCode: error.code || "GENERATION_FAILED",
+        diagnostics: error.diagnostics || null,
+      }));
+      return deny(res, 503, "DAILY_CHALLENGE_UNAVAILABLE");
+    }
+  }
+  if (url.pathname === "/api/daily-challenge/shares" && req.method === "POST") {
+    if (!rateLimit("daily-challenge-share:" + clientIp(req), 20))
+      return deny(res, 429, "RATE_LIMITED");
+    const body = await readJson(req);
+    let share;
+    try {
+      share = dailyChallenges.createShare(body);
+    } catch {
+      return deny(res, 400, "CHALLENGE_SHARE_INVALID");
+    }
+    res.writeHead(201, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    return res.end(JSON.stringify(share));
+  }
+  if (url.pathname.startsWith("/api/challenges/") && req.method === "GET") {
+    if (!rateLimit("challenge-share:" + clientIp(req), 60))
+      return deny(res, 429, "RATE_LIMITED");
+    const ref = url.pathname.slice("/api/challenges/".length);
+    const shared = dailyChallenges.getShare(ref);
+    if (!shared) return deny(res, 404, "CHALLENGE_NOT_FOUND");
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    return res.end(JSON.stringify(shared));
+  }
   if (url.pathname === "/api/solo-board" && req.method === "POST") {
     if (!rateLimit("solo-board:" + clientIp(req), 30))
       return deny(res, 429, "RATE_LIMITED");

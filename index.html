@@ -134,10 +134,13 @@
             </button>
           </div>
         </section>
-        <button class="party-panel" id="partyMode" type="button">
-          <span>🎉</span><div><small>PARTY MODE</small><strong>Build the next round together</strong><em>Pick grid · words · time</em></div><b>→</b>
-        </button>
+          <button class="party-panel" id="partyMode" type="button">
+            <span>🎉</span><div><small>PARTY MODE</small><strong>Build the next round together</strong><em>Pick grid · words · time</em></div><b>→</b>
+          </button>
         <div class="game-mode-stack" aria-label="Game modes">
+          <button class="game-mode-card mode-daily is-featured" id="dailyRush" type="button">
+            <span>☀️</span><div><small>DAILY RUSH</small><strong>One board for everyone</strong><em>60 seconds · share a challenge</em></div><b>→</b>
+          </button>
           <div class="game-mode-card mode-random is-featured" id="randomPanel" role="button" tabindex="0" aria-label="Start Random Rush">
             <span>🎲</span><div><small>RANDOM RUSH</small><strong id="randomPreview">Minimum 4 · Sudden death</strong><em id="randomPreviewSub">3 minutes · 5×5 grid</em></div><button id="reroll" type="button" aria-label="Reroll Random Rush">↻</button>
           </div>
@@ -326,6 +329,13 @@
             >
           </div>
         </div>
+        <section class="daily-challenge-result" id="dailyChallengeResult" hidden aria-live="polite">
+          <small id="dailyChallengeResultLabel">DAILY RUSH</small>
+          <b id="dailyChallengeResultDetail"></b>
+          <button class="secondary" id="shareDailyChallenge" type="button">Challenge a friend</button>
+          <input id="dailyShareLink" aria-label="Daily Rush challenge link" readonly hidden />
+          <small id="dailyShareStatus"></small>
+        </section>
         <button class="primary" id="again">Play again →</button>
         <button class="secondary" id="exitParty" hidden>Exit party mode</button>
         <button class="secondary" id="stopRushResults" hidden>Stop rush</button
@@ -729,6 +739,7 @@
     <script src="multiplayer-player-presentation.js"></script>
     <script src="cooperative-results.js"></script>
     <script src="round-timing.js"></script>
+    <script src="challenge-rules.js"></script>
     <script src="board-core.js"></script>
     <script src="analytics.js"></script>
     <script src="trace-geometry.js"></script>

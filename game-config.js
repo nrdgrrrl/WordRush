@@ -16,6 +16,18 @@
       adult: false,
       party: false,
     },
+    daily: {
+      label: "DAILY RUSH",
+      min: 3,
+      size: 4,
+      seconds: 60,
+      rule: "One shared board · 60 seconds",
+      target: null,
+      sudden: false,
+      chain: false,
+      adult: false,
+      party: false,
+    },
     minimum: {
       label: "MINIMUM WORD",
       min: 5,
@@ -162,7 +174,7 @@
     "EEEEEEEEEEEEAAAAAAAARRRRRRIIIIIIIIOOOOOOOONNNNNNTTTTTTLLLLSSSSUUUUDDDDGGGBBCCMMPPHHFFVVWWYYKJXQZ";
   Object.values(MODE_CONFIG).forEach(Object.freeze);
   Object.freeze(MODE_CONFIG);
-  const RANDOM_RUSH_EXCLUDED_MODES = Object.freeze(["coop", "dirty", "sudden_series"]);
+  const RANDOM_RUSH_EXCLUDED_MODES = Object.freeze(["coop", "daily", "dirty", "sudden_series"]);
   const RANDOM_RUSH_MODES = Object.freeze(
     Object.keys(MODE_CONFIG).filter(
       (mode) => !RANDOM_RUSH_EXCLUDED_MODES.includes(mode),
