@@ -20,7 +20,8 @@ const $ = (s) => document.querySelector(s),
   profileMigration = window.WordrushProfileMigration,
   playStreak = window.WordrushPlayStreak,
   suddenDeathOutcome = window.WordrushSuddenDeathOutcome,
-  suddenDeathSeries = window.WordrushSuddenDeathSeries;
+  suddenDeathSeries = window.WordrushSuddenDeathSeries,
+  challengeRules = window.WordrushChallengeRules;
 let customAdult = false;
 function emit(name, detail = {}) {
   document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
@@ -106,6 +107,42 @@ async function requestSoloBoard({ mode, config, adultMode, dictionaryId }) {
   if (payload.config.chain && !payload.playableWordStarts)
     throw new Error("Solo chain board response was invalid");
   return payload;
+}
+function validDailyChallenge(challenge) {
+  return Boolean(
+    challenge &&
+      typeof challenge === "object" &&
+      /^daily-\d{4}-\d{2}-\d{2}$/.test(challenge.id) &&
+      /^\d{4}-\d{2}-\d{2}$/.test(challenge.date) &&
+      challenge.mode === "daily" &&
+      challenge.config &&
+      Number.isInteger(challenge.config.size) &&
+      Number.isInteger(challenge.config.seconds) &&
+      typeof challenge.dictionary?.dictionaryId === "string" &&
+      Array.isArray(challenge.board) &&
+      challenge.board.length === challenge.config.size * challenge.config.size &&
+      challenge.board.every((letter) => /^[A-Z]$/.test(letter)),
+  );
+}
+async function requestDailyChallenge() {
+  const response = await fetch("/api/daily-challenge");
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !validDailyChallenge(payload?.challenge)) {
+    const error = new Error(payload?.error || "Daily Rush is unavailable");
+    error.code = payload?.error;
+    throw error;
+  }
+  return { challenge: payload.challenge, target: null, shareRef: null };
+}
+async function requestSharedChallenge(ref) {
+  const response = await fetch("/api/challenges/" + encodeURIComponent(ref));
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !validDailyChallenge(payload?.challenge)) {
+    const error = new Error(payload?.error || "Challenge link is unavailable");
+    error.code = payload?.error;
+    throw error;
+  }
+  return { challenge: payload.challenge, target: payload.target || null, shareRef: ref };
 }
 async function applySoloBoardTestFixture(generated) {
   let fixtureRequested = false;
@@ -196,6 +233,10 @@ const s = {
   dictionaryId: DEFAULT_DICTIONARY_ID,
   dictionaryMetadata: null,
   dictionaryWords: [],
+  dailyChallenge: null,
+  echo: null,
+  frozenIndexes: new Set(),
+  bounty: null,
 };
 let soloGenerationRequest = 0;
 let soloRoundGeneration = 0;
@@ -423,6 +464,43 @@ function recordAcceptedWord(word, { trackSpeed = true } = {}) {
   profile.totalWordLength += word.length;
   profile.longest = Math.max(profile.longest, word.length);
 }
+function dailyEchoKey(challengeId) {
+  return "wordrushDailyEcho:" + String(challengeId || "");
+}
+function loadDailyEcho(challengeId) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(dailyEchoKey(challengeId)) || "null");
+    if (!parsed || !Number.isInteger(parsed.score) || parsed.score < 0) return null;
+    return {
+      score: parsed.score,
+      checkpoints: challengeRules.normalizeEchoCheckpoints(parsed.checkpoints),
+    };
+  } catch {
+    return null;
+  }
+}
+function saveDailyEcho(challengeId, echo) {
+  if (!challengeId || !echo) return;
+  try {
+    localStorage.setItem(dailyEchoKey(challengeId), JSON.stringify({
+      score: Math.max(0, Math.min(1_000_000, Math.trunc(echo.score || 0))),
+      checkpoints: challengeRules.normalizeEchoCheckpoints(echo.checkpoints),
+    }));
+  } catch {}
+}
+function echoScoreAt(checkpoints, elapsedMs) {
+  let score = 0;
+  for (const checkpoint of checkpoints || []) {
+    if (checkpoint.elapsedMs > elapsedMs) break;
+    score = checkpoint.score;
+  }
+  return score;
+}
+function updateEchoPace() {
+  if (!s.echo?.target || !s.startedAt) return;
+  const score = echoScoreAt(s.echo.target.checkpoints, Date.now() - s.startedAt);
+  $("#gameHint").textContent = "Echo pace: " + score + " points";
+}
 function recordReconciledOnlineWords(words) {
   const delta = multiplayerWordReconciliation.wordStatsDelta(words);
   profile.words += delta.words;
@@ -459,7 +537,14 @@ function render() {
   let g = $("#grid");
   g.style.gridTemplateColumns = "repeat(" + s.n + ",1fr)";
   g.innerHTML = s.b
-    .map((l, i) => '<button class="tile" data-i="' + i + '">' + l + "</button>")
+    .map((l, i) => {
+      const frozen = s.frozenIndexes.has(i);
+      const bounty = s.bounty?.bountyIndexes.includes(i);
+      const claimed = s.bounty?.claimedIndexes.includes(i);
+      const classes = ["tile", frozen ? "tile-frozen" : "", bounty ? "tile-bounty" : "", claimed ? "tile-bounty-claimed" : ""].filter(Boolean).join(" ");
+      const label = frozen ? " frozen" : claimed ? " bounty claimed" : bounty ? " charged bounty" : "";
+      return '<button class="' + classes + '" data-i="' + i + '" aria-label="' + l + label + '"' + (frozen ? " disabled" : "") + ">" + l + "</button>";
+    })
     .join("");
   renderChainStatus();
 }
@@ -906,6 +991,31 @@ function end(completionReason) {
   $("#resultAchievementDetail").textContent = s.found.size
     ? s.found.size + " word" + (s.found.size === 1 ? "" : "s") + " found."
     : "Find words to unlock achievements.";
+  const dailyTarget = s.dailyChallenge?.target;
+  $("#dailyChallengeResult").hidden = !s.dailyChallenge;
+  $("#dailyShareLink").hidden = true;
+  $("#dailyShareLink").value = "";
+  $("#dailyShareStatus").textContent = "";
+  if (s.dailyChallenge) {
+    const comparison = dailyTarget
+      ? s.score > dailyTarget.score
+        ? "You beat the challenge by " + (s.score - dailyTarget.score) + " points."
+        : s.score < dailyTarget.score
+          ? "You are " + (dailyTarget.score - s.score) + " points from the challenge."
+          : "It is a tie. One more run could settle it."
+      : "Your score is ready for a friend to chase.";
+    $("#dailyChallengeResultDetail").textContent = comparison;
+    $("#raceDailyEcho").hidden = false;
+    $("#raceDailyEcho").textContent = s.echo?.target
+      ? "Race this echo again"
+      : "Race your echo";
+    saveDailyEcho(s.dailyChallenge.id, {
+      score: s.score,
+      checkpoints: s.echo?.checkpoints || [],
+    });
+  } else {
+    $("#raceDailyEcho").hidden = true;
+  }
   profile.score += s.score;
   profile.rounds++;
   profile.totalGameSeconds += soloGameplaySeconds;
@@ -918,7 +1028,9 @@ function end(completionReason) {
   recordPlayDay();
   updateProfile();
   $("#again").disabled = false;
-  $("#again").textContent = s.rush
+  $("#again").textContent = s.dailyChallenge
+    ? "Try today again →"
+    : s.rush
     ? "Continue Random Rush →"
     : !s.onlineRoundKey && isPartyRound(s.config)
       ? "Continue party mode →"
@@ -1147,9 +1259,11 @@ async function start(
   rush = false,
   dictionaryId = DEFAULT_DICTIONARY_ID,
   skipRoundIntro = false,
+  dailyChallenge = null,
 ) {
   const generationRequest = ++soloGenerationRequest;
   if (
+    !dailyChallenge &&
     window.wordrushStartSessionGame?.({
       mode,
       config: rawConfig || null,
@@ -1194,15 +1308,17 @@ async function start(
   let dictionary;
   try {
     [generated, dictionary] = await Promise.all([
-      requestSoloBoard({
-        mode: generationInputs.mode,
-        config: generationInputs.config,
-        adultMode: generationInputs.adultMode,
-        dictionaryId: generationInputs.dictionaryId,
-      }),
+      dailyChallenge
+        ? Promise.resolve(dailyChallenge.challenge)
+        : requestSoloBoard({
+            mode: generationInputs.mode,
+            config: generationInputs.config,
+            adultMode: generationInputs.adultMode,
+            dictionaryId: generationInputs.dictionaryId,
+          }),
       fetchDictionary(generationInputs.dictionaryId),
     ]);
-    generated = await applySoloBoardTestFixture(generated);
+    if (!dailyChallenge) generated = await applySoloBoardTestFixture(generated);
   } catch (error) {
     if (generationRequest !== soloGenerationRequest) return;
     const failureMessage =
@@ -1223,12 +1339,23 @@ async function start(
   clearSuddenDeathPresentation();
   invalidateSoloSubmissionQueue();
   s.config = config;
-  s.dictionaryId = generated.dictionary.dictionaryId;
-  s.dictionaryMetadata = generated.dictionary;
+  s.dictionaryId = dictionary.dictionary.dictionaryId;
+  s.dictionaryMetadata = dictionary.dictionary;
   s.dictionaryWords = dictionary.words;
   customAdult = generationInputs.adultMode;
   s.mode = generationInputs.mode;
   s.rush = generationInputs.rush;
+  s.dailyChallenge = dailyChallenge
+    ? {
+        id: dailyChallenge.challenge.id,
+        date: dailyChallenge.challenge.date,
+        target: dailyChallenge.target,
+        shareRef: dailyChallenge.shareRef,
+      }
+    : null;
+  s.echo = s.dailyChallenge
+    ? { target: dailyChallenge?.echo || null, checkpoints: [] }
+    : null;
   s.onlineRoundKey = null;
   s.onlineSeries = null;
   s.onlineSeriesId = null;
@@ -1255,6 +1382,17 @@ async function start(
   s.rejectionReason = "";
   s.roundWordTimes = [];
   s.pick = [];
+  s.frozenIndexes = new Set();
+  s.bounty = mode === "bounty"
+    ? {
+        bountyIndexes: challengeRules.selectBountyIndexes(
+          s.b.map((_, index) => index),
+          3,
+          generated.seed,
+        ),
+        claimedIndexes: [],
+      }
+    : null;
   s.done = 0;
   s.soloRoundId = ++soloRoundGeneration;
   s.startedAt = 0;
@@ -1264,7 +1402,9 @@ async function start(
   clearInterval(s.timer);
   s.timer = 0;
   $("#gameMode").textContent = config.label;
-  $("#gameTitle").textContent = "Round 01 · " + s.n + "×" + s.n;
+  $("#gameTitle").textContent = s.dailyChallenge
+    ? "Daily Rush · " + s.dailyChallenge.date
+    : "Round 01 · " + s.n + "×" + s.n;
   $("#ruleBanner").textContent = config.rule;
   $("#gameHint").textContent = "Minimum " + config.min + " letters";
   $("#gameScore").textContent = 0;
@@ -1292,8 +1432,10 @@ async function start(
     s.timer = setInterval(() => {
       s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
       $("#timer").textContent = formatTimer(s.time);
+      updateEchoPace();
       if (s.time <= 0) end("timeout");
     }, 250);
+    updateEchoPace();
     emit("round-started", {
       mode,
       multiplayer: false,
@@ -1308,7 +1450,11 @@ async function start(
   showRoundIntro({
     label: s.config.label,
     rule: config.rule,
-    detail: s.rush ? "Random Rush · next challenge loading" : "Your board is ready",
+    detail: s.dailyChallenge
+      ? "One shared board · make your mark"
+      : s.rush
+        ? "Random Rush · next challenge loading"
+        : "Your board is ready",
     analytics: {
       mode,
       multiplayer: false,
@@ -1319,6 +1465,35 @@ async function start(
     },
     onStart: startSoloGameplay,
   });
+}
+async function startDailyRush(shared = null, raceEcho = false) {
+  let daily = shared;
+  try {
+    if (!daily) daily = await requestDailyChallenge();
+  } catch (error) {
+    toast(error.code === "CHALLENGE_NOT_FOUND"
+      ? "That Daily Rush link has expired."
+      : "Daily Rush is not ready yet. Please try again.");
+    return;
+  }
+  const challenge = daily.challenge;
+  if (raceEcho) {
+    const echo = loadDailyEcho(challenge.id);
+    if (!echo) {
+      toast("Finish a Daily Rush first to create your echo.");
+      return;
+    }
+    daily = { ...daily, echo };
+  }
+  return start(
+    "daily",
+    null,
+    false,
+    false,
+    challenge.dictionary.dictionaryId,
+    false,
+    daily,
+  );
 }
 function pickedPathIsValid(trace, word) {
   return (
@@ -1357,6 +1532,12 @@ async function submit() {
     clearPick();
     return;
   }
+  const blocked = challengeRules.blockedTraceResult(trace, s.frozenIndexes);
+  if (!blocked.valid) {
+    clearPick();
+    toast("That tile is frozen by the Curse.", "wrong");
+    return;
+  }
   const config = Object.freeze({
       min: s.config.min,
       target: s.config.target,
@@ -1393,13 +1574,33 @@ async function submit() {
     else if (requiresChain(config) &&
       !chainWordMatches(s.requiredLetter, w)) rejectReason = "chain";
     if (!rejectReason) {
-      const points = w.length * w.length;
+      let points = w.length * w.length;
       s.found.add(w);
       s.lastAcceptedWord = w;
       if (requiresChain(config)) advanceChainFields(s, w);
       s.rejectedAttempt = "";
       s.rejectionReason = "";
+      if (s.mode === "curse") {
+        s.frozenIndexes.add(trace.at(-1));
+        render();
+      }
+      if (s.bounty) {
+        const effect = challengeRules.bountyClaimEffect(s.bounty, trace);
+        s.bounty = {
+          bountyIndexes: [...s.bounty.bountyIndexes],
+          claimedIndexes: [...effect.claimedIndexes],
+        };
+        const bountyBonus = effect.newlyClaimedIndexes.length * 25;
+        points += bountyBonus;
+        if (bountyBonus) render();
+      }
       s.score += points;
+      if (s.echo) {
+        s.echo.checkpoints = challengeRules.recordEchoCheckpoint(
+          s.echo.checkpoints,
+          { elapsedMs: Math.max(0, Date.now() - s.startedAt), score: s.score },
+        );
+      }
       recordAcceptedWord(w);
       updateProfile();
       renderChainStatus();
@@ -1530,6 +1731,8 @@ function pulseAcceptedWord(trace) { pulseWord(trace, "word-correct"); }
 function pulseIncorrectWord(trace) { pulseWord(trace, "word-incorrect"); }
 function pulseDuplicateWord(trace) { pulseWord(trace, "word-duplicate"); }
 $("#quickPlay")?.addEventListener("click", () => start("classic"));
+$("#dailyRush")?.addEventListener("click", () => startDailyRush());
+$("#echoRace")?.addEventListener("click", () => startDailyRush(null, true));
 $("#stopRush").onclick = stopRush;
 $("#stopRushResults").onclick = stopRush;
 let partyConfig = { size: 4, min: 3, seconds: 120 };
@@ -1587,6 +1790,7 @@ $("#again").onclick = () => {
     continueRandomRush();
     return;
   }
+  if (s.dailyChallenge) return startDailyRush();
   if (!window.wordrushSessionCode && !s.onlineRoundKey && isPartyRound(s.config))
     return openParty();
   start(s.mode, s.config, usesAdultLexicon(s.config), false, s.dictionaryId);
@@ -1610,6 +1814,62 @@ $("#exitParty").onclick = () => {
   $("#again").textContent = "Play again →";
   show("homeScreen");
 };
+$("#shareDailyChallenge")?.addEventListener("click", async () => {
+  const challenge = s.dailyChallenge;
+  if (!challenge || !s.done) return;
+  const button = $("#shareDailyChallenge");
+  button.disabled = true;
+  $("#dailyShareStatus").textContent = "Making your challenge link…";
+  try {
+    const longestLength = Math.max(0, ...[...s.found].map((word) => word.length));
+    const response = await fetch("/api/daily-challenge/shares", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        challengeId: challenge.id,
+        score: s.score,
+        wordCount: s.found.size,
+        longestLength,
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !/^[A-Za-z0-9_-]{20,40}$/.test(payload?.ref || ""))
+      throw new Error(payload?.error || "Challenge link failed");
+    const url = new URL(location.href);
+    url.search = "?challenge=" + encodeURIComponent(payload.ref);
+    url.hash = "";
+    const link = url.toString();
+    if (navigator.share) {
+      await navigator.share({
+        title: "WordRush Daily Rush",
+        text: "Beat my " + s.score + " point Daily Rush score.",
+        url: link,
+      });
+      $("#dailyShareStatus").textContent = "Challenge shared.";
+      return;
+    }
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(link);
+      $("#dailyShareStatus").textContent = "Challenge link copied.";
+      return;
+    }
+    const input = $("#dailyShareLink");
+    input.value = link;
+    input.hidden = false;
+    input.focus();
+    input.select();
+    $("#dailyShareStatus").textContent = "Copy this challenge link.";
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      $("#dailyShareStatus").textContent = "Sharing cancelled.";
+    } else {
+      $("#dailyShareStatus").textContent = "Could not create a challenge link.";
+    }
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#raceDailyEcho")?.addEventListener("click", () => startDailyRush(null, true));
 $("#endGame").onclick = () => end("manual");
 document
   .querySelectorAll("[data-mode]")
@@ -1701,7 +1961,23 @@ $("#customForm")?.addEventListener("submit", (event) => {
     type === "dirty",
   );
 });
+async function launchSharedChallengeFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const refs = params.getAll("challenge");
+  if (
+    refs.length !== 1 ||
+    params.has("join") ||
+    !/^[A-Za-z0-9_-]{20,40}$/.test(refs[0])
+  )
+    return;
+  try {
+    await startDailyRush(await requestSharedChallenge(refs[0]));
+  } catch {
+    toast("That challenge link is unavailable.");
+  }
+}
 show("homeScreen");
+launchSharedChallengeFromUrl();
 document.addEventListener("click", (event) => {
   const target = event.target.closest?.("[data-screen]");
   if (target) show(target.dataset.screen);

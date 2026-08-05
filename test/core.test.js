@@ -23,7 +23,7 @@ const {
 const boardCore = require("../board-core");
 const { DEFAULT_DICTIONARY_ID } = require("../dictionary-registry");
 test("Random Rush includes every eligible built-in game mode", () => {
-  assert.deepEqual(RANDOM_RUSH_EXCLUDED_MODES, ["coop", "dirty", "sudden_series"]);
+  assert.deepEqual(RANDOM_RUSH_EXCLUDED_MODES, ["bounty", "coop", "curse", "daily", "dirty", "heist", "sudden_series"]);
   assert.deepEqual(
     RANDOM_RUSH_MODES,
     Object.keys(MODE_CONFIG).filter(

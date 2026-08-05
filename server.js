@@ -45,6 +45,12 @@ const {
 const {
   generateQualityRoundBoard,
 } = require("./production-board-generator");
+const {
+  DailyChallengeStore,
+  utcDateKey,
+} = require("./daily-challenges");
+const { RelayChallengeStore } = require("./relay-challenges");
+const { applyWordClaim, validateTeamAssignments } = require("./heist-rules");
 const PORT = Number(process.env.PORT || 8000),
   HOST = process.env.HOST || "127.0.0.1",
   MAX_PLAYERS = 10,
@@ -100,6 +106,9 @@ const generationTestHooks = {
   onCancellation: null,
 };
 const SUDDEN_SERIES_MODE = "sudden_series";
+const dailyChallenges = new DailyChallengeStore();
+const relayChallenges = new RelayChallengeStore();
+const pendingDailyChallenges = new Map();
 const nodeGenerationScheduler = () =>
   new Promise((resolve) => setImmediate(resolve));
 
@@ -288,6 +297,8 @@ function validateSoloBoardRequest(body) {
   if (typeof body.mode !== "string")
     return { valid: false, code: "UNKNOWN_MODE" };
   const mode = body.mode;
+  if (mode === "daily")
+    return { valid: false, code: "DAILY_CHALLENGE_REQUIRED" };
   let config;
   if (mode === "custom") {
     if (
@@ -338,6 +349,58 @@ function validateSoloBoardRequest(body) {
     };
   }
   return { valid: true, mode, config, dictionary };
+}
+
+async function getTodayDailyChallenge() {
+  const date = utcDateKey();
+  const key = "daily-" + date;
+  if (pendingDailyChallenges.has(key)) return pendingDailyChallenges.get(key);
+  const pending = dailyChallenges.getOrCreateDaily(date, async ({ id, date: recordDate }) => {
+    const config = configForPreset("daily");
+    const dictionary = getDictionary(DEFAULT_DICTIONARY_ID);
+    const contract = boardGenerationContract(config, dictionary.id);
+    const result = await generateProductionRoundBoard(contract);
+    if (!result.ok) {
+      const error = new Error("DAILY_BOARD_GENERATION_FAILED");
+      error.code = result.error?.code || "GENERATION_FAILED";
+      error.diagnostics = {
+        ...result.diagnostics,
+        dictionary: dictionary.metadata,
+      };
+      throw error;
+    }
+    return {
+      id,
+      date: recordDate,
+      mode: "daily",
+      config: { ...config },
+      board: [...result.board],
+      dictionary: {
+        dictionaryId: dictionary.id,
+        artifactSha256: dictionary.metadata.artifactSha256,
+      },
+      quality: {
+        requestedSeed: result.requestedSeed,
+        selectedCandidateSeed: result.selectedCandidateSeed,
+      },
+      createdAt: new Date().toISOString(),
+    };
+  });
+  pendingDailyChallenges.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    pendingDailyChallenges.delete(key);
+  }
+}
+async function createRelayChallenge() {
+  const daily = await getTodayDailyChallenge();
+  return relayChallenges.create({
+    board: daily.board,
+    config: { ...daily.config, label: "WORD RELAY", rule: "Pass the final letter on", chain: true },
+    dictionary: daily.dictionary,
+    state: { found: [], requiredLetter: "", turns: 0 },
+  });
 }
 function roomConfig(room) {
   return (
@@ -599,6 +662,9 @@ function state(room) {
     ...(room.status === "playing" && room.round?.config?.chain
       ? { chain: publicChainState(room.round) }
       : {}),
+    ...(room.status === "playing" && room.round?.heist
+      ? { heist: { teams: room.round.heist.teams, teamByPlayer: room.round.heist.teamByPlayer, teamScores: room.round.heist.teamScores, claims: room.round.heist.claims } }
+      : {}),
     players: publicPlayers.map((p) => ({
       id: p.id,
       name: p.name,
@@ -637,6 +703,9 @@ function displayState(room) {
     config: roomConfig(room),
     series: publicSeriesState(room),
     lastResult: room.status === "finished" ? room.lastResult : null,
+    ...(room.status === "playing" && room.round?.heist
+      ? { heist: { teams: room.round.heist.teams, teamScores: room.round.heist.teamScores, claims: room.round.heist.claims } }
+      : {}),
     players: publicPlayers.map((p) => ({
       name: p.name,
       avatar: p.avatar || "🐈",
@@ -1358,6 +1427,20 @@ async function startRound(
     seriesParticipantIds: series
       ? seriesRoundPlayers.map(([id]) => id)
       : [],
+    ...(selected === "heist"
+      ? {
+          heist: (() => {
+            const players = [...room.players.keys()];
+            const teams = [
+              { id: "sun", playerIds: players.filter((_, index) => index % 2 === 0) },
+              { id: "moon", playerIds: players.filter((_, index) => index % 2 === 1) },
+            ];
+            const assignments = Object.fromEntries(teams.flatMap((team) => team.playerIds.map((id) => [id, team.id])));
+            const valid = validateTeamAssignments(players, assignments);
+            return { teams: valid.teams, teamByPlayer: assignments, teamScores: { sun: 0, moon: 0 }, claims: [] };
+          })(),
+        }
+      : {}),
   };
   room.status = "playing";
   room.teamScore = 0;
@@ -2455,7 +2538,19 @@ async function handle(ws, message) {
         result.word,
         result.points,
       );
-    if (room.mode === "coop") {
+    if (room.mode === "heist") {
+      const claim = applyWordClaim(room.round.heist, {
+        teamId: room.round.heist.teamByPlayer[player.id],
+        word: result.word,
+        points: result.points,
+      });
+      room.round.heist = {
+        ...room.round.heist,
+        teamScores: { ...claim.teamScores },
+        claims: [...claim.claims],
+      };
+      player.score += result.points;
+    } else if (room.mode === "coop") {
       room.teamScore += result.points;
       for (const teammate of room.players.values())
         teammate.score = room.teamScore;
@@ -2549,6 +2644,7 @@ const server = http.createServer((req, res) => {
     "/multiplayer-player-presentation.js",
     "/cooperative-results.js",
     "/round-timing.js",
+    "/challenge-rules.js",
     "/board-core.js",
     "/analytics.js",
     "/trace-geometry.js",
@@ -2684,6 +2780,8 @@ module.exports = {
   generateProductionRoundBoard,
   selectRoundBoardForDevelopment,
   validateSoloBoardRequest,
+  getTodayDailyChallenge,
+  dailyChallenges,
   generationTestHooks,
   MAX_PLAYERS,
   displayTokens,
@@ -2866,6 +2964,88 @@ function readJson(req, isCancelled) {
 }
 async function leaderboardRequest(req, res) {
   const url = new URL(req.url, "http://localhost");
+  if (url.pathname === "/api/relay-challenges" && req.method === "POST") {
+    if (!rateLimit("relay-create:" + clientIp(req), 10)) return deny(res, 429, "RATE_LIMITED");
+    try {
+      const challenge = await createRelayChallenge();
+      res.writeHead(201, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify(challenge));
+    } catch {
+      return deny(res, 503, "RELAY_UNAVAILABLE");
+    }
+  }
+  if (url.pathname.startsWith("/api/relay-challenges/") && req.method === "GET") {
+    const challenge = relayChallenges.get(url.pathname.slice("/api/relay-challenges/".length));
+    if (!challenge) return deny(res, 404, "RELAY_NOT_FOUND");
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify(challenge));
+  }
+  if (url.pathname.startsWith("/api/relay-challenges/") && req.method === "POST") {
+    const id = url.pathname.slice("/api/relay-challenges/".length);
+    const body = await readJson(req);
+    if (!body || Object.keys(body).some((key) => !["revision", "word", "path"].includes(key)))
+      return deny(res, 400, "RELAY_REQUEST_INVALID");
+    try {
+      const challenge = await relayChallenges.transition(id, body.revision, (state, record) => {
+        const result = validateSubmission({ board: record.board, size: record.config.size, word: body.word, path: body.path, mode: "classic", dictionaryId: record.dictionary.dictionaryId, minimum: record.config.min, found: new Set(state.found) });
+        if (!result.valid) throw Object.assign(new Error("RELAY_WORD_REJECTED"), { code: result.reason });
+        if (state.requiredLetter && !chainWordMatches(state.requiredLetter, result.word))
+          throw Object.assign(new Error("RELAY_WORD_REJECTED"), { code: "chain" });
+        return { found: [...state.found, result.word].slice(-500), requiredLetter: result.word.at(-1), turns: state.turns + 1 };
+      });
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify(challenge));
+    } catch (error) {
+      const code = error.message === "RELAY_CHALLENGE_STALE_REVISION" ? "RELAY_STALE_REVISION" : error.message === "RELAY_CHALLENGE_NOT_FOUND" ? "RELAY_NOT_FOUND" : error.message === "RELAY_WORD_REJECTED" ? error.code || "RELAY_WORD_REJECTED" : "RELAY_REQUEST_INVALID";
+      return deny(res, code === "RELAY_NOT_FOUND" ? 404 : 409, code);
+    }
+  }
+  if (url.pathname === "/api/daily-challenge" && req.method === "GET") {
+    if (!rateLimit("daily-challenge:" + clientIp(req), 30))
+      return deny(res, 429, "RATE_LIMITED");
+    try {
+      const challenge = await getTodayDailyChallenge();
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      return res.end(JSON.stringify({ challenge }));
+    } catch (error) {
+      console.warn("Wordrush daily challenge generation failed", JSON.stringify({
+        failureCode: error.code || "GENERATION_FAILED",
+        diagnostics: error.diagnostics || null,
+      }));
+      return deny(res, 503, "DAILY_CHALLENGE_UNAVAILABLE");
+    }
+  }
+  if (url.pathname === "/api/daily-challenge/shares" && req.method === "POST") {
+    if (!rateLimit("daily-challenge-share:" + clientIp(req), 20))
+      return deny(res, 429, "RATE_LIMITED");
+    const body = await readJson(req);
+    let share;
+    try {
+      share = dailyChallenges.createShare(body);
+    } catch {
+      return deny(res, 400, "CHALLENGE_SHARE_INVALID");
+    }
+    res.writeHead(201, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    return res.end(JSON.stringify(share));
+  }
+  if (url.pathname.startsWith("/api/challenges/") && req.method === "GET") {
+    if (!rateLimit("challenge-share:" + clientIp(req), 60))
+      return deny(res, 429, "RATE_LIMITED");
+    const ref = url.pathname.slice("/api/challenges/".length);
+    const shared = dailyChallenges.getShare(ref);
+    if (!shared) return deny(res, 404, "CHALLENGE_NOT_FOUND");
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    return res.end(JSON.stringify(shared));
+  }
   if (url.pathname === "/api/solo-board" && req.method === "POST") {
     if (!rateLimit("solo-board:" + clientIp(req), 30))
       return deny(res, 429, "RATE_LIMITED");

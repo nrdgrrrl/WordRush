@@ -594,6 +594,15 @@ nav small {
   font-size: 26px;
 }
 .mode-classic { --mode-start: #b7f5ff; --mode-end: #80b9ff; --mode-edge: #e7fbff; --mode-shadow: #5682bb; }
+.mode-daily { --mode-start: #ffe88b; --mode-end: #ffab72; --mode-edge: #fff5be; --mode-shadow: #c97848; }
+.mode-echo { --mode-start: #d7c6ff; --mode-end: #a6b8ff; --mode-edge: #f2edff; --mode-shadow: #7469b8; }
+.mode-curse { --mode-start: #c5d8ff; --mode-end: #8297e9; --mode-edge: #edf2ff; --mode-shadow: #596db7; }
+.mode-bounty { --mode-start: #fff0a1; --mode-end: #d9a7ff; --mode-edge: #fff7ce; --mode-shadow: #9b69c8; }
+.mode-heist { --mode-start: #b5f4db; --mode-end: #67c9bf; --mode-edge: #e5fff4; --mode-shadow: #418c88; }
+.mode-daily.is-featured {
+  min-height: 96px;
+  border-width: 3px;
+}
 .mode-random { --mode-start: #e2ff84; --mode-end: #7fe5a6; --mode-edge: #f6ffc4; --mode-shadow: #48956b; }
 .mode-random.is-featured {
   min-height: 104px;
@@ -1379,6 +1388,21 @@ html[data-theme="dark"] .tile.selected {
     inset 0 1px 0 #ffffffb8,
     0 4px 12px #f6c85f99;
 }
+.tile.tile-frozen {
+  color: #eef3ff;
+  border-color: #6675a8;
+  background: repeating-linear-gradient(135deg, #59668e 0 6px, #6978a7 6px 12px);
+  cursor: not-allowed;
+  opacity: .78;
+}
+.tile.tile-bounty {
+  outline: 3px solid #ffe767;
+  outline-offset: -5px;
+}
+.tile.tile-bounty-claimed {
+  outline-color: #8af3bf;
+  background-image: linear-gradient(135deg, #c5ffe0, #70d99d);
+}
 @media (prefers-reduced-motion: reduce) {
   #grid .tile,
   #grid .tile.selected,
@@ -1581,6 +1605,31 @@ html[data-theme="dark"] .scoreboard-row {
   background: var(--coral);
   color: #1d1d1b;
   border-color: var(--coral);
+}
+.daily-challenge-result {
+  display: grid;
+  gap: 7px;
+  margin: 18px 0 0;
+  padding: 14px;
+  color: #2b1939;
+  border: 2px solid #ffd98c;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #fff4bd, #ffd39d);
+}
+.daily-challenge-result > small:first-child {
+  color: #8b4e29;
+  font: 900 10px monospace;
+  letter-spacing: .12em;
+}
+.daily-challenge-result > b { font-size: 15px; }
+.daily-challenge-result .secondary { margin: 0; }
+#dailyShareLink {
+  width: 100%;
+  color: inherit;
+  border: 1px solid #d9a36a;
+  border-radius: 8px;
+  background: #fff9e8;
+  padding: 8px;
 }
 
 #seriesTransitionScreen {
