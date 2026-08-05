@@ -191,37 +191,16 @@ test(
             Number(await page.locator("#resultWordCount").textContent()) > 0,
           );
         }
-        await pages[0].locator("#animatedResultsButton").click();
-        await Promise.all(
-          pages.map((page) =>
-            page.waitForFunction(
-              () => !document.querySelector("#animatedResultsView").hidden,
-            ),
-          ),
-        );
-        await host.locator('[data-speed="fast"]').click();
-        await Promise.all(
-          pages.map((page) =>
-            page.waitForFunction(() =>
-              document
-                .querySelector('[data-speed="fast"]')
-                .classList.contains("active"),
-            ),
-          ),
-        );
-        await Promise.all(
-          pages.map((page) =>
-            page.waitForFunction(
-              () =>
-                document.querySelectorAll(".reveal-word").length > 0 &&
-                Number(
-                  document
-                    .querySelector("#revealTotal")
-                    .textContent.replaceAll(",", ""),
-                ) > 0,
-            ),
-          ),
-        );
+        for (const page of pages) {
+          assert.equal(
+            await page.locator(".results-switcher").count(),
+            0,
+          );
+          assert.equal(
+            await page.locator("#seriesFinalPanel").isHidden(),
+            true,
+          );
+        }
       }
       if (mode === "random") break;
       else

@@ -535,6 +535,8 @@ function renderResults(
       : "";
   $("#resultName").textContent = skipped
     ? nextRushLabel || "Round skipped"
+    : s.rush && !onlineSourceRoundId
+    ? profile.name + "."
     : nextRushLabel
     ? onlineHeading || "Up next: " + nextRushLabel
     : profile.name + ".";
@@ -690,6 +692,21 @@ function renderSuddenDeath(details) {
   }
   title.textContent = "Sudden death outcome";
   detail.textContent = copy;
+}
+function renderRushNextRound(mode, seconds) {
+  const card = $("#rushNextRound");
+  const config = configForPreset(mode);
+  const visible = Boolean(config && Number.isFinite(seconds) && seconds > 0);
+  card.hidden = !visible;
+  if (!visible) return;
+  $("#rushNextRoundTitle").textContent = config.label;
+  $("#rushNextRoundCountdown").textContent =
+    "Starts in " + seconds + "s · tap to start now";
+}
+function clearRushNextRound() {
+  $("#rushNextRound").hidden = true;
+  $("#rushNextRoundTitle").textContent = "";
+  $("#rushNextRoundCountdown").textContent = "";
 }
 function clearSuddenDeathPresentation() {
   suddenDeathPresentationGeneration++;
@@ -931,13 +948,10 @@ function end(completionReason) {
     const rushDelay = window.wordrushRushDelay || 20000;
     $("#stopRushResults").hidden = false;
     let left = Math.ceil(rushDelay / 1000);
-    $("#resultAchievementTitle").textContent = "Next rush in " + left + "s";
-    $("#resultAchievementDetail").textContent =
-      "Your score is saved. Continue now or let the next rush arrive automatically.";
+    renderRushNextRound(s.nextRushMode, left);
     s.rushCountdown = setInterval(() => {
       left--;
-      if (left > 0)
-        $("#resultAchievementTitle").textContent = "Next rush in " + left + "s";
+      if (left > 0) renderRushNextRound(s.nextRushMode, left);
     }, 1000);
     const continuationGeneration = ++rushContinuationGeneration;
     s.rushTimer = setTimeout(() => {
@@ -949,7 +963,8 @@ function end(completionReason) {
       if (s.rush) {
         rushContinuationTransition = true;
         emit("random-rush", { action: "auto_advance" });
-        start(consumeNextRushMode(), null, false, true, s.dictionaryId);
+        clearRushNextRound();
+        start(consumeNextRushMode(), null, false, true, s.dictionaryId, true);
       }
     }, rushDelay);
   }
@@ -974,6 +989,7 @@ function cancelSoloRushContinuation({ stop = true } = {}) {
   s.rushTimer = 0;
   s.rushCountdown = 0;
   $("#stopRushResults").hidden = true;
+  clearRushNextRound();
   if (stop) {
     s.rush = false;
     s.nextRushMode = null;
@@ -1079,6 +1095,7 @@ function abandonActiveRound() {
   clearInterval(s.timer);
   clearTimeout(s.rushTimer);
   clearInterval(s.rushCountdown);
+  clearRushNextRound();
   cancelRoundIntro();
   s.done = 1;
   s.soloRoundId = 0;
@@ -1129,6 +1146,7 @@ async function start(
   adultMode = false,
   rush = false,
   dictionaryId = DEFAULT_DICTIONARY_ID,
+  skipRoundIntro = false,
 ) {
   const generationRequest = ++soloGenerationRequest;
   if (
@@ -1257,7 +1275,36 @@ async function start(
   $("#endGame").setAttribute("aria-label", "End round");
   $("#gameBack").setAttribute("aria-label", "Back to home");
   $("#stopRushResults").hidden = true;
+  clearRushNextRound();
   render();
+  const startSoloGameplay = () => {
+    const timing = roundTiming.startGameplay(Date.now(), config.seconds);
+    s.startedAt = timing.startedAt;
+    s.endsAt = timing.endsAt;
+    s.acceptingSoloSubmissions = true;
+    s.time = config.seconds;
+    const preserveRushContinuation = rushContinuationTransition;
+    show("gameScreen", { preserveRushContinuation, preserveRoundIntro: true });
+    rushContinuationTransition = false;
+    clearInterval(s.timer);
+    $("#endGame").hidden = false;
+    $("#timer").textContent = formatTimer(s.time);
+    s.timer = setInterval(() => {
+      s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
+      $("#timer").textContent = formatTimer(s.time);
+      if (s.time <= 0) end("timeout");
+    }, 250);
+    emit("round-started", {
+      mode,
+      multiplayer: false,
+      random_rush: s.rush,
+      party: isPartyRound(config),
+      grid_size: s.n,
+      minimum_length: config.min,
+      duration_seconds: config.seconds,
+    });
+  };
+  if (skipRoundIntro && s.rush) return startSoloGameplay();
   showRoundIntro({
     label: s.config.label,
     rule: config.rule,
@@ -1270,31 +1317,7 @@ async function start(
       grid_size: s.n,
       minimum_length: config.min,
     },
-    onStart: () => {
-      const timing = roundTiming.startGameplay(Date.now(), config.seconds);
-      s.startedAt = timing.startedAt;
-      s.endsAt = timing.endsAt;
-      s.acceptingSoloSubmissions = true;
-      s.time = config.seconds;
-      show("gameScreen", { preserveRoundIntro: true });
-      clearInterval(s.timer);
-      $("#endGame").hidden = false;
-      $("#timer").textContent = formatTimer(s.time);
-      s.timer = setInterval(() => {
-        s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
-        $("#timer").textContent = formatTimer(s.time);
-        if (s.time <= 0) end("timeout");
-      }, 250);
-      emit("round-started", {
-        mode,
-        multiplayer: false,
-        random_rush: s.rush,
-        party: isPartyRound(config),
-        grid_size: s.n,
-        minimum_length: config.min,
-        duration_seconds: config.seconds,
-      });
-    },
+    onStart: startSoloGameplay,
   });
 }
 function pickedPathIsValid(trace, word) {
@@ -1561,14 +1584,23 @@ $("#again").onclick = () => {
     return start(s.mode, s.config, usesAdultLexicon(s.config), false, s.dictionaryId);
   }
   if (s.rush) {
-    cancelSoloRushContinuation({ stop: false });
-    rushContinuationTransition = true;
-    emit("random-rush", { action: "continue", upcoming_mode: s.nextRushMode });
-    return start(consumeNextRushMode(), null, false, true, s.dictionaryId);
+    continueRandomRush();
+    return;
   }
   if (!window.wordrushSessionCode && !s.onlineRoundKey && isPartyRound(s.config))
     return openParty();
   start(s.mode, s.config, usesAdultLexicon(s.config), false, s.dictionaryId);
+};
+function continueRandomRush() {
+  if (!s.rush || !s.nextRushMode) return false;
+  cancelSoloRushContinuation({ stop: false });
+  rushContinuationTransition = true;
+  emit("random-rush", { action: "continue", upcoming_mode: s.nextRushMode });
+  start(consumeNextRushMode(), null, false, true, s.dictionaryId, true);
+  return true;
+}
+$("#rushNextRound").onclick = () => {
+  continueRandomRush();
 };
 $("#exitParty").onclick = () => {
   if (window.wordrushSessionCode || s.onlineRoundKey || !isPartyRound(s.config))

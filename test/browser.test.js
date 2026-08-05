@@ -168,6 +168,50 @@ test.before(
 );
 test.after(() => new Promise((resolve) => server.close(resolve)));
 
+test("mobile play board stays within its available space on short screens", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  for (const viewport of [
+    { width: 375, height: 667 },
+    { width: 320, height: 568 },
+  ]) {
+    const page = await browser.newPage({ viewport });
+    await page.goto(baseUrl);
+    await startClassic(page);
+    await page.evaluate(() => {
+      const status = document.querySelector("#chainStatus");
+      const guidance = document.querySelector("#chainGuidance");
+      status.hidden = false;
+      guidance.hidden = false;
+      guidance.textContent = "Rejected: word must start with the required letter.";
+    });
+    const bounds = await page.evaluate(() => {
+      const box = (selector) => {
+        const rect = document.querySelector(selector).getBoundingClientRect();
+        return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+      };
+      return {
+        board: box(".board"),
+        grid: box("#grid"),
+        viewport: { width: innerWidth, height: innerHeight },
+      };
+    });
+    assert.ok(bounds.board.top >= 0);
+    assert.ok(bounds.board.right <= bounds.viewport.width);
+    assert.ok(bounds.board.bottom <= bounds.viewport.height);
+    assert.ok(bounds.board.left >= 0);
+    assert.ok(bounds.grid.bottom > bounds.grid.top);
+    assert.ok(Math.abs(
+      bounds.grid.right - bounds.grid.left - (bounds.grid.bottom - bounds.grid.top),
+    ) < 1);
+    assert.ok(bounds.grid.top >= bounds.board.top);
+    assert.ok(bounds.grid.right <= bounds.board.right);
+    assert.ok(bounds.grid.bottom <= bounds.board.bottom);
+    assert.ok(bounds.grid.left >= bounds.board.left);
+    await page.close();
+  }
+  await browser.close();
+});
+
 test("browser can start, play, persist stats, and use the tile-banner profile button", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -421,7 +465,13 @@ test("random rush owns results continuation and stops on navigation", async () =
   await startIntro(page);
   await page.locator("#endGame").click();
   await page.waitForSelector("#resultsScreen.active");
-  assert.match(await page.locator("#resultName").textContent(), /^Up next: /);
+  assert.equal(await page.locator("#suddenDeathCallout").isHidden(), true);
+  assert.equal(await page.locator("#rushNextRound").isHidden(), false);
+  assert.match(await page.locator("#rushNextRoundTitle").textContent(), /\S/);
+  assert.match(
+    await page.locator("#rushNextRoundCountdown").textContent(),
+    /^Starts in 1s · tap to start now$/,
+  );
   const homeAutoAdvances = await countRushAction("auto_advance");
   await page.locator('#resultsScreen [data-screen="homeScreen"]').click();
   await page.waitForSelector("#homeScreen.active");
@@ -455,29 +505,23 @@ test("random rush owns results continuation and stops on navigation", async () =
   await startIntro(page);
   await page.locator("#endGame").click();
   await page.waitForSelector("#resultsScreen.active");
-  const autoUpcoming = (await page.locator("#resultName").textContent()).replace(
-    /^Up next:\s*/,
-    "",
-  );
+  const autoUpcoming = await page.locator("#rushNextRoundTitle").textContent();
   const autoAdvancesBeforeStay = await countRushAction("auto_advance");
-  await page.waitForSelector("#roundIntroScreen.active", { timeout: 2000 });
+  await page.waitForSelector("#gameScreen.active", { timeout: 2000 });
   assert.equal(await countRushAction("auto_advance"), autoAdvancesBeforeStay + 1);
-  assert.equal(await page.locator("#introMode").textContent(), autoUpcoming);
-  await startIntro(page);
+  assert.equal(await page.locator("#gameMode").textContent(), autoUpcoming);
+  assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
 
   await page.locator("#endGame").click();
   await page.waitForSelector("#resultsScreen.active");
-  const continueUpcoming = (await page.locator("#resultName").textContent()).replace(
-    /^Up next:\s*/,
-    "",
-  );
+  const continueUpcoming = await page.locator("#rushNextRoundTitle").textContent();
   const continueActionsBefore = await countRushAction("continue");
   const autoAdvancesBeforeContinueWait = await countRushAction("auto_advance");
-  await page.locator("#again").click();
-  await page.waitForSelector("#roundIntroScreen.active");
+  await page.locator("#rushNextRound").click();
+  await page.waitForSelector("#gameScreen.active");
   assert.equal(await countRushAction("continue"), continueActionsBefore + 1);
-  assert.equal(await page.locator("#introMode").textContent(), continueUpcoming);
-  await startIntro(page);
+  assert.equal(await page.locator("#gameMode").textContent(), continueUpcoming);
+  assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
   await waitPastRushDelay();
   assert.equal(await countRushAction("auto_advance"), autoAdvancesBeforeContinueWait);
 
@@ -601,6 +645,7 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   );
   await page.waitForSelector("#resultsScreen.active");
   assert.match(await page.locator("#suddenDeathCalloutDetail").textContent(), /BAD/);
+  assert.equal(await page.locator("#suddenDeathCallout").isHidden(), false);
 
   const replacementFixture = {
     size: 4,
@@ -1184,8 +1229,9 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
   await page.waitForSelector("#resultsScreen.active");
   assert.equal(await page.locator(".result-player-card").count(), 2);
   assert.equal(await page.locator("#staticResultsView").isHidden(), false);
-  assert.equal(await page.locator("#animatedResultsView").isHidden(), true);
-  assert.equal(await page.locator("#staticResultsButton").getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator(".results-switcher").count(), 0);
+  assert.equal(await page.locator("#animatedResultsView").count(), 0);
+  assert.equal(await page.locator("#seriesFinalPanel").isHidden(), true);
   const longest = await page.locator("#resultLongestWord").textContent();
   assert.match(longest, /PLANETS · 49 pts · 🦊 Comet/);
   assert.match(longest, /MOONLIT · 49 pts · 🐈 Moon/);
@@ -1200,13 +1246,6 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
   }));
   assert.ok(presentation.heroRadius >= 20);
   assert.notEqual(presentation.first, presentation.second);
-  await page.locator("#animatedResultsButton").click();
-  assert.equal(await page.locator("#animatedResultsView").isHidden(), false);
-  assert.equal(await page.locator("#staticResultsView").isHidden(), true);
-  assert.equal(await page.locator("#animatedResultsButton").getAttribute("aria-pressed"), "true");
-  await page.waitForSelector(".reveal-word.word-length-long");
-  await page.waitForSelector(".reveal-word.word-length-medium");
-  assert.equal(await page.locator(".reveal-word.word-length-medium").count(), 1);
-  assert.equal(await page.locator(".reveal-session-record").count(), 2);
+  assert.equal(await page.locator(".result-confetti i").count(), 5);
   await browser.close();
 });

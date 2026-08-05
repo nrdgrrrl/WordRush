@@ -286,6 +286,14 @@
               <small id="suddenDeathCalloutDetail"></small>
             </div>
           </div>
+          <button class="rush-next-round" id="rushNextRound" type="button" hidden>
+            <span aria-hidden="true">⚡</span>
+            <span>
+              <small>UP NEXT</small>
+              <b id="rushNextRoundTitle"></b>
+              <small id="rushNextRoundCountdown"></small>
+            </span>
+          </button>
           <div class="result-score-burst result">
             <small id="resultScoreLabel">FINAL SCORES</small>
             <div class="result-hero-scores" id="resultHeroScores"></div>
@@ -297,34 +305,17 @@
           <article><span>🔠</span><div><small id="resultLongestLabel">LONGEST WORD</small><b id="resultLongestWord">—</b></div></article>
           <article><span>👑</span><div><small id="resultTopLabel">ROUND LEADER</small><b id="resultTopPlayer">—</b></div></article>
         </div>
-        <section class="series-final-panel" id="seriesFinalPanel" hidden aria-label="Sudden Death Series final results">
-          <p class="eyebrow">SUDDEN DEATH SERIES · 10 ROUNDS</p>
-          <div class="series-final-standings" id="seriesFinalStandings"></div>
-          <h2>Round losses</h2>
-          <ol class="series-history" id="seriesRoundHistory"></ol>
-        </section>
-        <div class="results-switcher" aria-label="Results view">
-          <button id="staticResultsButton" type="button">🏆 Score party</button
-          ><button class="active" id="animatedResultsButton" type="button">✨ Word Party · everyone’s invited</button>
-        </div>
         <div id="staticResultsView">
           <div class="result-podium" id="resultPlayers"></div>
         </div>
-        <div id="animatedResultsView" hidden>
-          <div class="reveal-toolbar">
-            <span>WORD REVEAL</span>
-            <div class="speed-choice" role="group" aria-label="Reveal speed">
-              <button type="button" data-speed="slow">Slow</button
-              ><button class="active" type="button" data-speed="medium">
-                Medium</button
-              ><button type="button" data-speed="fast">Fast</button>
-            </div>
-          </div>
-          <div class="reveal-total">
-            <small id="revealTotalLabel">TOTAL SCORE</small><strong id="revealTotal">0</strong>
-          </div>
-          <div class="reveal-players" id="revealPlayers"></div>
-        </div>
+        <section class="series-final-panel" id="seriesFinalPanel" hidden aria-label="Sudden Death Series final results">
+          <p class="eyebrow">SUDDEN DEATH SERIES · FINAL STANDINGS</p>
+          <div class="series-final-standings" id="seriesFinalStandings"></div>
+          <details class="series-history-details">
+            <summary>Round losses</summary>
+            <ol class="series-history" id="seriesRoundHistory"></ol>
+          </details>
+        </section>
         <div class="achievement" id="resultAchievement" hidden>
           ✦
           <div>

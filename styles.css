@@ -992,11 +992,12 @@ body:has(#gameScreen.active) .app-shell {
   padding: 6px;
 }
 .grid {
-  width: min(100%, calc(100svh - 200px), calc(100vw - 56px));
-  height: auto;
+  width: auto;
+  height: min(100%, calc(100vw - 56px));
   aspect-ratio: 1/1;
   flex: 0 0 auto;
-  max-height: none;
+  max-width: 100%;
+  max-height: 100%;
 }
 .tile {
   background: #f7dfe4;
@@ -1393,7 +1394,11 @@ body:has(#gameScreen.active) .app-shell {
 }
 #gameScreen.active {
   height: 100svh;
-  padding-top: 8px;
+  padding:
+    max(8px, env(safe-area-inset-top))
+    max(0px, env(safe-area-inset-right))
+    max(4px, env(safe-area-inset-bottom))
+    max(0px, env(safe-area-inset-left));
 }
 #gameScreen.active .game-head {
   margin-bottom: 2px;
@@ -1423,7 +1428,7 @@ body:has(#gameScreen.active) .app-shell {
 }
 @media (max-height: 650px) {
   #gameScreen.active {
-    padding-top: 4px;
+    padding-top: max(4px, env(safe-area-inset-top));
   }
   #gameScreen.active .rule-banner {
     margin-block: 7px 5px;
@@ -1640,19 +1645,15 @@ html[data-theme="dark"] .scoreboard-row {
 }
 .series-final-panel {
   display: grid;
-  gap: 14px;
-  margin: 18px 0;
-  padding: 20px;
+  gap: 10px;
+  margin: 26px 0 12px;
+  padding: 12px;
   border: 2px solid rgba(246, 200, 95, .75);
   border-radius: 20px;
   background: rgba(91, 45, 127, .12);
 }
-.series-final-panel h2 {
-  margin: 8px 0 0;
-  font-size: 1.1rem;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-}
+.series-final-panel[hidden] { display: none; }
+.series-final-panel .eyebrow { margin: 0; font-size: .65rem; }
 .series-final-standing.is-winner {
   border: 2px solid #f6c85f;
   background: rgba(246, 200, 95, .16);
@@ -1672,6 +1673,13 @@ html[data-theme="dark"] .scoreboard-row {
   margin: 0;
   padding-left: 26px;
 }
+.series-history-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: .75rem;
+  font-weight: 800;
+}
+.series-history-details[open] summary { margin-bottom: 8px; }
 .series-history li {
   padding: 8px 12px;
   border-radius: 10px;
