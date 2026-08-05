@@ -595,6 +595,7 @@ nav small {
 }
 .mode-classic { --mode-start: #b7f5ff; --mode-end: #80b9ff; --mode-edge: #e7fbff; --mode-shadow: #5682bb; }
 .mode-daily { --mode-start: #ffe88b; --mode-end: #ffab72; --mode-edge: #fff5be; --mode-shadow: #c97848; }
+.mode-echo { --mode-start: #d7c6ff; --mode-end: #a6b8ff; --mode-edge: #f2edff; --mode-shadow: #7469b8; }
 .mode-curse { --mode-start: #c5d8ff; --mode-end: #8297e9; --mode-edge: #edf2ff; --mode-shadow: #596db7; }
 .mode-bounty { --mode-start: #fff0a1; --mode-end: #d9a7ff; --mode-edge: #fff7ce; --mode-shadow: #9b69c8; }
 .mode-daily.is-featured {

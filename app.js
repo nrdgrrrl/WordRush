@@ -234,6 +234,7 @@ const s = {
   dictionaryMetadata: null,
   dictionaryWords: [],
   dailyChallenge: null,
+  echo: null,
   frozenIndexes: new Set(),
   bounty: null,
 };
@@ -462,6 +463,43 @@ function recordAcceptedWord(word, { trackSpeed = true } = {}) {
   profile.correct++;
   profile.totalWordLength += word.length;
   profile.longest = Math.max(profile.longest, word.length);
+}
+function dailyEchoKey(challengeId) {
+  return "wordrushDailyEcho:" + String(challengeId || "");
+}
+function loadDailyEcho(challengeId) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(dailyEchoKey(challengeId)) || "null");
+    if (!parsed || !Number.isInteger(parsed.score) || parsed.score < 0) return null;
+    return {
+      score: parsed.score,
+      checkpoints: challengeRules.normalizeEchoCheckpoints(parsed.checkpoints),
+    };
+  } catch {
+    return null;
+  }
+}
+function saveDailyEcho(challengeId, echo) {
+  if (!challengeId || !echo) return;
+  try {
+    localStorage.setItem(dailyEchoKey(challengeId), JSON.stringify({
+      score: Math.max(0, Math.min(1_000_000, Math.trunc(echo.score || 0))),
+      checkpoints: challengeRules.normalizeEchoCheckpoints(echo.checkpoints),
+    }));
+  } catch {}
+}
+function echoScoreAt(checkpoints, elapsedMs) {
+  let score = 0;
+  for (const checkpoint of checkpoints || []) {
+    if (checkpoint.elapsedMs > elapsedMs) break;
+    score = checkpoint.score;
+  }
+  return score;
+}
+function updateEchoPace() {
+  if (!s.echo?.target || !s.startedAt) return;
+  const score = echoScoreAt(s.echo.target.checkpoints, Date.now() - s.startedAt);
+  $("#gameHint").textContent = "Echo pace: " + score + " points";
 }
 function recordReconciledOnlineWords(words) {
   const delta = multiplayerWordReconciliation.wordStatsDelta(words);
@@ -967,6 +1005,16 @@ function end(completionReason) {
           : "It is a tie. One more run could settle it."
       : "Your score is ready for a friend to chase.";
     $("#dailyChallengeResultDetail").textContent = comparison;
+    $("#raceDailyEcho").hidden = false;
+    $("#raceDailyEcho").textContent = s.echo?.target
+      ? "Race this echo again"
+      : "Race your echo";
+    saveDailyEcho(s.dailyChallenge.id, {
+      score: s.score,
+      checkpoints: s.echo?.checkpoints || [],
+    });
+  } else {
+    $("#raceDailyEcho").hidden = true;
   }
   profile.score += s.score;
   profile.rounds++;
@@ -1305,6 +1353,9 @@ async function start(
         shareRef: dailyChallenge.shareRef,
       }
     : null;
+  s.echo = s.dailyChallenge
+    ? { target: dailyChallenge?.echo || null, checkpoints: [] }
+    : null;
   s.onlineRoundKey = null;
   s.onlineSeries = null;
   s.onlineSeriesId = null;
@@ -1381,8 +1432,10 @@ async function start(
     s.timer = setInterval(() => {
       s.time = Math.max(0, Math.ceil((s.endsAt - Date.now()) / 1000));
       $("#timer").textContent = formatTimer(s.time);
+      updateEchoPace();
       if (s.time <= 0) end("timeout");
     }, 250);
+    updateEchoPace();
     emit("round-started", {
       mode,
       multiplayer: false,
@@ -1413,7 +1466,7 @@ async function start(
     onStart: startSoloGameplay,
   });
 }
-async function startDailyRush(shared = null) {
+async function startDailyRush(shared = null, raceEcho = false) {
   let daily = shared;
   try {
     if (!daily) daily = await requestDailyChallenge();
@@ -1424,6 +1477,14 @@ async function startDailyRush(shared = null) {
     return;
   }
   const challenge = daily.challenge;
+  if (raceEcho) {
+    const echo = loadDailyEcho(challenge.id);
+    if (!echo) {
+      toast("Finish a Daily Rush first to create your echo.");
+      return;
+    }
+    daily = { ...daily, echo };
+  }
   return start(
     "daily",
     null,
@@ -1534,6 +1595,12 @@ async function submit() {
         if (bountyBonus) render();
       }
       s.score += points;
+      if (s.echo) {
+        s.echo.checkpoints = challengeRules.recordEchoCheckpoint(
+          s.echo.checkpoints,
+          { elapsedMs: Math.max(0, Date.now() - s.startedAt), score: s.score },
+        );
+      }
       recordAcceptedWord(w);
       updateProfile();
       renderChainStatus();
@@ -1665,6 +1732,7 @@ function pulseIncorrectWord(trace) { pulseWord(trace, "word-incorrect"); }
 function pulseDuplicateWord(trace) { pulseWord(trace, "word-duplicate"); }
 $("#quickPlay")?.addEventListener("click", () => start("classic"));
 $("#dailyRush")?.addEventListener("click", () => startDailyRush());
+$("#echoRace")?.addEventListener("click", () => startDailyRush(null, true));
 $("#stopRush").onclick = stopRush;
 $("#stopRushResults").onclick = stopRush;
 let partyConfig = { size: 4, min: 3, seconds: 120 };
@@ -1801,6 +1869,7 @@ $("#shareDailyChallenge")?.addEventListener("click", async () => {
     button.disabled = false;
   }
 });
+$("#raceDailyEcho")?.addEventListener("click", () => startDailyRush(null, true));
 $("#endGame").onclick = () => end("manual");
 document
   .querySelectorAll("[data-mode]")
