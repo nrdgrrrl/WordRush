@@ -726,7 +726,7 @@ test("random rush owns results continuation and stops on navigation", async (t) 
       columns: getComputedStyle(foot).gridTemplateColumns,
     };
   });
-  assert.deepEqual(gameActions.labels, ["End Rush", "End Round"]);
+  assert.deepEqual(gameActions.labels, ["End Random Rush", "End Round"]);
   assert.ok(gameActions.seriesHidden);
   assert.ok(gameActions.widths.every((width) => width >= 0));
   assert.ok(Math.max(...gameActions.widths) - Math.min(...gameActions.widths) < 1);
@@ -746,6 +746,8 @@ test("random rush owns results continuation and stops on navigation", async (t) 
   await page.waitForSelector("#resultsScreen.active");
   assert.equal(await page.locator("#suddenDeathCallout").isHidden(), true);
   assert.equal(await page.locator("#rushNextRound").isHidden(), false);
+  assert.equal(await page.locator("#stopRushResults").isHidden(), false);
+  assert.equal(await page.locator("#stopRushResults").textContent(), "End Random Rush");
   assert.match(await page.locator("#rushNextRoundTitle").textContent(), /\S/);
   assert.match(
     await page.locator("#rushNextRoundCountdown").textContent(),

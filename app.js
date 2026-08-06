@@ -1201,9 +1201,16 @@ function show(
     id !== currentScreen
   ) {
     clearSuddenDeathPresentation();
-    if (!preserveRushContinuation && s.rush && !s.onlineRoundKey)
+    if (
+      id !== "homeScreen" &&
+      !preserveRushContinuation &&
+      s.rush &&
+      !s.onlineRoundKey
+    )
       cancelSoloRushContinuation();
   }
+  if (id === "homeScreen" && !preserveRushContinuation && s.rush && !s.onlineRoundKey)
+    cancelSoloRushContinuation();
   if (id === "homeScreen") soloGenerationRequest++;
   document
     .querySelectorAll(".screen")
