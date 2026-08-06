@@ -91,47 +91,48 @@
           <div><b id="homeWords">0</b><small>words found</small></div>
           <div><b id="homeStreak">0</b><small>day streak</small></div>
         </div>
-        <section class="home-friends" aria-labelledby="friendsHeading">
-          <div class="home-friends-heading">
-            <h2 id="friendsHeading">Play with friends</h2>
-            <span>LIVE TOGETHER</span>
-          </div>
-          <div class="multiplayer-banner" id="multiplayerBanner" hidden>
-            <div>
-              <small>LIVE MULTIPLAYER ROOM</small
-              ><strong id="multiplayerBannerText">1 player in session</strong>
+        <details class="home-friends" id="friendsPanel">
+          <summary class="home-friends-heading" id="friendsHeading">
+            <span class="home-friends-title" role="heading" aria-level="2">Play with friends</span>
+          </summary>
+          <div class="home-friends-content">
+            <div class="multiplayer-banner" id="multiplayerBanner" hidden>
+              <div>
+                <small>LIVE MULTIPLAYER ROOM</small
+                ><strong id="multiplayerBannerText">1 player in session</strong>
+              </div>
+              <div class="multiplayer-banner-actions">
+                <button type="button" id="resumeMultiplayer" hidden>
+                  <span aria-hidden="true">↩</span> Game
+                </button>
+                <button
+                  type="button"
+                  id="multiplayerShare"
+                  aria-label="Show multiplayer join QR code"
+                >
+                  <span aria-hidden="true">▦</span> Join QR
+                </button>
+                <button id="exitMultiplayer" aria-label="Leave party">
+                  Leave party
+                </button>
+              </div>
             </div>
-            <div class="multiplayer-banner-actions">
-              <button type="button" id="resumeMultiplayer" hidden>
-                <span aria-hidden="true">↩</span> Game
-              </button>
+            <div class="room" id="sessionCard">
+              <i aria-hidden="true">⌁</i>
+              <div>
+                <b id="roomTitle">No active session</b
+                ><small id="roomSubtitle"
+                  >Create or join a multiplayer session</small
+                >
+              </div>
               <button
-                type="button"
-                id="multiplayerShare"
-                aria-label="Show multiplayer join QR code"
+                class="round"
+                id="sessionManage"
+                aria-label="Manage multiplayer session"
               >
-                <span aria-hidden="true">▦</span> Join QR
-              </button>
-              <button id="exitMultiplayer" aria-label="Leave party">
-                Leave party
+                →
               </button>
             </div>
-          </div>
-          <div class="room" id="sessionCard">
-            <i aria-hidden="true">⌁</i>
-            <div>
-              <b id="roomTitle">No active session</b
-              ><small id="roomSubtitle"
-                >Create or join a multiplayer session</small
-              >
-            </div>
-            <button
-              class="round"
-              id="sessionManage"
-              aria-label="Manage multiplayer session"
-            >
-              →
-            </button>
           </div>
         </section>
           <button class="party-panel" id="partyMode" type="button">
@@ -194,27 +195,6 @@
           </button>
 
         </div>
-        <div class="section-title home-achievements-heading">
-          <div>
-            <p class="eyebrow">Tiny wins, big energy</p>
-            <h2>Recent achievements</h2>
-          </div>
-          <button data-screen="achievementsScreen">See all →</button>
-        </div>
-        <div class="chips home-achievements">
-          <article>
-            <strong>✦</strong><b>Long haul</b><small>10+ letter word</small>
-          </article>
-          <article>
-            <strong>◌</strong><b>Speed demon</b><small>20 words in 60s</small>
-          </article>
-          <article>
-            <strong>♢</strong><b>Grid master</b><small>Win on 8×8</small>
-          </article>
-        </div>
-        <footer class="site-footer">
-          Wordrush is a fast, free online word game for solo play and multiplayer word battles.
-        </footer>
       </section>
       <section class="screen round-intro-screen" id="roundIntroScreen">
         <div class="intro-orbit" aria-hidden="true">
@@ -433,6 +413,7 @@
           ✦<small>Progress</small>
         </button>
       </nav>
+      <div data-site-footer></div>
       <dialog id="multiplayerDialog">
         <form method="dialog" id="multiplayerForm">
           <div class="dialog-head">
@@ -777,5 +758,6 @@
     <script src="leaderboard-client.js"></script>
     <script src="random-rush.js"></script>
     <script src="results.js"></script>
+    <script src="site-footer.js"></script>
   </body>
 </html>

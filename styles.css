@@ -507,14 +507,15 @@ nav small {
 }
 .hero-art .avatar {
   position: absolute;
-  top: 4px;
+  top: 50%;
   right: 8px;
   z-index: 1;
-  width: 32px;
-  height: 32px;
+  width: 38px;
+  height: 38px;
   border: 2px solid #fff9f0;
   box-shadow: 0 3px 0 #211a36;
   font-size: 18px;
+  transform: translateY(-50%);
 }
 .hero-art .avatar:focus-visible {
   outline: 3px solid var(--lime);
@@ -676,7 +677,7 @@ nav small {
   .hero-art { gap: 3px; padding-right: 44px; }
   .hero-art span { width: 28px; height: 38px; font-size: 18px; }
   .hero-art b { width: 24px; height: 24px; font-size: 13px; }
-  .hero-art .avatar { top: 4px; right: 6px; width: 28px; height: 28px; font-size: 16px; }
+  .hero-art .avatar { top: 50%; right: 6px; width: 34px; height: 34px; font-size: 16px; }
   .game-mode-card { min-height: 80px; padding: 12px; }
   .game-mode-card > span { width: 34px; font-size: 27px; }
   .game-mode-card strong { font-size: 14px; }

@@ -217,6 +217,60 @@ test("mobile play board stays within its available space on short screens", asyn
   await browser.close();
 });
 
+test("home friends panel starts collapsed and expands on touch", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(baseUrl);
+
+    assert.equal(await page.locator("#friendsPanel").evaluate((panel) => panel.open), false);
+    assert.equal((await page.locator("#friendsHeading").textContent()).trim(), "Play with friends");
+    assert.equal(await page.locator("#sessionCard").isHidden(), true);
+    assert.doesNotMatch(await page.locator("#friendsPanel").textContent(), /LIVE TOGETHER/);
+
+    await page.locator("#friendsHeading").click();
+    assert.equal(await page.locator("#friendsPanel").evaluate((panel) => panel.open), true);
+    assert.equal(await page.locator("#sessionCard").isVisible(), true);
+    assert.equal(await page.locator("#scoreboardButton").isVisible(), true);
+
+    await page.locator("#friendsHeading").click();
+    assert.equal(await page.locator("#friendsPanel").evaluate((panel) => panel.open), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("shared footer follows colorful navigation on Home, Stats, and Progress", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(baseUrl);
+    await page.waitForSelector(".site-footer");
+
+    assert.equal(await page.locator("nav button").count(), 3);
+    assert.equal(await page.locator(".home-achievements").count(), 0);
+    assert.match(
+      await page.locator(".site-footer").textContent(),
+      /Wordrush is a fast, free online word game/,
+    );
+
+    const footerFollowsNav = await page.evaluate(() => {
+      const nav = document.querySelector("nav").getBoundingClientRect();
+      const footer = document.querySelector(".site-footer").getBoundingClientRect();
+      return footer.top >= nav.bottom;
+    });
+    assert.equal(footerFollowsNav, true);
+
+    for (const screen of ["statsScreen", "achievementsScreen"]) {
+      await page.locator(`nav button[data-screen="${screen}"]`).click();
+      await page.waitForSelector(`#${screen}.active`);
+      assert.equal(await page.locator(".site-footer").isVisible(), true);
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
 test("Daily Rush freezes one shared board and offers a friend challenge link", async (t) => {
   const browser = await chromium.launch({ headless: true, executablePath });
   t.after(() => browser.close());
@@ -370,6 +424,21 @@ test("browser can start, play, persist stats, and use the tile-banner profile bu
     });
   });
   assert.equal(heroAvatarOverlapsTile, false);
+  const heroAvatarAlignment = await page.evaluate(() => {
+    const avatar = document.querySelector("#profileButton").getBoundingClientRect();
+    const tiles = [...document.querySelectorAll(".hero-art > span, .hero-art > b")];
+    const tileCenters = tiles.map((tile) => {
+      const box = tile.getBoundingClientRect();
+      return box.top + box.height / 2;
+    });
+    const tileCenter = tileCenters.reduce((sum, center) => sum + center, 0) / tileCenters.length;
+    return {
+      avatarHeight: avatar.height,
+      centerDistance: Math.abs(avatar.top + avatar.height / 2 - tileCenter),
+    };
+  });
+  assert.ok(heroAvatarAlignment.avatarHeight >= 34);
+  assert.ok(heroAvatarAlignment.centerDistance < 14);
   assert.deepEqual(errors, []);
   await browser.close();
 });
@@ -400,6 +469,7 @@ test("global scoreboard displays an authoritative multiplayer result and all per
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
+  await page.locator("#friendsHeading").click();
   await page.locator("#scoreboardButton").click();
   await page.waitForSelector("#scoreboardScreen.active");
   await page.waitForFunction(() => !document.querySelector("#scoreboardList").textContent.includes("Loading"));

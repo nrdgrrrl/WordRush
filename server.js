@@ -2705,6 +2705,8 @@ const server = http.createServer((req, res) => {
     "/leaderboard-client.js",
     "/random-rush.js",
     "/results.js",
+    "/site-footer.html",
+    "/site-footer.js",
   ]);
   if (
     !publicRootFiles.has(requested) &&
