@@ -598,25 +598,27 @@ html[data-theme="dark"] .reveal-word {
 .rush-next-round {
   display: flex;
   width: 100%;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  gap: 4px;
   margin: 14px 0 18px;
-  padding: 12px 14px;
+  padding: 14px 18px;
   border: 2px solid #2c1c37;
   border-radius: 15px;
   background: linear-gradient(110deg, #b7f5ff, #b9f2dc);
   color: #2c1c37;
   box-shadow: 0 4px 0 #2c1c37;
-  text-align: left;
+  text-align: center;
 }
 .rush-next-round[hidden] { display: none; }
 .rush-next-round:active { transform: translateY(3px); box-shadow: 0 1px 0 #2c1c37; }
-.rush-next-round > span:first-child { font-size: 1.7rem; }
-.rush-next-round > span:last-child { display: grid; gap: 2px; }
+.rush-next-round > span:first-child { font-size: 1.9rem; line-height: 1; }
+.rush-next-round > span:last-child { display: grid; justify-items: center; gap: 3px; }
 .rush-next-round b,
 .rush-next-round small { display: block; }
-.rush-next-round b { font-size: .9rem; }
-.rush-next-round small { font-weight: 800; }
+.rush-next-round b { font-size: 1rem; }
+.rush-next-round small { font-size: .72rem; font-weight: 800; }
 .sudden-death-explosion {
   position: fixed;
   z-index: 100;

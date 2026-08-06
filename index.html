@@ -233,9 +233,12 @@
             <p class="eyebrow" id="gameMode">Friday night grid</p>
             <h2 id="gameTitle">Round 01 · 4×4</h2>
           </div>
-          <b>•••</b>
         </div>
-        <div class="rule-banner" id="ruleBanner">Free play · 2 minutes</div>
+        <div class="rule-banner" id="ruleBanner">
+          <span id="ruleText">Free play · 2 minutes</span>
+          <span class="rule-divider" aria-hidden="true">·</span>
+          <span id="gameHint">Minimum 3 letters</span>
+        </div>
         <div class="game-meta">
           <div><small>TIME</small><strong id="timer">02:00</strong></div>
           <div><small>SCORE</small><strong id="gameScore">0</strong></div>
@@ -280,8 +283,7 @@
           <div class="grid" id="grid"></div>
         </div>
         <div class="game-foot">
-          <small id="gameHint">Minimum 3 letters</small
-          ><button id="gameCastButton" class="game-cast-button" type="button" data-cast-action hidden>📺 Re-cast TV</button
+          <button id="gameCastButton" class="game-cast-button" type="button" data-cast-action hidden>📺 Re-cast TV</button
           ><button id="stopRush" hidden>Stop rush</button
           ><button id="cancelSeries" class="secondary" type="button" hidden>End series</button
           ><button id="endGame">End round</button>

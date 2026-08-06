@@ -1037,7 +1037,7 @@ body:has(#gameScreen.active) .app-shell {
   padding: 6px;
 }
 .grid {
-  width: min(100%, calc(100svh - 410px), calc(100vw - 56px));
+  width: min(100%, calc(100svh - 420px), calc(100vw - 56px));
   height: auto;
   aspect-ratio: 1/1;
   flex: 0 0 auto;
@@ -1047,7 +1047,7 @@ body:has(#gameScreen.active) .app-shell {
 }
 @media (max-height: 650px) {
   .grid {
-    width: min(100%, calc(100svh - 370px), calc(100vw - 56px));
+    width: min(100%, calc(100svh - 380px), calc(100vw - 56px));
   }
 }
 .tile {
@@ -1477,9 +1477,41 @@ body:has(#gameScreen.active) .app-shell {
   font-size: 18px;
 }
 #gameScreen.active .rule-banner {
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding-inline: 12px;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.1;
+  text-align: center;
+  white-space: nowrap;
   padding-block: 9px;
   margin-block: 12px 10px;
+}
+#gameScreen.active .rule-banner > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#gameScreen.active .rule-divider {
+  flex: none;
+  color: var(--coral);
+}
+#gameScreen.active #gameHint {
+  font-size: inherit;
+}
+#gameScreen.active .preview {
+  transition: opacity .22s ease, transform .22s ease;
+}
+#gameScreen.active .preview.is-tracing {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+#gameScreen.active .game-foot {
+  min-height: 28px;
 }
 #gameScreen.active .game-meta {
   margin-block: 8px 7px;
@@ -1488,8 +1520,8 @@ body:has(#gameScreen.active) .app-shell {
   font-size: 32px;
 }
 #gameScreen.active .preview {
-  font-size: 24px;
-  height: 42px;
+  font-size: 18px;
+  height: 36px;
   margin-bottom: 7px;
 }
 @media (max-height: 650px) {
@@ -1504,16 +1536,12 @@ body:has(#gameScreen.active) .app-shell {
   #gameScreen.active .live-player b {
     font-size: 28px;
   }
-  #gameScreen.active .preview {
-    font-size: 21px;
-    height: 34px;
-  }
   #gameScreen.active .game-meta {
     margin-block: 5px;
   }
   #gameScreen.active .preview {
-    height: 34px;
-    font-size: 21px;
+    height: 30px;
+    font-size: 18px;
     margin-bottom: 4px;
   }
 }

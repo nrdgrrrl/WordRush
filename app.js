@@ -1490,7 +1490,7 @@ async function start(
     : s.relayChallenge
       ? "Word Relay · turn " + (s.relayChallenge.state.turns + 1)
     : "Round 01 · " + s.n + "×" + s.n;
-  $("#ruleBanner").textContent = config.rule;
+  $("#ruleText").textContent = config.rule;
   $("#gameHint").textContent = s.relayChallenge
     ? "Pass the final letter · minimum " + config.min
     : "Minimum " + config.min + " letters";
@@ -1893,6 +1893,7 @@ function pick(t) {
   if (!t || s.pick.includes(+t.dataset.i)) return;
   s.pick.push(+t.dataset.i);
   t.classList.add("selected");
+  $("#preview").classList.add("is-tracing");
   $("#preview").textContent = s.pick.map((i) => s.b[i]).join("");
 }
 function pulseWord(trace, className) {
@@ -2400,7 +2401,7 @@ window.wordrushOnlineRound = (
     ? "Round " + String(round.seriesRoundNumber || series.currentRoundNumber || 1).padStart(2, "0") +
       " of " + (series.totalRounds || 10) + " · " + round.size + "×" + round.size
     : "Round 01 \u00b7 " + round.size + "\u00d7" + round.size;
-  $("#ruleBanner").textContent = s.config.rule;
+  $("#ruleText").textContent = s.config.rule;
   $("#gameHint").textContent = "Minimum " + s.config.min + " letters";
   clearInterval(s.timer);
   render();
@@ -2723,6 +2724,7 @@ function clearPick(immediate = false) {
       .querySelectorAll(".selected")
       .forEach((x) => x.classList.remove("selected"));
     s.pick = [];
+    $("#preview")?.classList.remove("is-tracing");
     selectionClearTimer = null;
   };
   if (immediate || s.drag) {

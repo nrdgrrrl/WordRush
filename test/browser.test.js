@@ -201,6 +201,31 @@ test("mobile play board stays within its available space on short screens", asyn
     await page.goto(baseUrl);
     await startClassic(page);
     assert.equal(await page.locator("#chainStatus").isHidden(), true);
+    const gameCopy = await page.evaluate(() => {
+      const rule = document.querySelector("#ruleText").getBoundingClientRect();
+      const hint = document.querySelector("#gameHint").getBoundingClientRect();
+      const ruleSize = getComputedStyle(document.querySelector("#ruleText")).fontSize;
+      const hintSize = getComputedStyle(document.querySelector("#gameHint")).fontSize;
+      const scoreSize = getComputedStyle(document.querySelector("#gameScore")).fontSize;
+      return {
+        ruleTop: rule.top,
+        hintTop: hint.top,
+        ruleSize,
+        hintSize,
+        scoreSize,
+        menuCount: document.querySelectorAll(".game-head > b").length,
+      };
+    });
+    assert.ok(Math.abs(gameCopy.ruleTop - gameCopy.hintTop) < 1);
+    assert.equal(gameCopy.ruleSize, gameCopy.hintSize);
+    assert.ok(parseFloat(gameCopy.ruleSize) < parseFloat(gameCopy.scoreSize));
+    assert.equal(gameCopy.menuCount, 0);
+    const firstTile = await page.locator(".tile").first().boundingBox();
+    await page.mouse.move(firstTile.x + firstTile.width / 2, firstTile.y + firstTile.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator("#preview").evaluate((node) => getComputedStyle(node).opacity), "0");
+    await page.mouse.up();
     await page.evaluate(() => {
       const status = document.querySelector("#chainStatus");
       const guidance = document.querySelector("#chainGuidance");
@@ -704,6 +729,11 @@ test("random rush owns results continuation and stops on navigation", async (t) 
     await page.locator("#rushNextRoundCountdown").textContent(),
     /^Starts in 5s · tap to start now$/,
   );
+  const nextRoundStyle = await page.locator("#rushNextRound").evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { flexDirection: style.flexDirection, textAlign: style.textAlign };
+  });
+  assert.deepEqual(nextRoundStyle, { flexDirection: "column", textAlign: "center" });
   const homeAutoAdvances = await countRushAction("auto_advance");
   await page.locator('#resultsScreen [data-screen="homeScreen"]').click();
   await page.waitForSelector("#homeScreen.active");
