@@ -267,6 +267,9 @@ test("home friends panel starts collapsed and expands on touch", async () => {
     assert.equal(await page.locator("#friendsPanel").evaluate((panel) => panel.open), true);
     assert.equal(await page.locator("#sessionCard").isVisible(), true);
     assert.equal(await page.locator("#scoreboardButton").isVisible(), true);
+    await page.locator("#sessionCard").click();
+    await page.waitForSelector("#multiplayerDialog[open]");
+    await page.locator('#multiplayerDialog button[value="cancel"]').click();
 
     await page.locator("#friendsHeading").click();
     assert.equal(await page.locator("#friendsPanel").evaluate((panel) => panel.open), false);
@@ -943,11 +946,17 @@ test("room recovers after consent cancellation and starts classic", async () => 
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   await openFriendsPanel(page);
-  await page.locator("#sessionManage").click();
+  await page.locator("#sessionCard").click();
   await page.locator("#sessionCreate").click();
   await page.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
   );
+  const qrLayout = await page.evaluate(() => {
+    const qr = document.querySelector("#sessionQr").getBoundingClientRect();
+    const invite = document.querySelector("#sessionInvite").getBoundingClientRect();
+    return { qrWidth: qr.width, inviteWidth: invite.width };
+  });
+  assert.ok(qrLayout.qrWidth >= qrLayout.inviteWidth - 8);
   await page.locator('#multiplayerDialog button[value="cancel"]').click();
   await page.evaluate(() => {
     window.__sentMessages = [];
@@ -992,7 +1001,7 @@ test("late join during consent sees pre-admission panel", async () => {
   const guestPage = await guest.newPage({ viewport: { width: 390, height: 844 } });
   await Promise.all([hostPage.goto(baseUrl), guestPage.goto(baseUrl)]);
   await openFriendsPanel(hostPage);
-  await hostPage.locator("#sessionManage").click();
+  await hostPage.locator("#sessionCard").click();
   await hostPage.locator("#sessionCreate").click();
   await hostPage.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
@@ -1010,7 +1019,7 @@ test("late join during consent sees pre-admission panel", async () => {
     false,
   );
   await openFriendsPanel(guestPage);
-  await guestPage.locator("#sessionManage").click();
+  await guestPage.locator("#sessionCard").click();
   guestPage.once("dialog", (dialog) => dialog.accept(code));
   await guestPage.locator("#sessionJoin").click();
   const prePanelVisible = await guestPage.locator("#preAdmissionPanel").evaluate((node) => !node.hidden);
@@ -1209,7 +1218,7 @@ test("two-player lobby synchronizes roles and guest exit leaves the host room op
   const guest = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await host.goto(baseUrl);
   await openFriendsPanel(host);
-  await host.locator("#sessionManage").click();
+  await host.locator("#sessionCard").click();
   await host.locator("#sessionCreate").click();
   await host.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
@@ -1271,7 +1280,7 @@ test("host ending a round and closing an active session synchronizes every playe
   await host.goto(baseUrl);
   await guest.goto(baseUrl);
   await openFriendsPanel(host);
-  await host.locator("#sessionManage").click();
+  await host.locator("#sessionCard").click();
   await host.locator("#sessionCreate").click();
   await host.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
@@ -1392,7 +1401,7 @@ test("multiplayer session reconnects when its socket is lost", async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   await openFriendsPanel(page);
-  await page.locator("#sessionManage").click();
+  await page.locator("#sessionCard").click();
   assert.equal(
     await page
       .locator("#multiplayerBanner")

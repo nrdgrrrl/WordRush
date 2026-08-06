@@ -305,7 +305,7 @@
   margin: 12px 0;
 }
 .session-invite img {
-  width: min(180px, 52vw);
+  width: min(340px, 100%);
   height: auto;
   padding: 6px;
   border: 2px solid #5b2d7f;

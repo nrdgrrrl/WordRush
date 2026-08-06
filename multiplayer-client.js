@@ -970,7 +970,12 @@
     socket.send(JSON.stringify({ type: "start_next_round", sourceRoundId }));
     return true;
   };
-  $("#sessionManage")?.addEventListener("click", () => sessionDialog());
+  $("#sessionCard")?.addEventListener("click", () => sessionDialog());
+  $("#sessionCard")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    sessionDialog();
+  });
   $("#sessionCreate")?.addEventListener("click", () => {
     trackMultiplayer("create_requested");
     localStorage.removeItem("wordrush-room");

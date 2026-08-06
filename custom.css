@@ -820,10 +820,15 @@ html[data-theme="dark"] #resultsScreen .achievement { color: #2c1c37; }
   box-shadow: 0 3px 0 #2c1c37;
 }
 .home-friends .room {
+  cursor: pointer;
   border: 2px dashed #dd5f58;
   border-radius: 14px;
   background: rgba(255, 255, 255, .62);
   padding: 11px;
+}
+.home-friends .room:focus-visible {
+  outline: 3px solid #f6c85f;
+  outline-offset: 3px;
 }
 .home-friends .room i {
   background: #f6c85f;

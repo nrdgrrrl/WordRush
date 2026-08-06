@@ -117,7 +117,13 @@
                 </button>
               </div>
             </div>
-            <div class="room" id="sessionCard">
+            <div
+              class="room"
+              id="sessionCard"
+              role="button"
+              tabindex="0"
+              aria-label="Manage multiplayer session"
+            >
               <i aria-hidden="true">⌁</i>
               <div>
                 <b id="roomTitle">No active session</b
@@ -125,13 +131,9 @@
                   >Create or join a multiplayer session</small
                 >
               </div>
-              <button
-                class="round"
-                id="sessionManage"
-                aria-label="Manage multiplayer session"
-              >
+              <span class="round" aria-hidden="true">
                 →
-              </button>
+              </span>
             </div>
           </div>
         </details>
