@@ -30,8 +30,9 @@
   const rerollButton = document.querySelector("#reroll");
   if (!choices.length || !panel || !rerollButton || typeof window.start !== "function") return;
   const render = () => {
-    document.querySelector("#randomPreview").textContent = selected.title;
-    document.querySelector("#randomPreviewSub").textContent = selected.sub;
+    document.querySelector("#randomPreview").textContent = "Different game every round";
+    document.querySelector("#randomPreviewSub").textContent =
+      "Random modes · next: " + selected.title;
   };
   const reroll = (event) => {
     event.stopPropagation();

@@ -298,6 +298,22 @@ test("shared footer follows colorful navigation on Home, Stats, and Progress", a
   }
 });
 
+test("Random Rush leads the game list and explains its rotating modes", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(baseUrl);
+    assert.equal(
+      await page.locator(".game-mode-stack > :first-child").getAttribute("id"),
+      "randomPanel",
+    );
+    assert.equal(await page.locator("#randomPreview").textContent(), "Different game every round");
+    assert.match(await page.locator("#randomPreviewSub").textContent(), /Random modes/);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("Daily Rush freezes one shared board and offers a friend challenge link", async (t) => {
   const browser = await chromium.launch({ headless: true, executablePath });
   t.after(() => browser.close());
