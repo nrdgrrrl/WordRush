@@ -764,7 +764,6 @@ test("random rush owns results continuation and stops on navigation", async (t) 
   await page.locator("#introStart").click();
   await page.waitForSelector("#gameScreen.active");
   assert.equal(await page.locator("#stopRush").isHidden(), true);
-  await browser.close();
 });
 
 test("solo submission commits stay ordered across deferred dictionary responses", async () => {
