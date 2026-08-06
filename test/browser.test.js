@@ -264,13 +264,14 @@ test("home friends panel starts collapsed and expands on touch", async () => {
         "#dailyChallenges",
         "#games",
         "nav button",
+        ".site-footer",
       ];
       const boxes = selectors.map((selector) =>
         document.querySelector(selector).getBoundingClientRect(),
       );
       return boxes.slice(1).map((box, index) => Math.round(box.top - boxes[index].bottom));
     });
-    assert.deepEqual(homeFlowGaps, [20, 20, 20, 20, 20]);
+    assert.deepEqual(homeFlowGaps, [20, 20, 20, 20, 20, 17]);
 
     await page.locator("#friendsHeading").click();
     assert.equal(await page.locator("#friendsPanel").evaluate((panel) => panel.open), true);

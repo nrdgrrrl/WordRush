@@ -954,6 +954,9 @@ nav small {
 body:has(#homeScreen.active) nav {
   margin-top: 6px;
 }
+body:has(#homeScreen.active) .site-footer {
+  margin-top: 19px;
+}
 .site-footer {
   display: none;
   margin: 14px 0 0;

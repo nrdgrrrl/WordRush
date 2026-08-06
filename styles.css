@@ -642,7 +642,7 @@ nav small {
 .mode-random.is-featured {
   min-height: 104px;
   border-width: 3px;
-  box-shadow: 0 8px 0 var(--mode-shadow);
+  box-shadow: 0 5px 0 var(--mode-shadow);
 }
 .mode-random.is-featured::before {
   content: "★ FEATURED";
