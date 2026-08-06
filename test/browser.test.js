@@ -31,6 +31,7 @@ const executablePath =
   "/home/victoria/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome";
 let baseUrl;
 async function startClassic(page) {
+  await openGamesPanel(page);
   await page.locator('button[data-mode="classic"]').click();
   await page.waitForSelector("#customDialog[open]");
   await page.locator("#customStart").click();
@@ -41,6 +42,17 @@ async function openFriendsPanel(page) {
   const panel = page.locator("#friendsPanel");
   if (!(await panel.evaluate((node) => node.open)))
     await page.locator("#friendsHeading").click();
+}
+async function openModeGroup(page, id) {
+  const panel = page.locator("#" + id);
+  if (!(await panel.evaluate((node) => node.open)))
+    await panel.locator(":scope > summary").click();
+}
+async function openGamesPanel(page) {
+  await openModeGroup(page, "games");
+}
+async function openDailyChallenges(page) {
+  await openModeGroup(page, "dailyChallenges");
 }
 async function startIntro(page) {
   await page.waitForFunction(() =>
@@ -60,6 +72,7 @@ async function traceWord(page, path) {
   await page.evaluate(() => Promise.resolve());
 }
 async function startSoloMode(page, mode) {
+  await openGamesPanel(page);
   await page.locator(`[data-mode="${mode}"]`).click();
   if (mode === "classic") {
     await page.waitForSelector("#customDialog[open]");
@@ -298,7 +311,7 @@ test("shared footer follows colorful navigation on Home, Stats, and Progress", a
   }
 });
 
-test("Random Rush leads the game list and explains its rotating modes", async () => {
+test("Random Rush leads grouped daily challenges and games", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   try {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -309,6 +322,21 @@ test("Random Rush leads the game list and explains its rotating modes", async ()
     );
     assert.equal(await page.locator("#randomPreview").textContent(), "Different game every round");
     assert.match(await page.locator("#randomPreviewSub").textContent(), /Random modes/);
+    assert.equal(await page.locator("#dailyChallenges").evaluate((node) => node.open), false);
+    assert.equal(await page.locator("#games").evaluate((node) => node.open), false);
+    assert.equal(await page.locator("#dailyRush").isHidden(), true);
+    assert.equal(await page.locator('[data-mode="classic"]').isHidden(), true);
+
+    await page.locator("#dailyChallenges > summary").click();
+    assert.equal(await page.locator("#dailyChallenges").evaluate((node) => node.open), true);
+    assert.equal(await page.locator("#dailyRush").isVisible(), true);
+    assert.equal(await page.locator('[data-mode="classic"]').isHidden(), true);
+    await page.locator("#dailyChallenges > summary").click();
+    assert.equal(await page.locator("#dailyChallenges").evaluate((node) => node.open), false);
+
+    await page.locator("#games > summary").click();
+    assert.equal(await page.locator("#games").evaluate((node) => node.open), true);
+    assert.equal(await page.locator('[data-mode="classic"]').isVisible(), true);
   } finally {
     await browser.close();
   }
@@ -319,6 +347,7 @@ test("Daily Rush freezes one shared board and offers a friend challenge link", a
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
+  await openDailyChallenges(page);
   await page.locator("#dailyRush").click();
   await page.waitForSelector("#roundIntroScreen.active");
   await page.locator("#introStart").click();
@@ -554,6 +583,7 @@ test("random rush owns results continuation and stops on navigation", async (t) 
     (await rushEvents()).filter((event) => event.name === name).length;
   const waitPastRushDelay = () => page.clock.fastForward(5100);
 
+  await openGamesPanel(page);
   await page.locator('button[data-mode="minimum"]').click();
   await page.waitForSelector("#roundIntroScreen.active");
   const startsBeforeLeave = await countEvents("round-started");
@@ -566,6 +596,7 @@ test("random rush owns results continuation and stops on navigation", async (t) 
 
   await page.locator('nav [data-screen="homeScreen"]').click();
   await page.waitForSelector("#homeScreen.active");
+  await openGamesPanel(page);
   const introsBeforeReplacement = await countEvents("round-intro");
   await page.locator('button[data-mode="minimum"]').click();
   await page.waitForFunction(
@@ -575,6 +606,7 @@ test("random rush owns results continuation and stops on navigation", async (t) 
     introsBeforeReplacement + 1,
   );
   await page.clock.fastForward(1000);
+  await openGamesPanel(page);
   await page.evaluate(() =>
     document.querySelector('button[data-mode="race"]').click(),
   );
@@ -596,6 +628,7 @@ test("random rush owns results continuation and stops on navigation", async (t) 
 
   await page.locator("#gameBack").click();
   await page.waitForSelector("#homeScreen.active");
+  await openGamesPanel(page);
   await page.locator('button[data-mode="minimum"]').click();
   await page.waitForSelector("#roundIntroScreen.active");
   const startsBeforeStartNow = await countEvents("round-started");
@@ -693,6 +726,7 @@ test("random rush owns results continuation and stops on navigation", async (t) 
   assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
   assert.equal(await page.locator("#gameScreen.active").count(), 0);
 
+  await openGamesPanel(page);
   await page.locator('button[data-mode="minimum"]').click();
   await page.waitForSelector("#roundIntroScreen.active");
   await page.locator("#introStart").click();
@@ -999,6 +1033,7 @@ test("solo dirty mode still works with confirmation dialog", async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
   page.on("dialog", (dialog) => dialog.accept());
+  await openGamesPanel(page);
   await page.locator('[data-mode="dirty"]').click();
   await startIntro(page);
   assert.equal(

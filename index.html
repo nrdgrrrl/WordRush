@@ -142,6 +142,11 @@
           <div class="game-mode-card mode-random is-featured" id="randomPanel" role="button" tabindex="0" aria-label="Start Random Rush">
             <span>🎲</span><div><small>RANDOM RUSH</small><strong id="randomPreview">Different game every round</strong><em id="randomPreviewSub">Random modes · new rules each time</em></div><button id="reroll" type="button" aria-label="Reroll Random Rush">↻</button>
           </div>
+          <details class="mode-group" id="dailyChallenges">
+            <summary class="mode-group-heading">
+              <span>Daily Challenges</span><b aria-hidden="true">＋</b>
+            </summary>
+            <div class="mode-group-list">
           <button class="game-mode-card mode-daily is-featured" id="dailyRush" type="button">
             <span>☀️</span><div><small>DAILY RUSH</small><strong>One board for everyone</strong><em>60 seconds · share a challenge</em></div><b>→</b>
           </button>
@@ -160,6 +165,13 @@
           <button class="game-mode-card mode-relay" id="wordRelay" type="button">
             <span>🔁</span><div><small>WORD RELAY</small><strong>Pass the chain onward</strong><em>One frozen board · share a turn</em></div><b>→</b>
           </button>
+            </div>
+          </details>
+          <details class="mode-group" id="games">
+            <summary class="mode-group-heading">
+              <span>Games</span><b aria-hidden="true">＋</b>
+            </summary>
+            <div class="mode-group-list">
           <button class="game-mode-card mode-classic" data-mode="classic">
             <span>🌈</span><div><small>CLASSIC</small><strong>Two minutes of word joy</strong><em>Free play · 4×4 grid</em></div><b>→</b>
           </button>
@@ -193,7 +205,8 @@
           <button class="game-mode-card mode-custom" id="customGame">
             <span>⚙️</span><div><small>CUSTOM GAME</small><strong>Make the rules yours</strong><em>Choose the grid, goal, and timer</em></div><b>→</b>
           </button>
-
+            </div>
+          </details>
         </div>
       </section>
       <section class="screen round-intro-screen" id="roundIntroScreen">

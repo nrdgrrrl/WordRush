@@ -25,6 +25,14 @@ async function startIntro(page) {
   await page.evaluate(() => document.querySelector("#introStart")?.click());
   await page.waitForSelector("#gameScreen.active");
 }
+async function openModeGroup(page, id) {
+  const panel = page.locator("#" + id);
+  if (!(await panel.evaluate((node) => node.open)))
+    await panel.locator(":scope > summary").click();
+}
+async function openGamesPanel(page) {
+  await openModeGroup(page, "games");
+}
 async function openFriendsPanel(page) {
   const panel = page.locator("#friendsPanel");
   if (!(await panel.evaluate((node) => node.open)))
@@ -160,9 +168,10 @@ test(
       "coop",
       "random",
     ]) {
-      if (mode === "minimum")
+      if (mode === "minimum") {
+        await openGamesPanel(host);
         await host.locator('#homeScreen [data-mode="minimum"]').click();
-      else {
+      } else {
         if (!firstRound) {
           await openFriendsPanel(host);
           await host.locator("#sessionManage").click();
