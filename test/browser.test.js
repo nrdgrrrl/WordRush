@@ -623,6 +623,49 @@ test("browser can start, play, persist stats, and use the tile-banner profile bu
   await browser.close();
 });
 
+test("signed-in provider button is disabled and greyed out", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const account = {
+    id: "acct_browser-google",
+    username: "GooglePlayer",
+    displayName: "Google Player",
+    avatar: "🐈",
+    stats: {},
+    needsUsername: false,
+    provider: "google",
+    providers: ["google", "facebook"],
+  };
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/migrate", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account }),
+  }));
+  await page.goto(baseUrl);
+  await page.locator("#profileButton").click();
+  await page.waitForSelector("#profileDialog[open]");
+  await page.waitForFunction(() => document.querySelector("#profileGoogle")?.disabled === true);
+  assert.equal(await page.locator("#profileGoogle").isVisible(), true);
+  assert.equal(await page.locator("#profileGoogle").isDisabled(), true);
+  assert.equal(await page.locator("#profileGoogle").getAttribute("aria-disabled"), "true");
+  assert.equal(
+    await page.locator("#profileGoogle").evaluate((node) => getComputedStyle(node).opacity),
+    "0.48",
+  );
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      facebookHidden: document.querySelector("#profileFacebook")?.hidden,
+    })),
+    { facebookHidden: true },
+  );
+});
+
 test("global scoreboard displays an authoritative multiplayer result and all periods", async () => {
   const host = await wsClient("browser-leaderboard-winner");
   const guest = await wsClient("browser-leaderboard-loser");

@@ -643,8 +643,17 @@ function updateAuthUI() {
         : "Your profile and stats are synced across devices."
       : "Save your username, avatar, and stats by continuing with a provider.";
   }
-  if (google) google.hidden = Boolean(account) || !authState.providers.includes("google");
-  if (facebook) facebook.hidden = Boolean(account) || !authState.providers.includes("facebook");
+  const updateProvider = (button, provider) => {
+    if (!button) return;
+    const connected = Boolean(account && account.provider === provider);
+    button.hidden = account ? !connected : !authState.providers.includes(provider);
+    button.disabled = connected;
+    button.setAttribute("aria-disabled", String(connected));
+    if (connected) button.title = "Already signed in with this provider";
+    else button.removeAttribute("title");
+  };
+  updateProvider(google, "google");
+  updateProvider(facebook, "facebook");
   if (logout) logout.hidden = !account;
   if (save) save.textContent = account ? "Save profile" : "Save guest profile";
   $("#profileProviderHint")?.toggleAttribute("hidden", !account);
