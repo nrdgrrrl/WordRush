@@ -136,7 +136,7 @@ async function resetSoloBrowserPage(page, fixture) {
     sessionStorage.setItem("wordrushBrowserBoardFixture", JSON.stringify(nextFixture));
     localStorage.clear();
   }, fixture);
-  await page.reload();
+  await page.goto(baseUrl);
   await page.evaluate(() => {
     window.__soloEvents = [];
     for (const name of ["word-accepted", "word-rejected"])
@@ -190,6 +190,43 @@ test.before(
     ),
 );
 test.after(() => new Promise((resolve) => server.close(resolve)));
+
+test("public routes update the URL and browser Back stays inside the app", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl + "/stats");
+  await page.waitForSelector("#statsScreen.active");
+  assert.equal(new URL(page.url()).pathname, "/stats");
+  assert.match(await page.title(), /Wordrush Stats/);
+  await page.locator('#statsScreen [data-screen="homeScreen"]').click();
+  await page.waitForSelector("#homeScreen.active");
+  assert.equal(new URL(page.url()).pathname, "/");
+
+  await openGamesPanel(page);
+  await page.locator('button[data-mode="blitz"]').click();
+  await page.waitForSelector("#roundIntroScreen.active");
+  assert.equal(new URL(page.url()).pathname, "/games/blitz");
+  await page.locator("#introStart").click();
+  await page.waitForSelector("#gameScreen.active");
+  await page.goBack();
+  await page.waitForFunction(
+    () => location.pathname === "/" && document.querySelector("#homeScreen.active"),
+  );
+  assert.equal(await page.locator("#gameScreen.active").count(), 0);
+
+  await page.goto(baseUrl + "/games/blitz");
+  await page.waitForSelector("#roundIntroScreen.active");
+  await page.locator("#introStart").click();
+  await page.waitForSelector("#gameScreen.active");
+  await page.goBack();
+  await page.waitForFunction(
+    () => location.pathname === "/" && document.querySelector("#homeScreen.active"),
+  );
+  await page.goto(baseUrl + "/multiplayer");
+  await page.waitForSelector("#multiplayerDialog[open]");
+  assert.equal(new URL(page.url()).pathname, "/multiplayer");
+  await browser.close();
+});
 
 test("mobile play board stays within its available space on short screens", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
@@ -584,6 +621,49 @@ test("browser can start, play, persist stats, and use the tile-banner profile bu
   assert.ok(heroAvatarAlignment.centerDistance < 14);
   assert.deepEqual(errors, []);
   await browser.close();
+});
+
+test("signed-in provider button is disabled and greyed out", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const account = {
+    id: "acct_browser-google",
+    username: "GooglePlayer",
+    displayName: "Google Player",
+    avatar: "🐈",
+    stats: {},
+    needsUsername: false,
+    provider: "google",
+    providers: ["google", "facebook"],
+  };
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/migrate", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account }),
+  }));
+  await page.goto(baseUrl);
+  await page.locator("#profileButton").click();
+  await page.waitForSelector("#profileDialog[open]");
+  await page.waitForFunction(() => document.querySelector("#profileGoogle")?.disabled === true);
+  assert.equal(await page.locator("#profileGoogle").isVisible(), true);
+  assert.equal(await page.locator("#profileGoogle").isDisabled(), true);
+  assert.equal(await page.locator("#profileGoogle").getAttribute("aria-disabled"), "true");
+  assert.equal(
+    await page.locator("#profileGoogle").evaluate((node) => getComputedStyle(node).opacity),
+    "0.48",
+  );
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      facebookHidden: document.querySelector("#profileFacebook")?.hidden,
+    })),
+    { facebookHidden: true },
+  );
 });
 
 test("global scoreboard displays an authoritative multiplayer result and all periods", async () => {

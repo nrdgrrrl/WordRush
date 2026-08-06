@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { EMOJI_AVATARS, isAvatar } = require("./account-store");
 
 const SCHEMA_VERSION = 2;
 const TRUST_MODEL = "authoritative-multiplayer-only";
@@ -24,6 +25,12 @@ function weekKey(date = new Date()) {
 function clean(value, fallback, max = 20) {
   const cleaned = String(value ?? fallback).replace(/[\u0000-\u001f\u007f]/g, "").trim();
   return Array.from(cleaned || fallback).slice(0, max).join("");
+}
+function cleanAvatar(value, fallback = "🐈") {
+  if (isAvatar(value)) return value;
+  const emoji = EMOJI_AVATARS.find((candidate) => String(value || "").startsWith(candidate));
+  if (emoji) return emoji;
+  return isAvatar(fallback) ? fallback : "🐈";
 }
 function bodyBoolean(value) {
   return value === true || value === 1 || value === "1" || value === "true";
@@ -130,7 +137,7 @@ class Leaderboard {
     player.multiplayerWins ||= 0;
     player.multiplayerLosses ||= 0;
     player.name = clean(name, player.name || "Guest");
-    player.avatar = clean(avatar, player.avatar || "🐈", 2);
+    player.avatar = cleanAvatar(avatar, player.avatar || "🐈");
     const limits = { score: 1000000, words: 10000, correct: 10000, incorrect: 10000, longest: 100, totalWordLength: 100000, gameSeconds: 600 };
     const values = { score, words, correct, incorrect, longest, totalWordLength, gameSeconds };
     for (const [key, value] of Object.entries(values)) values[key] = Math.min(limits[key], Math.max(0, Number(value) || 0));

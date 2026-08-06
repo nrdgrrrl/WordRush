@@ -23,6 +23,13 @@ const $ = (s) => document.querySelector(s),
   suddenDeathSeries = window.WordrushSuddenDeathSeries,
   challengeRules = window.WordrushChallengeRules;
 let customAdult = false;
+const localGuestId =
+  localStorage.getItem("wordrush-guest-id") ||
+  (crypto.randomUUID
+    ? crypto.randomUUID()
+    : "guest-" + Math.random().toString(36).slice(2));
+localStorage.setItem("wordrush-guest-id", localGuestId);
+window.wordrushGuestId = localGuestId;
 function emit(name, detail = {}) {
   document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
 }
@@ -386,6 +393,7 @@ const profile = (() => {
       {
         name: "",
         avatar: "🐈",
+        accountId: "",
         score: 0,
         words: 0,
         streak: 0,
@@ -412,6 +420,7 @@ const profile = (() => {
     return {
       name: "",
       avatar: "🐈",
+      accountId: "",
       score: 0,
       words: 0,
       streak: 0,
@@ -453,9 +462,36 @@ profile.multiplayerWordRounds = multiplayerWordReconciliation.normalizeRoundReco
 profile.name = typeof profile.name === "string" ? profile.name.slice(0, 20) : "";
 if (!profile.name || profile.name === "Jordan")
   profile.name = randomGuestName();
-if (!avatarOptions.includes(profile.avatar)) profile.avatar = "🐈";
+function isProfileAvatar(value) {
+  if (avatarOptions.includes(value)) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" &&
+      ["googleusercontent.com", "facebook.com", "fbcdn.net", "fbsbx.com"].some(
+        (host) => url.hostname === host || url.hostname.endsWith("." + host),
+      );
+  } catch {
+    return false;
+  }
+}
+if (!isProfileAvatar(profile.avatar)) profile.avatar = "🐈";
+function renderAvatar(target, value, fallback = "🐈") {
+  if (!target) return;
+  const avatar = isProfileAvatar(value) ? value : fallback;
+  target.replaceChildren();
+  if (avatar.startsWith("https://")) {
+    const image = document.createElement("img");
+    image.src = avatar;
+    image.alt = "";
+    image.referrerPolicy = "no-referrer";
+    target.append(image);
+  } else target.textContent = avatar;
+}
+window.wordrushRenderAvatar = renderAvatar;
+window.wordrushAvatarLabel = (value, fallback = "🐈") =>
+  isProfileAvatar(value) ? (String(value).startsWith("https://") ? "👤" : value) : fallback;
 function updateIdentity() {
-  if ($("#profileButton")) $("#profileButton").textContent = profile.avatar;
+  renderAvatar($("#profileButton"), profile.avatar);
   if ($("#profileName")) $("#profileName").value = profile.name;
   document
     .querySelectorAll("[data-avatar]")
@@ -470,7 +506,205 @@ function updateIdentity() {
     avatar: profile.avatar,
   });
 }
-function updateProfile() {
+const authState = {
+  loaded: false,
+  account: null,
+  providers: [],
+};
+let profileSyncBase = null;
+let profileSyncEvents = [];
+let profileSyncInFlight = false;
+let profileSyncSequence = 0;
+function profileStatsSnapshot() {
+  return {
+    score: profile.score,
+    words: profile.words,
+    streak: profile.streak,
+    longest: profile.longest,
+    rounds: profile.rounds,
+    correct: profile.correct,
+    incorrect: profile.incorrect,
+    totalWordLength: profile.totalWordLength,
+    totalGameSeconds: profile.totalGameSeconds,
+    gamesWon: profile.gamesWon,
+    gamesLost: profile.gamesLost,
+    multiplayerWins: profile.multiplayerWins,
+    multiplayerLosses: profile.multiplayerLosses,
+    maxGridWin: profile.maxGridWin,
+    speedAchievement: profile.speedAchievement === true,
+    days: [...(profile.days || [])],
+    completedMultiplayerRounds: [...(profile.completedMultiplayerRounds || [])],
+    multiplayerWordRounds: (profile.multiplayerWordRounds || []).map((round) => ({
+      roundId: round.roundId,
+      words: [...(round.words || [])],
+    })),
+  };
+}
+function profileStatsDelta(current, base) {
+  const delta = {};
+  for (const key of [
+    "score", "words", "rounds", "correct", "incorrect", "totalWordLength",
+    "totalGameSeconds", "gamesWon", "gamesLost", "multiplayerWins",
+    "multiplayerLosses",
+  ]) {
+    const change = (Number(current[key]) || 0) - (Number(base[key]) || 0);
+    if (change > 0) delta[key] = change;
+  }
+  if ((Number(current.longest) || 0) > (Number(base.longest) || 0))
+    delta.longest = current.longest;
+  if ((Number(current.maxGridWin) || 0) > (Number(base.maxGridWin) || 0))
+    delta.maxGridWin = current.maxGridWin;
+  if (current.speedAchievement && !base.speedAchievement)
+    delta.speedAchievement = true;
+  for (const key of ["days", "completedMultiplayerRounds"]) {
+    const oldValues = new Set(base[key] || []);
+    const added = (current[key] || []).filter((value) => !oldValues.has(value));
+    if (added.length) delta[key] = added;
+  }
+  const oldRounds = new Map((base.multiplayerWordRounds || []).map((round) => [round.roundId, round]));
+  const addedRounds = (current.multiplayerWordRounds || []).map((round) => ({
+    roundId: round.roundId,
+    words: (round.words || []).filter((word) => !oldRounds.get(round.roundId)?.words?.includes(word)),
+  })).filter((round) => round.words.length);
+  if (addedRounds.length) delta.multiplayerWordRounds = addedRounds;
+  return delta;
+}
+function profileDeltaHasValues(delta) {
+  return Object.values(delta).some((value) =>
+    Array.isArray(value) ? value.length > 0 : value === true || Number(value) > 0,
+  );
+}
+function applyServerAccount(account, replaceStats = true) {
+  if (!account) return;
+  authState.account = account;
+  profile.accountId = account.id || "";
+  if (account.username) profile.name = account.username;
+  else if (account.displayName) profile.name = String(account.displayName).slice(0, 20);
+  if (isProfileAvatar(account.avatar)) profile.avatar = account.avatar;
+  if (replaceStats && account.stats && typeof account.stats === "object")
+    Object.assign(profile, account.stats);
+  profile.days = playStreak.normalizePlayDates(profile.days);
+  profile.completedMultiplayerRounds = Array.isArray(profile.completedMultiplayerRounds)
+    ? profile.completedMultiplayerRounds.filter((id) => typeof id === "string").slice(-50)
+    : [];
+  profile.multiplayerWordRounds = multiplayerWordReconciliation.normalizeRoundRecords(
+    profile.multiplayerWordRounds,
+  );
+  profileSyncBase = profileStatsSnapshot();
+  updateIdentity();
+  updateProfile({ sync: false });
+  window.wordrushIdentityChanged?.();
+}
+async function flushProfileEvents() {
+  if (profileSyncInFlight || !authState.account || !profileSyncEvents.length) return;
+  profileSyncInFlight = true;
+  const event = profileSyncEvents[0];
+  let failed = false;
+  try {
+    const response = await fetch("/api/profile/event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(event),
+    });
+    if (!response.ok) throw new Error("profile event failed");
+    profileSyncEvents.shift();
+  } catch {
+    failed = true;
+    setTimeout(() => flushProfileEvents(), 5000);
+  } finally {
+    profileSyncInFlight = false;
+    if (profileSyncEvents.length && !failed) setTimeout(() => flushProfileEvents(), 0);
+  }
+}
+function queueProfileSync() {
+  if (!authState.loaded || !authState.account || !profileSyncBase) return;
+  const current = profileStatsSnapshot();
+  const delta = profileStatsDelta(current, profileSyncBase);
+  if (!profileDeltaHasValues(delta)) return;
+  profileSyncBase = current;
+  profileSyncEvents.push({
+    eventId: localGuestId + ":" + Date.now() + ":" + (++profileSyncSequence),
+    delta,
+  });
+  void flushProfileEvents();
+}
+function updateAuthUI() {
+  const account = authState.account;
+  const status = $("#profileAuthStatus");
+  const google = $("#profileGoogle");
+  const facebook = $("#profileFacebook");
+  const logout = $("#profileLogout");
+  const save = $("#profileSave");
+  if (status) {
+    status.textContent = account
+      ? account.needsUsername
+        ? "Choose a unique username to finish your profile."
+        : "Your profile and stats are synced across devices."
+      : "Save your username, avatar, and stats by continuing with a provider.";
+  }
+  const updateProvider = (button, provider) => {
+    if (!button) return;
+    const connected = Boolean(account && account.provider === provider);
+    button.hidden = account ? !connected : !authState.providers.includes(provider);
+    button.disabled = connected;
+    button.setAttribute("aria-disabled", String(connected));
+    if (connected) button.title = "Already signed in with this provider";
+    else button.removeAttribute("title");
+  };
+  updateProvider(google, "google");
+  updateProvider(facebook, "facebook");
+  if (logout) logout.hidden = !account;
+  if (save) save.textContent = account ? "Save profile" : "Save guest profile";
+  $("#profileProviderHint")?.toggleAttribute("hidden", !account);
+}
+function friendlyAuthError(code) {
+  return {
+    USERNAME_LENGTH: "Use 3–20 characters for your username.",
+    USERNAME_CHARACTERS: "Use letters, numbers, spaces, hyphens, or underscores.",
+    USERNAME_BLOCKED: "That username contains a word we do not allow.",
+    USERNAME_TAKEN: "That username is already taken. Try another one.",
+    "provider-unavailable": "That sign-in option is not available right now.",
+  }[code] || "We could not save your profile. Try again.";
+}
+async function loadAuthProfile() {
+  try {
+    const response = await fetch("/api/auth/me", { credentials: "same-origin" });
+    const payload = await response.json();
+    authState.providers = Array.isArray(payload.providers) ? payload.providers : [];
+    if (payload.authenticated && payload.account) {
+      const migration = await fetch("/api/profile/migrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ guestId: localGuestId, profile: profileStatsSnapshot() }),
+      });
+      const migrated = migration.ok ? await migration.json() : null;
+      applyServerAccount(migrated?.account || payload.account);
+    } else {
+      authState.account = null;
+      updateAuthUI();
+    }
+  } catch {
+    authState.account = null;
+  } finally {
+    authState.loaded = true;
+    updateAuthUI();
+    const authResult = new URLSearchParams(location.search).get("auth");
+    if (authResult) {
+      const next = new URL(location.href);
+      next.searchParams.delete("auth");
+      history.replaceState(history.state, "", next.pathname + next.search + next.hash);
+      if (authResult === "signed-in" || authResult === "choose-username") {
+        $("#profileDialog")?.showModal();
+        if (authResult === "choose-username") $("#profileName")?.focus();
+      } else if (authResult !== "complete") {
+        toast("Sign-in could not be completed.");
+      }
+    }
+  }
+}
+function updateProfile({ sync = true } = {}) {
   profile.days = playStreak.normalizePlayDates(profile.days);
   profile.streak = playStreak.calculateCurrentStreak(profile.days);
   localStorage.setItem("wordrush-profile", JSON.stringify(profile));
@@ -480,6 +714,7 @@ function updateProfile() {
   if ($("#homeStreak")) $("#homeStreak").textContent = profile.streak;
   window.wordrushAchievementEvent?.(profile);
   window.wordrushStatsEvent?.();
+  if (sync) queueProfileSync();
 }
 function recordPlayDay() {
   const today = playStreak.localDateKey(new Date());
@@ -705,7 +940,9 @@ function renderResults(
     if (outcomeBadge) rank.dataset.outcome = outcomeBadge.toLowerCase();
     const identity = document.createElement("div");
     const name = document.createElement("b");
-    name.textContent = (player.avatar || "🐈") + " " + player.name;
+    name.textContent =
+      (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
+      " " + player.name;
     const wordCount = document.createElement("small");
     wordCount.textContent = series
       ? (Number(player.series?.strikes) || 0) +
@@ -814,7 +1051,9 @@ function renderHeroScores(
       const identity = document.createElement("span");
       identity.className = "result-score-identity";
       const name = document.createElement("b");
-      name.textContent = (player.avatar || "🐈") + " " + player.name;
+      name.textContent =
+        (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
+        " " + player.name;
       const status = document.createElement("small");
       status.textContent = skipped
         ? "SCORE"
@@ -920,7 +1159,9 @@ function renderSeriesStandings(series, target) {
       row.className = "series-standing" +
         (player.status === "withdrawn" ? " is-withdrawn" : "");
       const identity = document.createElement("span");
-      identity.textContent = (player.avatar || "🐈") + " " + player.name;
+      identity.textContent =
+        (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
+        " " + player.name;
       const status = document.createElement("small");
       status.textContent = player.status === "withdrawn"
         ? "WITHDRAWN"
@@ -1183,9 +1424,145 @@ function cancelSoloRushContinuation({ stop = true } = {}) {
     s.nextRushMode = null;
   }
 }
+const appRoutes = window.WordrushRoutes;
+let initialAppRoute = appRoutes.routeForPath(location.pathname) || appRoutes.HOME;
+window.wordrushInitialRoute = initialAppRoute;
+
+function updateRouteMetadata(pathname) {
+  const route = appRoutes.seoForPath(pathname);
+  document.title = route.title;
+  const description = document.querySelector('meta[name="description"]');
+  const canonical = document.querySelector('link[rel="canonical"]');
+  if (description) description.setAttribute("content", route.description);
+  if (canonical) canonical.setAttribute("href", new URL(route.path, location.origin).href);
+  for (const [selector, value] of [
+    ['meta[property="og:url"]', new URL(route.path, location.origin).href],
+    ['meta[property="og:title"]', route.title],
+    ['meta[property="og:description"]', route.description],
+    ['meta[name="twitter:title"]', route.title],
+    ['meta[name="twitter:description"]', route.description],
+  ]) {
+    const element = document.querySelector(selector);
+    if (element) element.setAttribute("content", value);
+  }
+}
+
+function writeAppRoute(pathname, { replace = false } = {}) {
+  const current = location.pathname + location.search + location.hash;
+  if (current !== pathname)
+    history[replace ? "replaceState" : "pushState"](
+      { wordrushRoute: pathname },
+      "",
+      pathname,
+    );
+  updateRouteMetadata(pathname.split("?")[0]);
+  document.dispatchEvent(new CustomEvent("wordrush:route-change", {
+    detail: appRoutes.seoForPath(pathname.split("?")[0]),
+  }));
+}
+
+function gameRoutePath(mode, { randomRush = false, config = null } = {}) {
+  return appRoutes.routeForMode(mode, { randomRush, config })?.path || "/games/custom";
+}
+
+function syncGameRoute(mode, { randomRush = false, config = null } = {}) {
+  let path = gameRoutePath(mode, { randomRush, config });
+  const params = new URLSearchParams(location.search);
+  const sharedKey = mode === "daily"
+    ? "challenge"
+    : mode === "relay"
+      ? "relay"
+      : null;
+  const sharedRef = sharedKey && params.get(sharedKey);
+  if (sharedRef && params.getAll(sharedKey).length === 1)
+    path += "?" + sharedKey + "=" + encodeURIComponent(sharedRef);
+  const current = appRoutes.routeForPath(location.pathname);
+  const replacingBuilder = current?.key === "custom" || current?.key === "party";
+  writeAppRoute(path, { replace: replacingBuilder });
+}
+
+function syncScreenRoute(id, currentScreen) {
+  if (id === "resultsScreen") return writeAppRoute("/", { replace: true });
+  const path = id === "homeScreen"
+    ? "/"
+    : id === "statsScreen"
+      ? "/stats"
+      : id === "achievementsScreen"
+        ? "/progress"
+        : null;
+  if (!path) return;
+  writeAppRoute(path, {
+    replace: id === "homeScreen" &&
+      ["roundIntroScreen", "gameScreen", "seriesTransitionScreen", "resultsScreen"].includes(currentScreen),
+  });
+}
+
+function abandonForRouteNavigation() {
+  const currentScreen = document.querySelector(".screen.active")?.id;
+  if (
+    ["roundIntroScreen", "gameScreen", "seriesTransitionScreen"].includes(currentScreen) &&
+    !s.onlineRoundKey
+  ) {
+    abandonActiveRound();
+    cancelSoloRushContinuation();
+  }
+}
+
+function launchAppRoute(route) {
+  if (route.kind === "page") {
+    show(route.screen, { routeMode: "none" });
+    return;
+  }
+  if (route.launcher === "random") return start(nextRandomMode(), null, false, true);
+  if (route.launcher === "daily") {
+    const ref = new URLSearchParams(location.search).get("challenge");
+    if (/^[A-Za-z0-9_-]{20,40}$/.test(ref || ""))
+      return requestSharedChallenge(ref)
+        .then((shared) => startDailyRush(shared))
+        .catch(() => toast("That challenge link is unavailable."));
+    return startDailyRush();
+  }
+  if (route.launcher === "echo") return startDailyRush(null, true);
+  if (route.launcher === "relay") {
+    const ref = new URLSearchParams(location.search).get("relay");
+    if (/^[A-Za-z0-9_-]{20,40}$/.test(ref || "")) return startWordRelay(ref);
+    return startWordRelay();
+  }
+  if (route.launcher === "party") return openParty();
+  if (route.launcher === "custom") return openRushBuilder();
+  if (route.launcher === "multiplayer") {
+    window.wordrushOpenMultiplayerRoute = true;
+    document.dispatchEvent(new CustomEvent("wordrush:open-multiplayer"));
+    return;
+  }
+  return start(route.mode);
+}
+
+function navigateAppRoute(route) {
+  const currentScreen = document.querySelector(".screen.active")?.id;
+  if (route.key !== "custom") $("#customDialog")?.close();
+  if (route.key !== "party") $("#partyDialog")?.close();
+  if (route.kind === "game") {
+    if (
+      ["roundIntroScreen", "gameScreen", "seriesTransitionScreen"].includes(currentScreen) &&
+      (route.path !== location.pathname || !s.onlineRoundKey)
+    )
+      abandonForRouteNavigation();
+    launchAppRoute(route);
+    return;
+  }
+  abandonForRouteNavigation();
+  show(route.screen, { routeMode: "none" });
+  document.dispatchEvent(new CustomEvent("wordrush:route-change", { detail: route }));
+}
+
 function show(
   id,
-  { preserveRushContinuation = false, preserveRoundIntro = false } = {},
+  {
+    preserveRushContinuation = false,
+    preserveRoundIntro = false,
+    routeMode = "auto",
+  } = {},
 ) {
   const currentScreen = document.querySelector(".screen.active")?.id;
   if (
@@ -1213,6 +1590,7 @@ function show(
     .forEach((button) =>
       button.classList.toggle("active", button.dataset.screen === id),
     );
+  if (routeMode !== "none") syncScreenRoute(id, currentScreen);
   emit("screen-change", { id });
 }
 let roundIntroTimer = 0;
@@ -1426,6 +1804,7 @@ async function start(
   customAdult = generationInputs.adultMode;
   s.mode = generationInputs.mode;
   s.rush = generationInputs.rush;
+  syncGameRoute(s.mode, { randomRush: s.rush, config: nextConfig });
   s.dailyChallenge = dailyChallenge
     ? {
         id: dailyChallenge.challenge.id,
@@ -1953,7 +2332,11 @@ function syncPartyOptions() {
     partyConfig.min + "+ letters · " + partyConfig.size + "×" + partyConfig.size +
     " · " + formatTimer(partyConfig.seconds);
 }
-function openParty() { syncPartyOptions(); $("#partyDialog").showModal(); }
+function openParty() {
+  writeAppRoute("/games/party-mode");
+  syncPartyOptions();
+  $("#partyDialog").showModal();
+}
 $("#partyMode").onclick = openParty;
 document.querySelectorAll("[data-party-size]").forEach((button) => button.onclick = () => { partyConfig.size = +button.dataset.partySize; syncPartyOptions(); });
 document.querySelectorAll("[data-party-min]").forEach((button) => button.onclick = () => { partyConfig.min = +button.dataset.partyMin; syncPartyOptions(); });
@@ -2136,6 +2519,7 @@ function syncRushBuilder() {
     " · " + formatTimer(rushBuilder.seconds);
 }
 function openRushBuilder(reset = false) {
+  writeAppRoute("/games/custom");
   if (reset)
     rushBuilder = { type: "classic", min: 3, size: 4, seconds: 120 };
   syncRushBuilder();
@@ -2211,9 +2595,48 @@ async function launchSharedRelayFromUrl() {
       !/^[A-Za-z0-9_-]{20,40}$/.test(refs[0])) return;
   await startWordRelay(refs[0]);
 }
-show("homeScreen");
-launchSharedChallengeFromUrl();
-launchSharedRelayFromUrl();
+function initializeAppRoute() {
+  const route = initialAppRoute;
+  const current = location.pathname + location.search + location.hash;
+  history.replaceState(
+    {
+      wordrushRoute: route.path,
+      ...(route.kind === "game" ? { wordrushInitialGameEntry: true } : {}),
+    },
+    "",
+    current,
+  );
+  updateRouteMetadata(location.pathname);
+  if (route.kind === "game") {
+    history.pushState(
+      { wordrushRoute: route.path, wordrushGameGuard: true },
+      "",
+      current,
+    );
+    launchAppRoute(route);
+  } else {
+    show(route.screen, { routeMode: "none" });
+    if (route.open === "multiplayer")
+      window.wordrushOpenMultiplayerRoute = true;
+  }
+}
+initializeAppRoute();
+if (initialAppRoute.kind !== "game") {
+  launchSharedChallengeFromUrl();
+  launchSharedRelayFromUrl();
+}
+window.addEventListener("popstate", (event) => {
+  const route = appRoutes.routeForPath(location.pathname) || appRoutes.HOME;
+  updateRouteMetadata(location.pathname);
+  if (event.state?.wordrushInitialGameEntry && route.kind === "game") {
+    abandonForRouteNavigation();
+    writeAppRoute("/", { replace: true });
+    show("homeScreen", { routeMode: "none" });
+    return;
+  }
+  navigateAppRoute(route);
+});
+$("#sessionCard")?.addEventListener("click", () => writeAppRoute("/multiplayer"));
 document.addEventListener("click", (event) => {
   const target = event.target.closest?.("[data-screen]");
   if (target) show(target.dataset.screen);
@@ -2404,6 +2827,7 @@ window.wordrushOnlineRound = (
     party: false,
   };
   customAdult = usesAdultLexicon(s.config);
+  syncGameRoute(s.mode, { randomRush: s.onlineRandomRush, config: s.config });
   document.body.dataset.mode = s.mode;
   s.n = round.size;
   s.b = round.board;
@@ -2686,16 +3110,61 @@ $("#avatarPicker")?.addEventListener("click", (event) => {
     .forEach((x) =>
       x.classList.toggle("chosen", x.dataset.avatar === profile.avatar),
     );
-  if ($("#profileButton")) $("#profileButton").textContent = profile.avatar;
+  renderAvatar($("#profileButton"), profile.avatar);
 });
-const saveProfile = () => {
+async function saveProfile(event) {
+  event.preventDefault();
   const name = $("#profileName").value.trim();
+  $("#profileError")?.replaceChildren();
+  if (authState.account) {
+    const saveButton = $("#profileSave");
+    if (saveButton) saveButton.disabled = true;
+    try {
+      const response = await fetch("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ username: name, avatar: profile.avatar }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || "PROFILE_UPDATE_FAILED");
+      applyServerAccount(payload.account, false);
+      $("#profileDialog")?.close();
+    } catch (error) {
+      const errorNode = $("#profileError");
+      if (errorNode) errorNode.textContent = friendlyAuthError(error.message);
+    } finally {
+      if (saveButton) saveButton.disabled = false;
+    }
+    return;
+  }
   if (name) profile.name = name;
   localStorage.setItem("wordrush-profile", JSON.stringify(profile));
   updateIdentity();
   window.wordrushIdentityChanged?.();
-};
+  $("#profileDialog")?.close();
+}
 $("#profileForm")?.addEventListener("submit", saveProfile);
+document.querySelectorAll("[data-auth-provider]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const provider = button.dataset.authProvider;
+    const returnTo = location.pathname + location.search + location.hash;
+    location.assign("/auth/" + provider + "?returnTo=" + encodeURIComponent(returnTo));
+  });
+});
+$("#profileLogout")?.addEventListener("click", async () => {
+  await fetch("/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+  authState.account = null;
+  profile.accountId = "";
+  profileSyncBase = null;
+  profileSyncEvents = [];
+  updateAuthUI();
+  updateIdentity();
+  updateProfile({ sync: false });
+  $("#profileDialog")?.close();
+  toast("Signed out. You can keep playing as a guest.");
+});
+void loadAuthProfile();
 let selectionClearTimer = null;
 function clearPick(immediate = false) {
   clearTimeout(selectionClearTimer);

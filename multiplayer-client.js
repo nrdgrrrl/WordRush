@@ -251,7 +251,9 @@
     const avatar = document.createElement("span");
     avatar.className = "player-avatar";
     avatar.setAttribute("aria-hidden", "true");
-    avatar.textContent = player.avatar || "🐈";
+    if (window.wordrushRenderAvatar)
+      window.wordrushRenderAvatar(avatar, player.avatar);
+    else avatar.textContent = player.avatar || "🐈";
     const name = document.createElement("span");
     name.className = "player-name";
     name.textContent = player.name;
@@ -272,7 +274,7 @@
             : participant.id === guestId
               ? "is-you"
               : "";
-          row.textContent = (participant.avatar || "🐈") + " " +
+          row.textContent = (window.wordrushAvatarLabel?.(participant.avatar) || participant.avatar || "🐈") + " " +
             participant.name + " · " +
             (participant.status === "withdrawn"
               ? "withdrawn"
@@ -1017,6 +1019,14 @@
     const saved = savedSession();
     if (saved) connect(saved);
   }
+  document.addEventListener("wordrush:route-change", ({ detail }) => {
+    const dialog = $("#multiplayerDialog");
+    if (!dialog) return;
+    if (detail?.key === "multiplayer") sessionDialog();
+    else if (dialog.open) sessionDialog(false);
+  });
+  document.addEventListener("wordrush:open-multiplayer", () => sessionDialog());
+  if (window.wordrushOpenMultiplayerRoute) sessionDialog();
   $("#multiplayerShare")?.addEventListener("click", () => {
     if (sessionCode) sessionDialog();
   });

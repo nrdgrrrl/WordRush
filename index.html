@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width,initial-scale=1,viewport-fit=cover"
     />
-    <title>Wordrush — Fast Multiplayer Word Game</title>
+    <title>Wordrush — Fast Online Word Game</title>
     <meta
       name="description"
       content="Play Wordrush, a fast online word game with solo challenges, Random Rush, and multiplayer word battles."
@@ -22,7 +22,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Wordrush" />
     <meta property="og:url" content="https://wordrush.party/" />
-    <meta property="og:title" content="Wordrush — Fast Multiplayer Word Game" />
+    <meta property="og:title" content="Wordrush — Fast Online Word Game" />
     <meta
       property="og:description"
       content="Play Wordrush, a fast online word game with solo challenges, Random Rush, and multiplayer word battles."
@@ -33,7 +33,7 @@
     <meta property="og:image:height" content="1024" />
     <meta property="og:image:alt" content="Wordrush word game board with playful cats" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Wordrush — Fast Multiplayer Word Game" />
+    <meta name="twitter:title" content="Wordrush — Fast Online Word Game" />
     <meta
       name="twitter:description"
       content="Play Wordrush, a fast online word game with solo challenges, Random Rush, and multiplayer word battles."
@@ -72,10 +72,10 @@
         ]
       }
     </script>
-    <link rel="stylesheet" href="styles.css" />
-    <link rel="stylesheet" href="stats.css" />
-    <link rel="stylesheet" href="custom.css" />
-    <link rel="stylesheet" href="multiplayer.css" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/stats.css" />
+    <link rel="stylesheet" href="/custom.css" />
+    <link rel="stylesheet" href="/multiplayer.css" />
   </head>
   <body>
     <main class="app-shell">
@@ -727,8 +727,19 @@
             </div>
             <button value="cancel" aria-label="Close">×</button>
           </div>
-          <label for="profileName">Display name</label
+          <p id="profileAuthStatus" class="profile-auth-status" role="status"></p>
+          <div class="profile-auth-actions">
+            <button type="button" class="profile-provider profile-google" id="profileGoogle" data-auth-provider="google">
+              <span aria-hidden="true">G</span> Continue with Google
+            </button>
+            <button type="button" class="profile-provider profile-facebook" id="profileFacebook" data-auth-provider="facebook">
+              <span aria-hidden="true">f</span> Continue with Facebook
+            </button>
+          </div>
+          <p id="profileProviderHint" class="profile-provider-hint" hidden>Your stats will follow this profile when you sign in on another device.</p>
+          <label for="profileName">Username</label
           ><input id="profileName" maxlength="20" autocomplete="nickname" />
+          <p id="profileError" class="profile-form-error" role="alert"></p>
           <p class="eyebrow avatar-label">Choose an avatar</p>
           <div class="avatar-picker" id="avatarPicker">
             <button type="button" data-avatar="🐈">🐈</button
@@ -738,7 +749,8 @@
             ><button type="button" data-avatar="🦄">🦄</button
             ><button type="button" data-avatar="🐙">🐙</button>
           </div>
-          <button class="primary dialog-save" value="save">Save profile</button>
+          <button class="primary dialog-save" id="profileSave" value="save">Save guest profile</button>
+          <button type="button" class="secondary profile-logout" id="profileLogout" hidden>Sign out</button>
         </form>
       </dialog>
     </main>
@@ -748,29 +760,30 @@
       <span id="suddenDeathExplosionDetail"></span>
     </div>
     <div id="toast"></div>
-    <script src="game-config.js"></script>
-    <script src="sudden-death-outcome.js"></script>
-    <script src="sudden-death-series.js"></script>
-    <script src="round-outcome.js"></script>
-    <script src="profile-migration.js"></script>
-    <script src="play-streak.js"></script>
-    <script src="multiplayer-result-state.js"></script>
-    <script src="multiplayer-word-reconciliation.js"></script>
-    <script src="multiplayer-player-presentation.js"></script>
-    <script src="cooperative-results.js"></script>
-    <script src="round-timing.js"></script>
-    <script src="challenge-rules.js"></script>
-    <script src="board-core.js"></script>
-    <script src="analytics.js"></script>
-    <script src="trace-geometry.js"></script>
-    <script src="app.js"></script>
-    <script src="stats.js"></script>
-    <script src="achievements.js"></script>
-    <script src="multiplayer-client.js"></script>
-    <script src="cast-sender.js"></script>
-    <script src="leaderboard-client.js"></script>
-    <script src="random-rush.js"></script>
-    <script src="results.js"></script>
-    <script src="site-footer.js"></script>
+    <script src="/site-routes.js"></script>
+    <script src="/game-config.js"></script>
+    <script src="/sudden-death-outcome.js"></script>
+    <script src="/sudden-death-series.js"></script>
+    <script src="/round-outcome.js"></script>
+    <script src="/profile-migration.js"></script>
+    <script src="/play-streak.js"></script>
+    <script src="/multiplayer-result-state.js"></script>
+    <script src="/multiplayer-word-reconciliation.js"></script>
+    <script src="/multiplayer-player-presentation.js"></script>
+    <script src="/cooperative-results.js"></script>
+    <script src="/round-timing.js"></script>
+    <script src="/challenge-rules.js"></script>
+    <script src="/board-core.js"></script>
+    <script src="/analytics.js"></script>
+    <script src="/trace-geometry.js"></script>
+    <script src="/app.js"></script>
+    <script src="/stats.js"></script>
+    <script src="/achievements.js"></script>
+    <script src="/multiplayer-client.js"></script>
+    <script src="/cast-sender.js"></script>
+    <script src="/leaderboard-client.js"></script>
+    <script src="/random-rush.js"></script>
+    <script src="/results.js"></script>
+    <script src="/site-footer.js"></script>
   </body>
 </html>

@@ -14,8 +14,9 @@ connected to the room.
   user and listens only on `127.0.0.1:8013`.
 - The application lives at `/home/victoria/sites/rush/wordrush`.
 - The release tree contains code and static assets only. Runtime state is stored
-  outside it at `/var/lib/wordrush/leaderboard.json` (and the analytics consent
-  file), so a standard Git release does not require live-file patching.
+  outside it at `/var/lib/wordrush/leaderboard.json`,
+  `/var/lib/wordrush/accounts.json`, and the analytics consent file, so a
+  standard Git release does not require live-file patching.
 - Runtime configuration lives in `/etc/wordrush/rush.env` and must remain
   `root:wordrush`, mode `0640`. Do not add it to Git or copy its contents into
   shell history, tickets, or logs.
@@ -28,6 +29,32 @@ connected to the room.
   artifact and manifest. The service validates that artifact at startup and
   refuses to start if it is missing or invalid. Runtime does not download or
   rebuild ESDB and does not depend on a host dictionary package.
+
+## User profiles and provider sign-in
+
+Profiles use the backend OAuth authorization-code flow. Configure provider
+credentials in `/etc/wordrush/rush.env`; never put client secrets in Git or the
+browser:
+
+```ini
+WORDRUSH_PUBLIC_ORIGIN=https://wordrush.party
+WORDRUSH_SESSION_SECRET=<long-random-secret>
+WORDRUSH_GOOGLE_CLIENT_ID=<google-client-id>
+WORDRUSH_GOOGLE_CLIENT_SECRET=<google-client-secret>
+WORDRUSH_FACEBOOK_APP_ID=<facebook-app-id>
+WORDRUSH_FACEBOOK_APP_SECRET=<facebook-app-secret>
+```
+
+Register these exact callback URLs with the providers:
+
+- `https://wordrush.party/auth/google/callback`
+- `https://wordrush.party/auth/facebook/callback`
+
+Either provider can be enabled independently by setting its two credentials.
+The server creates an account automatically after the provider callback; the
+player then chooses a unique, moderated username. Account stats are stored in
+`accounts.json` and the browser's existing guest profile is migrated once per
+device.
 
 ## Browser cache policy
 

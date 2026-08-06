@@ -41,6 +41,7 @@ test("production serves players without a main password", async (t) => {
     env: {
       ...process.env,
       NODE_ENV: "production",
+      WORDRUSH_SESSION_SECRET: "test-session-secret-for-auth-suite",
       HOST: "127.0.0.1",
       PORT: String(port),
       // A stale deployment variable must not bring the removed gate back.
@@ -61,6 +62,15 @@ test("production serves players without a main password", async (t) => {
   const castConfig = await fetch(origin + "/api/cast-config");
   assert.equal(castConfig.status, 200);
   assert.deepEqual(await castConfig.json(), { applicationId: "87810A91" });
+
+  const authConfig = await fetch(origin + "/api/auth/config");
+  assert.deepEqual(await authConfig.json(), { providers: [] });
+  const authMe = await fetch(origin + "/api/auth/me");
+  assert.deepEqual(await authMe.json(), {
+    authenticated: false,
+    account: null,
+    providers: [],
+  });
 
   const wordCheck = await fetch(origin + "/api/word-check?word=TEA");
   assert.equal(wordCheck.status, 200);
@@ -94,6 +104,7 @@ test("public production routes still enforce configured host and origin", async 
       NODE_ENV: "production",
       HOST: "127.0.0.1",
       PORT: String(port),
+      WORDRUSH_SESSION_SECRET: "test-session-secret-for-auth-suite",
       WORDRUSH_ALLOWED_ORIGINS: origin,
       WORDRUSH_ALLOWED_HOSTS: `127.0.0.1:${port}`,
     },

@@ -36,6 +36,14 @@ incompatible, or structurally invalid files are quarantined as an empty trusted
 view and are not overwritten during normal startup. Use the repository-owned
 reset command during a planned release when pre-release data may be discarded.
 
+User profiles use provider OAuth authorization-code callbacks. Provider client
+secrets stay in the root-owned runtime environment file, OAuth state expires
+after ten minutes, and authenticated sessions use a signed, HttpOnly,
+SameSite cookie with a configured production secret. Account state is stored
+outside the release tree in `/var/lib/wordrush/accounts.json`; profile stat
+migrations and stat events are authenticated and idempotent. Username updates
+are validated server-side for character rules, uniqueness, and blocked words.
+
 ## Configure the service
 
 Store runtime configuration in a root-readable environment file based on
