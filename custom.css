@@ -1011,3 +1011,38 @@ body:has(#achievementsScreen.active) .site-footer {
 @media (prefers-reduced-motion: no-preference) {
   .achievement-list article:hover { transform: translateY(-3px) rotate(0); }
 }
+
+#gameScreen.active .game-foot {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 56px;
+  padding: 8px 0 4px;
+}
+#gameScreen.active .game-foot .game-action-tile {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 6px;
+  border: 2px solid #2c1c37;
+  border-radius: 14px;
+  background: #b7f5ff;
+  color: #2c1c37;
+  box-shadow: 0 4px 0 #2c1c37;
+  font: 900 11px/1.05 monospace;
+  text-align: center;
+  text-transform: uppercase;
+}
+#gameScreen.active .game-foot .game-action-tile:hover,
+#gameScreen.active .game-foot .game-action-tile:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 0 #2c1c37;
+}
+#gameScreen.active .game-foot .game-action-tile:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #2c1c37;
+}
+#gameScreen.active .game-foot .game-action-rush { background: #c8f36a; }
+#gameScreen.active .game-foot .game-action-series { background: #e3c8ff; }
+#gameScreen.active .game-foot .game-action-round { background: #f7b2a8; }
+#gameScreen.active .game-foot .game-action-cast { background: #ffe278; }

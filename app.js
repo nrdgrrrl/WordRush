@@ -1494,8 +1494,11 @@ async function start(
   $("#timer").textContent = formatTimer(s.time);
   $("#stopRush").hidden = !s.rush;
   $("#endGame").hidden = true;
-  $("#endGame").textContent = "End round";
-  $("#endGame").setAttribute("aria-label", "End round");
+  $("#cancelSeries").hidden = true;
+  $("#cancelSeriesTransition").hidden = true;
+  $("#endGame").textContent = "End Round";
+  $("#endGame").setAttribute("aria-label", "End Round");
+  $("#endGame").setAttribute("title", "Finish this round and show results");
   $("#gameBack").setAttribute("aria-label", "Back to home");
   $("#stopRushResults").hidden = true;
   clearRushNextRound();

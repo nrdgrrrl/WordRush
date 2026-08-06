@@ -733,6 +733,24 @@ test("random rush owns results continuation and stops on navigation", async (t) 
 
   await page.locator("#randomPanel").click();
   await startIntro(page);
+  const gameActions = await page.evaluate(() => {
+    const foot = document.querySelector("#gameScreen .game-foot");
+    const buttons = [...foot.querySelectorAll("button:not([hidden])")];
+    const boxes = buttons.map((button) => button.getBoundingClientRect());
+    return {
+      labels: buttons.map((button) => button.textContent.trim()),
+      widths: boxes.map((box) => box.width),
+      heights: boxes.map((box) => box.height),
+      seriesHidden: document.querySelector("#cancelSeries").hidden,
+      columns: getComputedStyle(foot).gridTemplateColumns,
+    };
+  });
+  assert.deepEqual(gameActions.labels, ["End Rush", "End Round"]);
+  assert.ok(gameActions.seriesHidden);
+  assert.ok(gameActions.widths.every((width) => width >= 0));
+  assert.ok(Math.max(...gameActions.widths) - Math.min(...gameActions.widths) < 1);
+  assert.ok(gameActions.heights.every((height) => height >= 44));
+  assert.match(gameActions.columns, /\S+\s+\S+/);
   await page.locator("#gameBack").click();
   await page.waitForSelector("#homeScreen.active");
   const backAutoAdvances = await countRushAction("auto_advance");

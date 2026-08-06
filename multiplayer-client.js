@@ -232,8 +232,9 @@
     $("#sessionHostControls").hidden = true;
     $("#sessionType").disabled = false;
     $("#endGame").hidden = false;
-    $("#endGame").textContent = "End round";
-    $("#endGame").setAttribute("aria-label", "End round");
+    $("#endGame").textContent = "End Round";
+    $("#endGame").setAttribute("aria-label", "End Round");
+    $("#endGame").setAttribute("title", "Finish this round and show results");
     $("#cancelSeries").hidden = true;
     $("#cancelSeriesTransition").hidden = true;
     $("#gameBack").setAttribute("aria-label", "Back to home");
@@ -401,10 +402,16 @@
     $("#endGame").hidden = inSession
       ? !creator || !playing || Boolean(seriesInterstitial)
       : false;
-    $("#endGame").textContent = inSession ? "Skip round" : "End round";
+    $("#endGame").textContent = "End Round";
     $("#endGame").setAttribute(
       "aria-label",
-      inSession ? "Skip round" : "End round",
+      "End Round",
+    );
+    $("#endGame").setAttribute(
+      "title",
+      inSession
+        ? "End this round for everyone and show results"
+        : "Finish this round and show results",
     );
     $("#cancelSeries").hidden = !seriesPlaying;
     $("#cancelSeriesTransition").hidden = !seriesInterstitial;

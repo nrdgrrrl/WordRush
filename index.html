@@ -283,10 +283,10 @@
           <div class="grid" id="grid"></div>
         </div>
         <div class="game-foot">
-          <button id="gameCastButton" class="game-cast-button" type="button" data-cast-action hidden>📺 Re-cast TV</button
-          ><button id="stopRush" hidden>Stop rush</button
-          ><button id="cancelSeries" class="secondary" type="button" hidden>End series</button
-          ><button id="endGame">End round</button>
+          <button id="gameCastButton" class="game-action-tile game-action-cast game-cast-button" type="button" data-cast-action hidden>📺 Re-cast</button
+          ><button id="stopRush" class="game-action-tile game-action-rush" title="End Random Rush and return home" hidden>End Rush</button
+          ><button id="cancelSeries" class="game-action-tile game-action-series" type="button" title="End the Sudden Death Series and return to the room" hidden>End Series</button
+          ><button id="endGame" class="game-action-tile game-action-round" title="Finish this round and show results">End Round</button>
         </div>
       </section>
       <section class="screen" id="seriesTransitionScreen" aria-live="polite">
@@ -296,7 +296,7 @@
           <p class="series-transition-outcome" id="seriesTransitionOutcome"></p>
           <div class="series-standings" id="seriesTransitionStandings" aria-label="Series standings"></div>
           <p class="series-transition-next" id="seriesTransitionNext">Preparing the next board…</p>
-          <button id="cancelSeriesTransition" class="secondary" type="button" hidden>End series</button>
+          <button id="cancelSeriesTransition" class="secondary game-action-tile game-action-series" type="button" title="End the Sudden Death Series and return to the room" hidden>End Series</button>
         </div>
       </section>
       <section class="screen" id="resultsScreen">
@@ -361,7 +361,7 @@
         </section>
         <button class="primary" id="again">Play again →</button>
         <button class="secondary" id="exitParty" hidden>Exit party mode</button>
-        <button class="secondary" id="stopRushResults" hidden>Stop rush</button
+        <button class="secondary" id="stopRushResults" hidden>End Rush</button
         ><button class="secondary" data-screen="homeScreen">
           Back to home
         </button>
