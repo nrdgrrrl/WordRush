@@ -35,6 +35,12 @@ async function startClassic(page) {
   await page.waitForSelector("#customDialog[open]");
   await page.locator("#customStart").click();
   await page.locator("#introStart").click();
+  await page.waitForSelector("#gameScreen.active");
+}
+async function openFriendsPanel(page) {
+  const panel = page.locator("#friendsPanel");
+  if (!(await panel.evaluate((node) => node.open)))
+    await page.locator("#friendsHeading").click();
 }
 async function startIntro(page) {
   await page.waitForFunction(() =>
@@ -469,7 +475,7 @@ test("global scoreboard displays an authoritative multiplayer result and all per
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator("#friendsHeading").click();
+  await openFriendsPanel(page);
   await page.locator("#scoreboardButton").click();
   await page.waitForSelector("#scoreboardScreen.active");
   await page.waitForFunction(() => !document.querySelector("#scoreboardList").textContent.includes("Loading"));
@@ -836,6 +842,7 @@ test("room recovers after consent cancellation and starts classic", async () => 
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
+  await openFriendsPanel(page);
   await page.locator("#sessionManage").click();
   await page.locator("#sessionCreate").click();
   await page.waitForFunction(() =>
@@ -884,6 +891,7 @@ test("late join during consent sees pre-admission panel", async () => {
   const hostPage = await host.newPage({ viewport: { width: 390, height: 844 } });
   const guestPage = await guest.newPage({ viewport: { width: 390, height: 844 } });
   await Promise.all([hostPage.goto(baseUrl), guestPage.goto(baseUrl)]);
+  await openFriendsPanel(hostPage);
   await hostPage.locator("#sessionManage").click();
   await hostPage.locator("#sessionCreate").click();
   await hostPage.waitForFunction(() =>
@@ -901,6 +909,7 @@ test("late join during consent sees pre-admission panel", async () => {
       .evaluate((node) => node.classList.contains("active")),
     false,
   );
+  await openFriendsPanel(guestPage);
   await guestPage.locator("#sessionManage").click();
   guestPage.once("dialog", (dialog) => dialog.accept(code));
   await guestPage.locator("#sessionJoin").click();
@@ -1098,6 +1107,7 @@ test("two-player lobby synchronizes roles and guest exit leaves the host room op
   const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const guest = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await host.goto(baseUrl);
+  await openFriendsPanel(host);
   await host.locator("#sessionManage").click();
   await host.locator("#sessionCreate").click();
   await host.waitForFunction(() =>
@@ -1159,6 +1169,7 @@ test("host ending a round and closing an active session synchronizes every playe
   const guest = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await host.goto(baseUrl);
   await guest.goto(baseUrl);
+  await openFriendsPanel(host);
   await host.locator("#sessionManage").click();
   await host.locator("#sessionCreate").click();
   await host.waitForFunction(() =>
@@ -1233,6 +1244,7 @@ test("host ending a round and closing an active session synchronizes every playe
   });
   await guest.locator('nav [data-screen="homeScreen"]').click();
   await guest.waitForSelector("#homeScreen.active");
+  await openFriendsPanel(guest);
   await guest.locator("#resumeMultiplayer").click();
   await guest.waitForSelector("#roundIntroScreen.active");
   assert.equal(await guest.locator("#gameScreen.active").count(), 0);
@@ -1248,6 +1260,7 @@ test("host ending a round and closing an active session synchronizes every playe
   assert.equal(await guest.locator("#gameScreen.active").count(), 0);
   assert.deepEqual(await roundActivation(host), { starts: 1, intervals: 1 });
   assert.deepEqual(await roundActivation(guest), { starts: 1, intervals: 1 });
+  await openFriendsPanel(guest);
   await guest.locator("#resumeMultiplayer").click();
   await guest.waitForSelector("#gameScreen.active");
   const resumedTimer = await guest.locator("#timer").textContent();
@@ -1277,6 +1290,7 @@ test("multiplayer session reconnects when its socket is lost", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
+  await openFriendsPanel(page);
   await page.locator("#sessionManage").click();
   assert.equal(
     await page
