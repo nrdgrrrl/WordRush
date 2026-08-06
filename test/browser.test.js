@@ -336,7 +336,20 @@ test("Random Rush leads grouped daily challenges and games", async () => {
 
     await page.locator("#games > summary").click();
     assert.equal(await page.locator("#games").evaluate((node) => node.open), true);
+    assert.equal(await page.locator("#partyMode").isVisible(), true);
+    assert.equal(await page.locator("#partyMode").evaluate((node) => node.closest("details")?.id), "games");
     assert.equal(await page.locator('[data-mode="classic"]').isVisible(), true);
+
+    const navTiles = await page.locator("nav button").evaluateAll((buttons) =>
+      buttons.map((button) => ({
+        text: button.textContent.trim(),
+        background: getComputedStyle(button).backgroundImage,
+      })),
+    );
+    assert.deepEqual(navTiles.map(({ text }) => text), ["Home", "Stats", "Progress"]);
+    assert.match(navTiles[0].background, /assets\/nav\/home\.webp/);
+    assert.match(navTiles[1].background, /assets\/nav\/stats\.webp/);
+    assert.match(navTiles[2].background, /assets\/nav\/progress\.webp/);
   } finally {
     await browser.close();
   }
