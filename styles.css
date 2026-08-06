@@ -239,6 +239,9 @@ h2 {
   background: color-mix(in srgb, var(--paper) 88%, #b9f2dc);
   font: 11px monospace;
 }
+.chain-status[hidden] {
+  display: none;
+}
 .chain-status div {
   display: flex;
   justify-content: space-between;

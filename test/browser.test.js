@@ -181,6 +181,7 @@ test("mobile play board stays within its available space on short screens", asyn
     const page = await browser.newPage({ viewport });
     await page.goto(baseUrl);
     await startClassic(page);
+    assert.equal(await page.locator("#chainStatus").isHidden(), true);
     await page.evaluate(() => {
       const status = document.querySelector("#chainStatus");
       const guidance = document.querySelector("#chainGuidance");
@@ -226,6 +227,7 @@ test("Daily Rush freezes one shared board and offers a friend challenge link", a
   await page.locator("#introStart").click();
   await page.waitForSelector("#gameScreen.active");
   assert.equal(await page.locator(".tile").count(), 16);
+  assert.equal(await page.locator("#chainStatus").isHidden(), true);
   const board = await page.locator(".tile").allTextContents();
   assert.match(await page.locator("#gameTitle").textContent(), /^Daily Rush · \d{4}-\d{2}-\d{2}$/);
 
