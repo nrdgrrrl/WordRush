@@ -1291,6 +1291,11 @@ dialog::backdrop {
   font-weight: 700;
 }
 .profile-provider { display: flex; align-items: center; gap: 9px; }
+.profile-provider:disabled {
+  opacity: 0.48;
+  filter: grayscale(1);
+  cursor: not-allowed;
+}
 .profile-provider span {
   display: grid;
   place-items: center;
