@@ -727,8 +727,19 @@
             </div>
             <button value="cancel" aria-label="Close">×</button>
           </div>
-          <label for="profileName">Display name</label
+          <p id="profileAuthStatus" class="profile-auth-status" role="status"></p>
+          <div class="profile-auth-actions">
+            <button type="button" class="profile-provider profile-google" id="profileGoogle" data-auth-provider="google">
+              <span aria-hidden="true">G</span> Continue with Google
+            </button>
+            <button type="button" class="profile-provider profile-facebook" id="profileFacebook" data-auth-provider="facebook">
+              <span aria-hidden="true">f</span> Continue with Facebook
+            </button>
+          </div>
+          <p id="profileProviderHint" class="profile-provider-hint" hidden>Your stats will follow this profile when you sign in on another device.</p>
+          <label for="profileName">Username</label
           ><input id="profileName" maxlength="20" autocomplete="nickname" />
+          <p id="profileError" class="profile-form-error" role="alert"></p>
           <p class="eyebrow avatar-label">Choose an avatar</p>
           <div class="avatar-picker" id="avatarPicker">
             <button type="button" data-avatar="🐈">🐈</button
@@ -738,7 +749,8 @@
             ><button type="button" data-avatar="🦄">🦄</button
             ><button type="button" data-avatar="🐙">🐙</button>
           </div>
-          <button class="primary dialog-save" value="save">Save profile</button>
+          <button class="primary dialog-save" id="profileSave" value="save">Save guest profile</button>
+          <button type="button" class="secondary profile-logout" id="profileLogout" hidden>Sign out</button>
         </form>
       </dialog>
     </main>

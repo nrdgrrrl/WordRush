@@ -18,6 +18,10 @@ process.env.WORDRUSH_LEADERBOARD_FILE = path.join(
   fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-server-")),
   "leaderboard.json",
 );
+process.env.WORDRUSH_ACCOUNT_FILE = path.join(
+  fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-account-server-")),
+  "accounts.json",
+);
 process.env.WORDRUSH_ANALYTICS_CONSENT_FILE = path.join(
   fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-consent-")),
   "analytics-consent.json",
@@ -49,6 +53,8 @@ const {
   completeSuddenDeathSeries,
   randomRushModes,
   prunePreAdmissionChallenges,
+  accountStore,
+  createSessionToken,
 } = require("../server");
 function adultCustomConfig() {
   return {
@@ -333,6 +339,38 @@ test("serves SEO app routes and redirects transient game screens", async () => {
   assert.equal(transient.status, 302);
   assert.equal(transient.headers.get("location"), "/");
   assert.equal((await fetch(origin + "/games/not-a-game")).status, 404);
+});
+
+test("signed-in profile endpoints preserve usernames and idempotent stats", async () => {
+  const account = accountStore.ensureProviderAccount("google", "server-test-user", {
+    displayName: "Server Test User",
+  });
+  const cookie = "wordrush_session=" + createSessionToken(account.id);
+  const origin = "http://127.0.0.1:" + server.address().port;
+  const profile = await fetch(origin + "/api/profile", {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "ServerTester", avatar: "🐈" }),
+  });
+  assert.equal(profile.status, 200);
+  const migrate = () => fetch(origin + "/api/profile/migrate", {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ guestId: "server-guest", profile: { score: 10, words: 2 } }),
+  });
+  assert.equal((await (await migrate()).json()).account.stats.score, 10);
+  assert.equal((await (await migrate()).json()).account.stats.score, 10);
+  const event = () => fetch(origin + "/api/profile/event", {
+    method: "POST",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ eventId: "server-event", delta: { score: 5, words: 1 } }),
+  });
+  assert.equal((await (await event()).json()).account.stats.score, 15);
+  assert.equal((await (await event()).json()).account.stats.score, 15);
+  const me = await fetch(origin + "/api/auth/me", { headers: { Cookie: cookie } });
+  const mePayload = await me.json();
+  assert.equal(mePayload.account.username, "ServerTester");
+  assert.equal(mePayload.account.stats.score, 15);
 });
 
 test("a stale cached-client request still receives the current mutable script", async () => {

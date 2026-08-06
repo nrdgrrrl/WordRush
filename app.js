@@ -23,6 +23,13 @@ const $ = (s) => document.querySelector(s),
   suddenDeathSeries = window.WordrushSuddenDeathSeries,
   challengeRules = window.WordrushChallengeRules;
 let customAdult = false;
+const localGuestId =
+  localStorage.getItem("wordrush-guest-id") ||
+  (crypto.randomUUID
+    ? crypto.randomUUID()
+    : "guest-" + Math.random().toString(36).slice(2));
+localStorage.setItem("wordrush-guest-id", localGuestId);
+window.wordrushGuestId = localGuestId;
 function emit(name, detail = {}) {
   document.dispatchEvent(new CustomEvent("wordrush:" + name, { detail }));
 }
@@ -386,6 +393,7 @@ const profile = (() => {
       {
         name: "",
         avatar: "🐈",
+        accountId: "",
         score: 0,
         words: 0,
         streak: 0,
@@ -412,6 +420,7 @@ const profile = (() => {
     return {
       name: "",
       avatar: "🐈",
+      accountId: "",
       score: 0,
       words: 0,
       streak: 0,
@@ -453,9 +462,36 @@ profile.multiplayerWordRounds = multiplayerWordReconciliation.normalizeRoundReco
 profile.name = typeof profile.name === "string" ? profile.name.slice(0, 20) : "";
 if (!profile.name || profile.name === "Jordan")
   profile.name = randomGuestName();
-if (!avatarOptions.includes(profile.avatar)) profile.avatar = "🐈";
+function isProfileAvatar(value) {
+  if (avatarOptions.includes(value)) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" &&
+      ["googleusercontent.com", "facebook.com", "fbcdn.net", "fbsbx.com"].some(
+        (host) => url.hostname === host || url.hostname.endsWith("." + host),
+      );
+  } catch {
+    return false;
+  }
+}
+if (!isProfileAvatar(profile.avatar)) profile.avatar = "🐈";
+function renderAvatar(target, value, fallback = "🐈") {
+  if (!target) return;
+  const avatar = isProfileAvatar(value) ? value : fallback;
+  target.replaceChildren();
+  if (avatar.startsWith("https://")) {
+    const image = document.createElement("img");
+    image.src = avatar;
+    image.alt = "";
+    image.referrerPolicy = "no-referrer";
+    target.append(image);
+  } else target.textContent = avatar;
+}
+window.wordrushRenderAvatar = renderAvatar;
+window.wordrushAvatarLabel = (value, fallback = "🐈") =>
+  isProfileAvatar(value) ? (String(value).startsWith("https://") ? "👤" : value) : fallback;
 function updateIdentity() {
-  if ($("#profileButton")) $("#profileButton").textContent = profile.avatar;
+  renderAvatar($("#profileButton"), profile.avatar);
   if ($("#profileName")) $("#profileName").value = profile.name;
   document
     .querySelectorAll("[data-avatar]")
@@ -470,7 +506,196 @@ function updateIdentity() {
     avatar: profile.avatar,
   });
 }
-function updateProfile() {
+const authState = {
+  loaded: false,
+  account: null,
+  providers: [],
+};
+let profileSyncBase = null;
+let profileSyncEvents = [];
+let profileSyncInFlight = false;
+let profileSyncSequence = 0;
+function profileStatsSnapshot() {
+  return {
+    score: profile.score,
+    words: profile.words,
+    streak: profile.streak,
+    longest: profile.longest,
+    rounds: profile.rounds,
+    correct: profile.correct,
+    incorrect: profile.incorrect,
+    totalWordLength: profile.totalWordLength,
+    totalGameSeconds: profile.totalGameSeconds,
+    gamesWon: profile.gamesWon,
+    gamesLost: profile.gamesLost,
+    multiplayerWins: profile.multiplayerWins,
+    multiplayerLosses: profile.multiplayerLosses,
+    maxGridWin: profile.maxGridWin,
+    speedAchievement: profile.speedAchievement === true,
+    days: [...(profile.days || [])],
+    completedMultiplayerRounds: [...(profile.completedMultiplayerRounds || [])],
+    multiplayerWordRounds: (profile.multiplayerWordRounds || []).map((round) => ({
+      roundId: round.roundId,
+      words: [...(round.words || [])],
+    })),
+  };
+}
+function profileStatsDelta(current, base) {
+  const delta = {};
+  for (const key of [
+    "score", "words", "rounds", "correct", "incorrect", "totalWordLength",
+    "totalGameSeconds", "gamesWon", "gamesLost", "multiplayerWins",
+    "multiplayerLosses",
+  ]) {
+    const change = (Number(current[key]) || 0) - (Number(base[key]) || 0);
+    if (change > 0) delta[key] = change;
+  }
+  if ((Number(current.longest) || 0) > (Number(base.longest) || 0))
+    delta.longest = current.longest;
+  if ((Number(current.maxGridWin) || 0) > (Number(base.maxGridWin) || 0))
+    delta.maxGridWin = current.maxGridWin;
+  if (current.speedAchievement && !base.speedAchievement)
+    delta.speedAchievement = true;
+  for (const key of ["days", "completedMultiplayerRounds"]) {
+    const oldValues = new Set(base[key] || []);
+    const added = (current[key] || []).filter((value) => !oldValues.has(value));
+    if (added.length) delta[key] = added;
+  }
+  const oldRounds = new Map((base.multiplayerWordRounds || []).map((round) => [round.roundId, round]));
+  const addedRounds = (current.multiplayerWordRounds || []).map((round) => ({
+    roundId: round.roundId,
+    words: (round.words || []).filter((word) => !oldRounds.get(round.roundId)?.words?.includes(word)),
+  })).filter((round) => round.words.length);
+  if (addedRounds.length) delta.multiplayerWordRounds = addedRounds;
+  return delta;
+}
+function profileDeltaHasValues(delta) {
+  return Object.values(delta).some((value) =>
+    Array.isArray(value) ? value.length > 0 : value === true || Number(value) > 0,
+  );
+}
+function applyServerAccount(account, replaceStats = true) {
+  if (!account) return;
+  authState.account = account;
+  profile.accountId = account.id || "";
+  if (account.username) profile.name = account.username;
+  else if (account.displayName) profile.name = String(account.displayName).slice(0, 20);
+  if (isProfileAvatar(account.avatar)) profile.avatar = account.avatar;
+  if (replaceStats && account.stats && typeof account.stats === "object")
+    Object.assign(profile, account.stats);
+  profile.days = playStreak.normalizePlayDates(profile.days);
+  profile.completedMultiplayerRounds = Array.isArray(profile.completedMultiplayerRounds)
+    ? profile.completedMultiplayerRounds.filter((id) => typeof id === "string").slice(-50)
+    : [];
+  profile.multiplayerWordRounds = multiplayerWordReconciliation.normalizeRoundRecords(
+    profile.multiplayerWordRounds,
+  );
+  profileSyncBase = profileStatsSnapshot();
+  updateIdentity();
+  updateProfile({ sync: false });
+  window.wordrushIdentityChanged?.();
+}
+async function flushProfileEvents() {
+  if (profileSyncInFlight || !authState.account || !profileSyncEvents.length) return;
+  profileSyncInFlight = true;
+  const event = profileSyncEvents[0];
+  let failed = false;
+  try {
+    const response = await fetch("/api/profile/event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(event),
+    });
+    if (!response.ok) throw new Error("profile event failed");
+    profileSyncEvents.shift();
+  } catch {
+    failed = true;
+    setTimeout(() => flushProfileEvents(), 5000);
+  } finally {
+    profileSyncInFlight = false;
+    if (profileSyncEvents.length && !failed) setTimeout(() => flushProfileEvents(), 0);
+  }
+}
+function queueProfileSync() {
+  if (!authState.loaded || !authState.account || !profileSyncBase) return;
+  const current = profileStatsSnapshot();
+  const delta = profileStatsDelta(current, profileSyncBase);
+  if (!profileDeltaHasValues(delta)) return;
+  profileSyncBase = current;
+  profileSyncEvents.push({
+    eventId: localGuestId + ":" + Date.now() + ":" + (++profileSyncSequence),
+    delta,
+  });
+  void flushProfileEvents();
+}
+function updateAuthUI() {
+  const account = authState.account;
+  const status = $("#profileAuthStatus");
+  const google = $("#profileGoogle");
+  const facebook = $("#profileFacebook");
+  const logout = $("#profileLogout");
+  const save = $("#profileSave");
+  if (status) {
+    status.textContent = account
+      ? account.needsUsername
+        ? "Choose a unique username to finish your profile."
+        : "Your profile and stats are synced across devices."
+      : "Save your username, avatar, and stats by continuing with a provider.";
+  }
+  if (google) google.hidden = Boolean(account) || !authState.providers.includes("google");
+  if (facebook) facebook.hidden = Boolean(account) || !authState.providers.includes("facebook");
+  if (logout) logout.hidden = !account;
+  if (save) save.textContent = account ? "Save profile" : "Save guest profile";
+  $("#profileProviderHint")?.toggleAttribute("hidden", !account);
+}
+function friendlyAuthError(code) {
+  return {
+    USERNAME_LENGTH: "Use 3–20 characters for your username.",
+    USERNAME_CHARACTERS: "Use letters, numbers, spaces, hyphens, or underscores.",
+    USERNAME_BLOCKED: "That username contains a word we do not allow.",
+    USERNAME_TAKEN: "That username is already taken. Try another one.",
+    "provider-unavailable": "That sign-in option is not available right now.",
+  }[code] || "We could not save your profile. Try again.";
+}
+async function loadAuthProfile() {
+  try {
+    const response = await fetch("/api/auth/me", { credentials: "same-origin" });
+    const payload = await response.json();
+    authState.providers = Array.isArray(payload.providers) ? payload.providers : [];
+    if (payload.authenticated && payload.account) {
+      const migration = await fetch("/api/profile/migrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ guestId: localGuestId, profile: profileStatsSnapshot() }),
+      });
+      const migrated = migration.ok ? await migration.json() : null;
+      applyServerAccount(migrated?.account || payload.account);
+    } else {
+      authState.account = null;
+      updateAuthUI();
+    }
+  } catch {
+    authState.account = null;
+  } finally {
+    authState.loaded = true;
+    updateAuthUI();
+    const authResult = new URLSearchParams(location.search).get("auth");
+    if (authResult) {
+      const next = new URL(location.href);
+      next.searchParams.delete("auth");
+      history.replaceState(history.state, "", next.pathname + next.search + next.hash);
+      if (authResult === "signed-in" || authResult === "choose-username") {
+        $("#profileDialog")?.showModal();
+        if (authResult === "choose-username") $("#profileName")?.focus();
+      } else if (authResult !== "complete") {
+        toast("Sign-in could not be completed.");
+      }
+    }
+  }
+}
+function updateProfile({ sync = true } = {}) {
   profile.days = playStreak.normalizePlayDates(profile.days);
   profile.streak = playStreak.calculateCurrentStreak(profile.days);
   localStorage.setItem("wordrush-profile", JSON.stringify(profile));
@@ -480,6 +705,7 @@ function updateProfile() {
   if ($("#homeStreak")) $("#homeStreak").textContent = profile.streak;
   window.wordrushAchievementEvent?.(profile);
   window.wordrushStatsEvent?.();
+  if (sync) queueProfileSync();
 }
 function recordPlayDay() {
   const today = playStreak.localDateKey(new Date());
@@ -705,7 +931,9 @@ function renderResults(
     if (outcomeBadge) rank.dataset.outcome = outcomeBadge.toLowerCase();
     const identity = document.createElement("div");
     const name = document.createElement("b");
-    name.textContent = (player.avatar || "🐈") + " " + player.name;
+    name.textContent =
+      (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
+      " " + player.name;
     const wordCount = document.createElement("small");
     wordCount.textContent = series
       ? (Number(player.series?.strikes) || 0) +
@@ -814,7 +1042,9 @@ function renderHeroScores(
       const identity = document.createElement("span");
       identity.className = "result-score-identity";
       const name = document.createElement("b");
-      name.textContent = (player.avatar || "🐈") + " " + player.name;
+      name.textContent =
+        (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
+        " " + player.name;
       const status = document.createElement("small");
       status.textContent = skipped
         ? "SCORE"
@@ -920,7 +1150,9 @@ function renderSeriesStandings(series, target) {
       row.className = "series-standing" +
         (player.status === "withdrawn" ? " is-withdrawn" : "");
       const identity = document.createElement("span");
-      identity.textContent = (player.avatar || "🐈") + " " + player.name;
+      identity.textContent =
+        (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
+        " " + player.name;
       const status = document.createElement("small");
       status.textContent = player.status === "withdrawn"
         ? "WITHDRAWN"
@@ -2869,16 +3101,61 @@ $("#avatarPicker")?.addEventListener("click", (event) => {
     .forEach((x) =>
       x.classList.toggle("chosen", x.dataset.avatar === profile.avatar),
     );
-  if ($("#profileButton")) $("#profileButton").textContent = profile.avatar;
+  renderAvatar($("#profileButton"), profile.avatar);
 });
-const saveProfile = () => {
+async function saveProfile(event) {
+  event.preventDefault();
   const name = $("#profileName").value.trim();
+  $("#profileError")?.replaceChildren();
+  if (authState.account) {
+    const saveButton = $("#profileSave");
+    if (saveButton) saveButton.disabled = true;
+    try {
+      const response = await fetch("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ username: name, avatar: profile.avatar }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || "PROFILE_UPDATE_FAILED");
+      applyServerAccount(payload.account, false);
+      $("#profileDialog")?.close();
+    } catch (error) {
+      const errorNode = $("#profileError");
+      if (errorNode) errorNode.textContent = friendlyAuthError(error.message);
+    } finally {
+      if (saveButton) saveButton.disabled = false;
+    }
+    return;
+  }
   if (name) profile.name = name;
   localStorage.setItem("wordrush-profile", JSON.stringify(profile));
   updateIdentity();
   window.wordrushIdentityChanged?.();
-};
+  $("#profileDialog")?.close();
+}
 $("#profileForm")?.addEventListener("submit", saveProfile);
+document.querySelectorAll("[data-auth-provider]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const provider = button.dataset.authProvider;
+    const returnTo = location.pathname + location.search + location.hash;
+    location.assign("/auth/" + provider + "?returnTo=" + encodeURIComponent(returnTo));
+  });
+});
+$("#profileLogout")?.addEventListener("click", async () => {
+  await fetch("/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+  authState.account = null;
+  profile.accountId = "";
+  profileSyncBase = null;
+  profileSyncEvents = [];
+  updateAuthUI();
+  updateIdentity();
+  updateProfile({ sync: false });
+  $("#profileDialog")?.close();
+  toast("Signed out. You can keep playing as a guest.");
+});
+void loadAuthProfile();
 let selectionClearTimer = null;
 function clearPick(immediate = false) {
   clearTimeout(selectionClearTimer);
