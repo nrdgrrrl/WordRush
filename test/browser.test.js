@@ -247,6 +247,22 @@ test("home friends panel starts collapsed and expands on touch", async () => {
     assert.equal(await page.locator("#sessionCard").isHidden(), true);
     assert.doesNotMatch(await page.locator("#friendsPanel").textContent(), /LIVE TOGETHER/);
 
+    const homeFlowGaps = await page.evaluate(() => {
+      const selectors = [
+        ".home-stats",
+        "#friendsPanel",
+        "#randomPanel",
+        "#dailyChallenges",
+        "#games",
+        "nav button",
+      ];
+      const boxes = selectors.map((selector) =>
+        document.querySelector(selector).getBoundingClientRect(),
+      );
+      return boxes.slice(1).map((box, index) => Math.round(box.top - boxes[index].bottom));
+    });
+    assert.deepEqual(homeFlowGaps, [20, 20, 20, 20, 20]);
+
     await page.locator("#friendsHeading").click();
     assert.equal(await page.locator("#friendsPanel").evaluate((panel) => panel.open), true);
     assert.equal(await page.locator("#sessionCard").isVisible(), true);

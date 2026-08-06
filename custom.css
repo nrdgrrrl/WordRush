@@ -769,6 +769,9 @@ html[data-theme="dark"] #resultsScreen .achievement { color: #2c1c37; }
   background: linear-gradient(120deg, #e3c8ff, #b7f5ff);
   box-shadow: 0 5px 0 #2c1c37;
 }
+#homeScreen.active .home-stats {
+  margin-bottom: 20px;
+}
 .home-stats div { border-color: rgba(44, 28, 55, .3); }
 .home-stats b { color: #5b2d7f; }
 .home-friends {
@@ -779,6 +782,9 @@ html[data-theme="dark"] #resultsScreen .achievement { color: #2c1c37; }
   background: linear-gradient(145deg, #fff9f0, #f5ddff);
   box-shadow: 0 5px 0 #5b2d7f;
   overflow: hidden;
+}
+#homeScreen.active .home-friends {
+  margin-bottom: 20px;
 }
 .home-friends-heading {
   display: flex;
@@ -869,6 +875,10 @@ html[data-theme="dark"] #resultsScreen .achievement { color: #2c1c37; }
   gap: 12px;
   padding: 12px 10px 14px;
 }
+#homeScreen.active .game-mode-stack {
+  gap: 20px;
+  margin: 0;
+}
 
 nav {
   display: grid;
@@ -935,6 +945,9 @@ nav small {
   font: 900 12px monospace;
   letter-spacing: .05em;
   text-transform: uppercase;
+}
+body:has(#homeScreen.active) nav {
+  margin-top: 6px;
 }
 .site-footer {
   display: none;
