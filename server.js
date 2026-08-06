@@ -19,6 +19,7 @@ const {
   getDictionary,
   getDictionaryMetadata,
 } = require("./dictionary-registry");
+const wordrushRoutes = require("./site-routes");
 const {
   configForPreset,
   validateCustomConfig,
@@ -170,6 +171,47 @@ function staticCacheControl(requested) {
   if (requested === "/robots.txt" || requested === "/sitemap.xml")
     return "public, max-age=3600";
   return "public, max-age=3600, stale-while-revalidate=86400";
+}
+const appDocument = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+function renderAppDocument(pathname) {
+  const route = wordrushRoutes.seoForPath(pathname);
+  const title = escapeHtml(route.title);
+  const description = escapeHtml(route.description);
+  const canonical = escapeHtml("https://wordrush.party" + route.path);
+  return appDocument
+    .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)
+    .replace(
+      /(<meta\s+name="description"\s+content=")[^"]*("\s*\/>)/,
+      `$1${description}$2`,
+    )
+    .replace(/(<link\s+rel="canonical"\s+href=")[^"]*("\s*\/>)/, `$1${canonical}$2`)
+    .replace(/(<meta\s+property="og:url"\s+content=")[^"]*("\s*\/>)\s*/, `$1${canonical}$2`)
+    .replace(/(<meta\s+property="og:title"\s+content=")[^"]*("\s*\/>)\s*/, `$1${title}$2`)
+    .replace(
+      /(<meta\s+property="og:description"\s+content=")[^"]*("\s*\/>)/,
+      `$1${description}$2`,
+    )
+    .replace(/(<meta\s+name="twitter:title"\s+content=")[^"]*("\s*\/>)\s*/, `$1${title}$2`)
+    .replace(
+      /(<meta\s+name="twitter:description"\s+content=")[^"]*("\s*\/>)/,
+      `$1${description}$2`,
+    );
+}
+function sendAppDocument(res, pathname) {
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-cache",
+  });
+  res.end(renderAppDocument(pathname));
 }
 function securityHeaders(res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -2626,6 +2668,16 @@ const server = http.createServer((req, res) => {
     res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
     return res.end("Bad request");
   }
+  if (wordrushRoutes.transientPaths.has(pathname)) {
+    res.writeHead(302, { Location: "/" });
+    return res.end();
+  }
+  if (
+    pathname === "/" ||
+    pathname === "/index.html" ||
+    wordrushRoutes.routeForPath(pathname)
+  )
+    return sendAppDocument(res, pathname === "/index.html" ? "/" : pathname);
   if (pathname === "/dictionary.json") {
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
@@ -2639,6 +2691,7 @@ const server = http.createServer((req, res) => {
     requested = "/receiver/index.html";
   const publicRootFiles = new Set([
     "/index.html",
+    "/site-routes.js",
     "/robots.txt",
     "/sitemap.xml",
     "/manifest.webmanifest",

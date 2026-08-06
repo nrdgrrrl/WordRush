@@ -1017,6 +1017,14 @@
     const saved = savedSession();
     if (saved) connect(saved);
   }
+  document.addEventListener("wordrush:route-change", ({ detail }) => {
+    const dialog = $("#multiplayerDialog");
+    if (!dialog) return;
+    if (detail?.key === "multiplayer") sessionDialog();
+    else if (dialog.open) sessionDialog(false);
+  });
+  document.addEventListener("wordrush:open-multiplayer", () => sessionDialog());
+  if (window.wordrushOpenMultiplayerRoute) sessionDialog();
   $("#multiplayerShare")?.addEventListener("click", () => {
     if (sessionCode) sessionDialog();
   });

@@ -265,6 +265,7 @@ test("revalidates mutable browser resources while retaining static asset caching
   const noCachePaths = [
     "/",
     "/index.html",
+    "/site-routes.js",
     "/game-config.js",
     "/board-core.js",
     "/styles.css",
@@ -293,6 +294,45 @@ test("revalidates mutable browser resources while retaining static asset caching
       requestPath,
     );
   }
+});
+
+test("serves SEO app routes and redirects transient game screens", async () => {
+  const origin = "http://127.0.0.1:" + server.address().port;
+  const routes = [
+    ["/", "Wordrush — Fast Online Word Game"],
+    ["/stats", "Wordrush Stats"],
+    ["/progress", "Wordrush Progress"],
+    ["/multiplayer", "Wordrush Multiplayer"],
+    ["/games/classic", "Classic — Two Minutes"],
+    ["/games/random-rush", "Random Rush"],
+    ["/games/word-chain", "Word Chain"],
+  ];
+  for (const [requestPath, title] of routes) {
+    const response = await fetch(origin + requestPath);
+    const body = await response.text();
+    assert.equal(response.status, 200, requestPath);
+    assert.match(body, new RegExp("<title>[^<]*" + title));
+    assert.match(
+      body,
+      new RegExp(
+        '<link rel="canonical" href="https://wordrush\\.party' +
+          requestPath.replaceAll("/", "\\/") +
+          '"',
+      ),
+    );
+    assert.match(
+      body,
+      new RegExp(
+        '<meta property="og:url" content="https://wordrush\\.party' +
+          requestPath.replaceAll("/", "\\/") +
+          '"',
+      ),
+    );
+  }
+  const transient = await fetch(origin + "/results", { redirect: "manual" });
+  assert.equal(transient.status, 302);
+  assert.equal(transient.headers.get("location"), "/");
+  assert.equal((await fetch(origin + "/games/not-a-game")).status, 404);
 });
 
 test("a stale cached-client request still receives the current mutable script", async () => {
