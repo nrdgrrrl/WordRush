@@ -436,7 +436,7 @@ test("Random Rush leads grouped daily challenges and games", async () => {
   }
 });
 
-test("Daily Rush freezes one shared board and offers a friend challenge link", async (t) => {
+test("Daily Rush freezes one shared board without adding a results panel", async (t) => {
   const browser = await chromium.launch({ headless: true, executablePath });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -453,31 +453,8 @@ test("Daily Rush freezes one shared board and offers a friend challenge link", a
 
   await page.locator("#endGame").click();
   await page.waitForSelector("#resultsScreen.active");
-  assert.equal(await page.locator("#dailyChallengeResult").isHidden(), false);
-  await page.evaluate(() => {
-    Object.defineProperty(navigator, "share", { configurable: true, value: undefined });
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText: async (value) => { window.wordrushCopiedLink = value; } },
-    });
-  });
-  await page.locator("#shareDailyChallenge").click();
-  await page.waitForFunction(() =>
-    document.querySelector("#dailyShareStatus")?.textContent === "Challenge link copied.",
-  );
-  const link = await page.evaluate(() => window.wordrushCopiedLink);
-  const challenger = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await challenger.goto(link);
-  await challenger.waitForSelector("#roundIntroScreen.active");
-  await challenger.locator("#introStart").click();
-  await challenger.waitForSelector("#gameScreen.active");
-  assert.deepEqual(await challenger.locator(".tile").allTextContents(), board);
-  await challenger.locator("#endGame").click();
-  await challenger.waitForSelector("#resultsScreen.active");
-  assert.match(
-    await challenger.locator("#dailyChallengeResultDetail").textContent(),
-    /challenge|tie|beat/i,
-  );
+  assert.equal(await page.locator("#dailyChallengeResult").isHidden(), true);
+  assert.equal(await page.locator("#again").textContent(), "Try today again →");
 });
 
 test("browser can start, play, persist stats, and use the tile-banner profile button", async () => {

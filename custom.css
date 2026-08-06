@@ -756,6 +756,7 @@ html[data-theme="dark"] .reveal-word {
   color: #2c1c37;
   box-shadow: 0 4px 0 #2c1c37;
 }
+#resultsScreen #dailyChallengeResult { display: none; }
 html[data-theme="dark"] .result-player-card,
 html[data-theme="dark"] .result-highlights article,
 html[data-theme="dark"] #resultsScreen .achievement { color: #2c1c37; }
