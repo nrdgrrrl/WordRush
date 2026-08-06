@@ -1183,9 +1183,145 @@ function cancelSoloRushContinuation({ stop = true } = {}) {
     s.nextRushMode = null;
   }
 }
+const appRoutes = window.WordrushRoutes;
+let initialAppRoute = appRoutes.routeForPath(location.pathname) || appRoutes.HOME;
+window.wordrushInitialRoute = initialAppRoute;
+
+function updateRouteMetadata(pathname) {
+  const route = appRoutes.seoForPath(pathname);
+  document.title = route.title;
+  const description = document.querySelector('meta[name="description"]');
+  const canonical = document.querySelector('link[rel="canonical"]');
+  if (description) description.setAttribute("content", route.description);
+  if (canonical) canonical.setAttribute("href", new URL(route.path, location.origin).href);
+  for (const [selector, value] of [
+    ['meta[property="og:url"]', new URL(route.path, location.origin).href],
+    ['meta[property="og:title"]', route.title],
+    ['meta[property="og:description"]', route.description],
+    ['meta[name="twitter:title"]', route.title],
+    ['meta[name="twitter:description"]', route.description],
+  ]) {
+    const element = document.querySelector(selector);
+    if (element) element.setAttribute("content", value);
+  }
+}
+
+function writeAppRoute(pathname, { replace = false } = {}) {
+  const current = location.pathname + location.search + location.hash;
+  if (current !== pathname)
+    history[replace ? "replaceState" : "pushState"](
+      { wordrushRoute: pathname },
+      "",
+      pathname,
+    );
+  updateRouteMetadata(pathname.split("?")[0]);
+  document.dispatchEvent(new CustomEvent("wordrush:route-change", {
+    detail: appRoutes.seoForPath(pathname.split("?")[0]),
+  }));
+}
+
+function gameRoutePath(mode, { randomRush = false, config = null } = {}) {
+  return appRoutes.routeForMode(mode, { randomRush, config })?.path || "/games/custom";
+}
+
+function syncGameRoute(mode, { randomRush = false, config = null } = {}) {
+  let path = gameRoutePath(mode, { randomRush, config });
+  const params = new URLSearchParams(location.search);
+  const sharedKey = mode === "daily"
+    ? "challenge"
+    : mode === "relay"
+      ? "relay"
+      : null;
+  const sharedRef = sharedKey && params.get(sharedKey);
+  if (sharedRef && params.getAll(sharedKey).length === 1)
+    path += "?" + sharedKey + "=" + encodeURIComponent(sharedRef);
+  const current = appRoutes.routeForPath(location.pathname);
+  const replacingBuilder = current?.key === "custom" || current?.key === "party";
+  writeAppRoute(path, { replace: replacingBuilder });
+}
+
+function syncScreenRoute(id, currentScreen) {
+  if (id === "resultsScreen") return writeAppRoute("/", { replace: true });
+  const path = id === "homeScreen"
+    ? "/"
+    : id === "statsScreen"
+      ? "/stats"
+      : id === "achievementsScreen"
+        ? "/progress"
+        : null;
+  if (!path) return;
+  writeAppRoute(path, {
+    replace: id === "homeScreen" &&
+      ["roundIntroScreen", "gameScreen", "seriesTransitionScreen", "resultsScreen"].includes(currentScreen),
+  });
+}
+
+function abandonForRouteNavigation() {
+  const currentScreen = document.querySelector(".screen.active")?.id;
+  if (
+    ["roundIntroScreen", "gameScreen", "seriesTransitionScreen"].includes(currentScreen) &&
+    !s.onlineRoundKey
+  ) {
+    abandonActiveRound();
+    cancelSoloRushContinuation();
+  }
+}
+
+function launchAppRoute(route) {
+  if (route.kind === "page") {
+    show(route.screen, { routeMode: "none" });
+    return;
+  }
+  if (route.launcher === "random") return start(nextRandomMode(), null, false, true);
+  if (route.launcher === "daily") {
+    const ref = new URLSearchParams(location.search).get("challenge");
+    if (/^[A-Za-z0-9_-]{20,40}$/.test(ref || ""))
+      return requestSharedChallenge(ref)
+        .then((shared) => startDailyRush(shared))
+        .catch(() => toast("That challenge link is unavailable."));
+    return startDailyRush();
+  }
+  if (route.launcher === "echo") return startDailyRush(null, true);
+  if (route.launcher === "relay") {
+    const ref = new URLSearchParams(location.search).get("relay");
+    if (/^[A-Za-z0-9_-]{20,40}$/.test(ref || "")) return startWordRelay(ref);
+    return startWordRelay();
+  }
+  if (route.launcher === "party") return openParty();
+  if (route.launcher === "custom") return openRushBuilder();
+  if (route.launcher === "multiplayer") {
+    window.wordrushOpenMultiplayerRoute = true;
+    document.dispatchEvent(new CustomEvent("wordrush:open-multiplayer"));
+    return;
+  }
+  return start(route.mode);
+}
+
+function navigateAppRoute(route) {
+  const currentScreen = document.querySelector(".screen.active")?.id;
+  if (route.key !== "custom") $("#customDialog")?.close();
+  if (route.key !== "party") $("#partyDialog")?.close();
+  if (route.kind === "game") {
+    if (
+      ["roundIntroScreen", "gameScreen", "seriesTransitionScreen"].includes(currentScreen) &&
+      (route.path !== location.pathname || !s.onlineRoundKey)
+    )
+      abandonForRouteNavigation();
+    launchAppRoute(route);
+    return;
+  }
+  abandonForRouteNavigation();
+  show(route.screen, { routeMode: "none" });
+  document.dispatchEvent(new CustomEvent("wordrush:route-change", { detail: route }));
+}
+
 function show(
   id,
-  { preserveRushContinuation = false, preserveRoundIntro = false } = {},
+  {
+    preserveRushContinuation = false,
+    preserveRoundIntro = false,
+    routeMode = "auto",
+  } = {},
 ) {
   const currentScreen = document.querySelector(".screen.active")?.id;
   if (
@@ -1213,6 +1349,7 @@ function show(
     .forEach((button) =>
       button.classList.toggle("active", button.dataset.screen === id),
     );
+  if (routeMode !== "none") syncScreenRoute(id, currentScreen);
   emit("screen-change", { id });
 }
 let roundIntroTimer = 0;
@@ -1426,6 +1563,7 @@ async function start(
   customAdult = generationInputs.adultMode;
   s.mode = generationInputs.mode;
   s.rush = generationInputs.rush;
+  syncGameRoute(s.mode, { randomRush: s.rush, config: nextConfig });
   s.dailyChallenge = dailyChallenge
     ? {
         id: dailyChallenge.challenge.id,
@@ -1953,7 +2091,11 @@ function syncPartyOptions() {
     partyConfig.min + "+ letters · " + partyConfig.size + "×" + partyConfig.size +
     " · " + formatTimer(partyConfig.seconds);
 }
-function openParty() { syncPartyOptions(); $("#partyDialog").showModal(); }
+function openParty() {
+  writeAppRoute("/games/party-mode");
+  syncPartyOptions();
+  $("#partyDialog").showModal();
+}
 $("#partyMode").onclick = openParty;
 document.querySelectorAll("[data-party-size]").forEach((button) => button.onclick = () => { partyConfig.size = +button.dataset.partySize; syncPartyOptions(); });
 document.querySelectorAll("[data-party-min]").forEach((button) => button.onclick = () => { partyConfig.min = +button.dataset.partyMin; syncPartyOptions(); });
@@ -2136,6 +2278,7 @@ function syncRushBuilder() {
     " · " + formatTimer(rushBuilder.seconds);
 }
 function openRushBuilder(reset = false) {
+  writeAppRoute("/games/custom");
   if (reset)
     rushBuilder = { type: "classic", min: 3, size: 4, seconds: 120 };
   syncRushBuilder();
@@ -2211,9 +2354,48 @@ async function launchSharedRelayFromUrl() {
       !/^[A-Za-z0-9_-]{20,40}$/.test(refs[0])) return;
   await startWordRelay(refs[0]);
 }
-show("homeScreen");
-launchSharedChallengeFromUrl();
-launchSharedRelayFromUrl();
+function initializeAppRoute() {
+  const route = initialAppRoute;
+  const current = location.pathname + location.search + location.hash;
+  history.replaceState(
+    {
+      wordrushRoute: route.path,
+      ...(route.kind === "game" ? { wordrushInitialGameEntry: true } : {}),
+    },
+    "",
+    current,
+  );
+  updateRouteMetadata(location.pathname);
+  if (route.kind === "game") {
+    history.pushState(
+      { wordrushRoute: route.path, wordrushGameGuard: true },
+      "",
+      current,
+    );
+    launchAppRoute(route);
+  } else {
+    show(route.screen, { routeMode: "none" });
+    if (route.open === "multiplayer")
+      window.wordrushOpenMultiplayerRoute = true;
+  }
+}
+initializeAppRoute();
+if (initialAppRoute.kind !== "game") {
+  launchSharedChallengeFromUrl();
+  launchSharedRelayFromUrl();
+}
+window.addEventListener("popstate", (event) => {
+  const route = appRoutes.routeForPath(location.pathname) || appRoutes.HOME;
+  updateRouteMetadata(location.pathname);
+  if (event.state?.wordrushInitialGameEntry && route.kind === "game") {
+    abandonForRouteNavigation();
+    writeAppRoute("/", { replace: true });
+    show("homeScreen", { routeMode: "none" });
+    return;
+  }
+  navigateAppRoute(route);
+});
+$("#sessionCard")?.addEventListener("click", () => writeAppRoute("/multiplayer"));
 document.addEventListener("click", (event) => {
   const target = event.target.closest?.("[data-screen]");
   if (target) show(target.dataset.screen);
@@ -2404,6 +2586,7 @@ window.wordrushOnlineRound = (
     party: false,
   };
   customAdult = usesAdultLexicon(s.config);
+  syncGameRoute(s.mode, { randomRush: s.onlineRandomRush, config: s.config });
   document.body.dataset.mode = s.mode;
   s.n = round.size;
   s.b = round.board;

@@ -3,4 +3,27 @@
   <url>
     <loc>https://wordrush.party/</loc>
   </url>
+  <url><loc>https://wordrush.party/stats</loc></url>
+  <url><loc>https://wordrush.party/progress</loc></url>
+  <url><loc>https://wordrush.party/multiplayer</loc></url>
+  <url><loc>https://wordrush.party/games/random-rush</loc></url>
+  <url><loc>https://wordrush.party/games/daily-rush</loc></url>
+  <url><loc>https://wordrush.party/games/echo-race</loc></url>
+  <url><loc>https://wordrush.party/games/the-curse</loc></url>
+  <url><loc>https://wordrush.party/games/bounty-tiles</loc></url>
+  <url><loc>https://wordrush.party/games/room-heist</loc></url>
+  <url><loc>https://wordrush.party/games/word-relay</loc></url>
+  <url><loc>https://wordrush.party/games/party-mode</loc></url>
+  <url><loc>https://wordrush.party/games/custom</loc></url>
+  <url><loc>https://wordrush.party/games/classic</loc></url>
+  <url><loc>https://wordrush.party/games/sudden-death</loc></url>
+  <url><loc>https://wordrush.party/games/sudden-death-series</loc></url>
+  <url><loc>https://wordrush.party/games/dirty</loc></url>
+  <url><loc>https://wordrush.party/games/race</loc></url>
+  <url><loc>https://wordrush.party/games/minimum-word</loc></url>
+  <url><loc>https://wordrush.party/games/blitz</loc></url>
+  <url><loc>https://wordrush.party/games/long-haul</loc></url>
+  <url><loc>https://wordrush.party/games/letter-storm</loc></url>
+  <url><loc>https://wordrush.party/games/score-attack</loc></url>
+  <url><loc>https://wordrush.party/games/word-chain</loc></url>
 </urlset>
