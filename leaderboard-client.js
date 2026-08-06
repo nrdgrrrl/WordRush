@@ -78,7 +78,9 @@
             '<span class="scoreboard-rank">' +
             (index + 1) +
             '</span><span class="scoreboard-avatar"></span><span class="scoreboard-player"></span><b></b>';
-          row.querySelector(".scoreboard-avatar").textContent = player.avatar;
+          if (window.wordrushRenderAvatar)
+            window.wordrushRenderAvatar(row.querySelector(".scoreboard-avatar"), player.avatar);
+          else row.querySelector(".scoreboard-avatar").textContent = player.avatar;
           row.querySelector(".scoreboard-player").textContent = player.name;
           row.querySelector("b").textContent =
             period === "multiplayer-ratio"
@@ -101,7 +103,8 @@
         if (token !== profileLoadToken) return;
         const dialog = document.querySelector("#leaderboardProfileDialog");
         document.querySelector("#leaderboardProfileName").textContent =
-          player.avatar + " " + player.name;
+          (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
+          " " + player.name;
         document.querySelector("#leaderboardProfileBody").innerHTML =
           '<div class="profile-score"><strong>' +
           player.totalScore.toLocaleString() +

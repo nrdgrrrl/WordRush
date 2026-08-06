@@ -49,7 +49,9 @@
     const heading = document.createElement("header");
     const identity = document.createElement("span");
     identity.className = "reveal-player-name";
-    identity.textContent = (player.avatar || "🐈") + " " + player.name;
+    identity.textContent =
+      (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
+      " " + player.name;
     const score = document.createElement("b");
     score.className = "reveal-player-total";
     score.textContent = currentCooperative ? "0 contribution" : "0";
@@ -136,7 +138,7 @@
         : currentCooperative
         ? currentTeamScore.toLocaleString() + " shared points"
         : topPlayer
-          ? (topPlayer.avatar || "🐈") + " " + topPlayer.name
+          ? (window.wordrushAvatarLabel?.(topPlayer.avatar) || topPlayer.avatar || "🐈") + " " + topPlayer.name
           : "—";
     if ($("#resultLongestLabel"))
       $("#resultLongestLabel").textContent = longestPlayers > 1
@@ -146,7 +148,7 @@
       $("#resultLongestWord").textContent = longest.length
         ? longest.map((item) =>
           String(item.word).toUpperCase() + " · " + item.points +
-          " pts · " + (item.player.avatar || "🐈") + " " + item.player.name,
+          " pts · " + (window.wordrushAvatarLabel?.(item.player.avatar) || item.player.avatar || "🐈") + " " + item.player.name,
         ).join(" • ")
         : "—";
   }
@@ -168,7 +170,9 @@
           (series.winnerIds?.includes(player.id) ? " is-winner" : "") +
           (player.series?.status === "withdrawn" ? " is-withdrawn" : "");
         const name = document.createElement("strong");
-        name.textContent = (player.avatar || "🐈") + " " + player.name;
+        name.textContent =
+          (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
+          " " + player.name;
         const detail = document.createElement("span");
         detail.textContent =
           (Number(player.series?.strikes) || 0) + " strike" +

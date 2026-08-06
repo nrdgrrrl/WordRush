@@ -47,6 +47,18 @@ const {
   generateQualityRoundBoard,
 } = require("./production-board-generator");
 const {
+  AccountStore,
+  EMOJI_AVATARS,
+  isAvatar,
+  publicAccount,
+} = require("./account-store");
+const {
+  authorizationUrl,
+  enabledProviders,
+  providerIdentity,
+  randomState,
+} = require("./auth-providers");
+const {
   DailyChallengeStore,
   utcDateKey,
 } = require("./daily-challenges");
@@ -110,7 +122,15 @@ const generationTestHooks = {
 const SUDDEN_SERIES_MODE = "sudden_series";
 const dailyChallenges = new DailyChallengeStore();
 const relayChallenges = new RelayChallengeStore();
+const accountStore = new AccountStore();
 const pendingDailyChallenges = new Map();
+const oauthStates = new Map();
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const SESSION_COOKIE = "wordrush_session";
+const SESSION_SECRET = process.env.WORDRUSH_SESSION_SECRET ||
+  (process.env.NODE_ENV === "production"
+    ? (() => { throw new Error("WORDRUSH_SESSION_SECRET is required in production"); })()
+    : crypto.randomBytes(32).toString("hex"));
 const nodeGenerationScheduler = () =>
   new Promise((resolve) => setImmediate(resolve));
 
@@ -218,7 +238,7 @@ function securityHeaders(res) {
   res.setHeader("Referrer-Policy", "same-origin");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Permissions-Policy", "camera=(self), microphone=(), geolocation=()");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self' ws: wss: https://www.google-analytics.com https://region1.google-analytics.com; img-src 'self' data: https://www.google-analytics.com; style-src 'self' 'unsafe-inline'; script-src 'self' https://www.gstatic.com https://www.googletagmanager.com; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self' ws: wss: https://www.google-analytics.com https://region1.google-analytics.com; img-src 'self' data: https://www.google-analytics.com https://*.googleusercontent.com https://*.facebook.com https://*.fbcdn.net https://*.fbsbx.com; style-src 'self' 'unsafe-inline'; script-src 'self' https://www.gstatic.com https://www.googletagmanager.com; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
 }
 async function authorizeRequest(req, res) {
   securityHeaders(res);
@@ -276,6 +296,12 @@ function cleanText(value, fallback, max = 20) {
   return Array.from(cleaned || fallback)
     .slice(0, max)
     .join("");
+}
+function cleanAvatar(value, fallback = "🐈") {
+  if (isAvatar(value)) return value;
+  const emoji = EMOJI_AVATARS.find((candidate) => String(value || "").startsWith(candidate));
+  if (emoji) return emoji;
+  return isAvatar(fallback) ? fallback : "🐈";
 }
 function boundedNumber(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -1878,7 +1904,7 @@ async function handle(ws, message) {
     clients.set(ws, {
       id,
       name: cleanText(message.name, "Guest"),
-      avatar: cleanText(message.avatar, "🐈", 2),
+      avatar: cleanAvatar(message.avatar),
       roomCode: null,
     });
     return send(ws, { type: "hello_ack", id });
@@ -1920,7 +1946,7 @@ async function handle(ws, message) {
     player.disconnectTimer = null;
     client.roomCode = room.code;
     client.name = cleanText(message.name, player.name);
-    client.avatar = cleanText(message.avatar, player.avatar || "🐈", 2);
+    client.avatar = cleanAvatar(message.avatar, player.avatar || "🐈");
     if (frozenIdentity) {
       client.name = frozenIdentity.name;
       client.avatar = frozenIdentity.avatar;
@@ -1971,7 +1997,7 @@ async function handle(ws, message) {
     client.roomCode = room.code;
     room.creatorId = client.id;
     client.name = cleanText(message.name, client.name);
-    client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
+    client.avatar = cleanAvatar(message.avatar, client.avatar || "🐈");
     const player = admitPlayerToRoom(room, client, ws);
     send(ws, {
       type: "room_created",
@@ -2012,11 +2038,7 @@ async function handle(ws, message) {
       existingPlayer.disconnectTimer = null;
       client.roomCode = room.code;
       client.name = cleanText(message.name, existingPlayer.name);
-      client.avatar = cleanText(
-        message.avatar,
-        existingPlayer.avatar || "🐈",
-        2,
-      );
+      client.avatar = cleanAvatar(message.avatar, existingPlayer.avatar || "🐈");
       if (frozenIdentity) {
         client.name = frozenIdentity.name;
         client.avatar = frozenIdentity.avatar;
@@ -2056,7 +2078,7 @@ async function handle(ws, message) {
     }
     client.roomCode = room.code;
     client.name = cleanText(message.name, client.name);
-    client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
+    client.avatar = cleanAvatar(message.avatar, client.avatar || "🐈");
     const player = admitPlayerToRoom(room, client, ws);
     send(ws, {
       type: "joined_room",
@@ -2234,7 +2256,7 @@ async function handle(ws, message) {
   }
   if (type === "update_identity") {
     client.name = cleanText(message.name, client.name);
-    client.avatar = cleanText(message.avatar, client.avatar || "🐈", 2);
+    client.avatar = cleanAvatar(message.avatar, client.avatar || "🐈");
     const identityRoom = rooms.get(client.roomCode);
     if (identityRoom && identityRoom.players.has(client.id)) {
       const player = identityRoom.players.get(client.id);
@@ -2830,6 +2852,7 @@ const heartbeat = setInterval(() => {
       else displayCredentials.delete(token);
     }
   prunePreAdmissionChallenges(now);
+  pruneOAuthStates(now);
   for (const ws of wss.clients) {
     heartbeatSocket(ws);
   }
@@ -2881,6 +2904,11 @@ module.exports = {
   cancelSuddenDeathSeries,
   settleSuddenDeathSeriesRound,
   completeSuddenDeathSeries,
+  accountStore,
+  accountFromRequest,
+  authRequest,
+  createSessionToken,
+  oauthStates,
 };
 
 const { Leaderboard } = require("./leaderboard");
@@ -3032,6 +3060,220 @@ function readJson(req, isCancelled) {
     req.once("end", finish);
   });
 }
+
+function parseCookies(header) {
+  return String(header || "").split(";").reduce((cookies, part) => {
+    const index = part.indexOf("=");
+    if (index < 0) return cookies;
+    const key = part.slice(0, index).trim();
+    if (!key) return cookies;
+    try {
+      cookies[key] = decodeURIComponent(part.slice(index + 1).trim());
+    } catch {}
+    return cookies;
+  }, {});
+}
+
+function sessionSignature(payload) {
+  return crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+}
+
+function createSessionToken(accountId, expiresAt = Date.now() + SESSION_TTL_MS) {
+  const payload = Buffer.from(accountId + "." + expiresAt).toString("base64url");
+  return payload + "." + sessionSignature(payload);
+}
+
+function accountFromRequest(req) {
+  const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+  if (!token) return null;
+  const [payload, signature] = token.split(".");
+  if (!payload || !signature || !/^[A-Za-z0-9_-]+$/.test(signature)) return null;
+  const expected = sessionSignature(payload);
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (
+    actualBuffer.length !== expectedBuffer.length ||
+    !crypto.timingSafeEqual(actualBuffer, expectedBuffer)
+  ) return null;
+  let decoded;
+  try {
+    decoded = Buffer.from(payload, "base64url").toString("utf8").split(".");
+  } catch {
+    return null;
+  }
+  if (decoded.length !== 2 || Number(decoded[1]) <= Date.now()) return null;
+  return accountStore.get(decoded[0]);
+}
+
+function sessionCookie(token, req, maxAge = SESSION_TTL_MS / 1000) {
+  const secure = process.env.NODE_ENV === "production" ||
+    String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
+  return [
+    SESSION_COOKIE + "=" + encodeURIComponent(token),
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=" + Math.max(0, Math.trunc(maxAge)),
+    secure ? "Secure" : "",
+  ].filter(Boolean).join("; ");
+}
+
+function sendJson(res, status, value, extraHeaders = {}) {
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    ...extraHeaders,
+  });
+  res.end(JSON.stringify(value));
+}
+
+function safeReturnPath(value) {
+  const candidate = String(value || "/");
+  return candidate.startsWith("/") && !candidate.startsWith("//") &&
+    !candidate.startsWith("/auth/")
+    ? candidate
+    : "/";
+}
+
+function authErrorLocation(returnTo, code) {
+  const pathName = safeReturnPath(returnTo);
+  const separator = pathName.includes("?") ? "&" : "?";
+  return pathName + separator + "auth=" + encodeURIComponent(code);
+}
+
+function accountResponse(account) {
+  return publicAccount(account, enabledProviders());
+}
+
+function pruneOAuthStates(now = Date.now()) {
+  for (const [state, record] of oauthStates)
+    if (record.expiresAt <= now) oauthStates.delete(state);
+}
+
+async function authRequest(req, res) {
+  const url = new URL(req.url || "/", "http://localhost");
+  if (url.pathname === "/api/auth/config" && req.method === "GET")
+    return sendJson(res, 200, { providers: enabledProviders() });
+  if (url.pathname === "/api/auth/me" && req.method === "GET") {
+    const account = accountFromRequest(req);
+    return sendJson(res, 200, {
+      authenticated: Boolean(account),
+      account: accountResponse(account),
+      providers: enabledProviders(),
+    });
+  }
+  if (url.pathname === "/api/profile" && req.method === "POST") {
+    const account = accountFromRequest(req);
+    if (!account) return deny(res, 401, "AUTH_REQUIRED");
+    const body = await readJson(req);
+    if (!body || Object.keys(body).some((key) => !["username", "avatar"].includes(key)))
+      return deny(res, 400, "PROFILE_REQUEST_INVALID");
+    try {
+      let updated = account;
+      if (Object.prototype.hasOwnProperty.call(body, "username"))
+        updated = accountStore.setUsername(account.id, body.username);
+      if (Object.prototype.hasOwnProperty.call(body, "avatar"))
+        updated = accountStore.updateAvatar(account.id, body.avatar);
+      return sendJson(res, 200, { authenticated: true, account: accountResponse(updated) });
+    } catch (error) {
+      const known = [
+        "USERNAME_LENGTH", "USERNAME_CHARACTERS", "USERNAME_BLOCKED",
+        "USERNAME_TAKEN", "AVATAR_INVALID", "ACCOUNT_NOT_FOUND",
+      ];
+      return deny(res, known.includes(error.code) ? 409 : 400, error.code || "PROFILE_UPDATE_FAILED");
+    }
+  }
+  if (url.pathname === "/api/profile/migrate" && req.method === "POST") {
+    const account = accountFromRequest(req);
+    if (!account) return deny(res, 401, "AUTH_REQUIRED");
+    const body = await readJson(req);
+    if (!body || typeof body.guestId !== "string" || !body.profile ||
+      Object.keys(body).some((key) => !["guestId", "profile"].includes(key)))
+      return deny(res, 400, "PROFILE_MIGRATION_INVALID");
+    try {
+      const updated = accountStore.migrate(account.id, body.guestId, body.profile);
+      return sendJson(res, 200, { authenticated: true, account: accountResponse(updated) });
+    } catch (error) {
+      return deny(res, 400, error.code || "PROFILE_MIGRATION_FAILED");
+    }
+  }
+  if (url.pathname === "/api/profile/event" && req.method === "POST") {
+    const account = accountFromRequest(req);
+    if (!account) return deny(res, 401, "AUTH_REQUIRED");
+    const body = await readJson(req);
+    if (!body || typeof body.eventId !== "string" || !body.delta ||
+      Object.keys(body).some((key) => !["eventId", "delta"].includes(key)))
+      return deny(res, 400, "PROFILE_EVENT_INVALID");
+    try {
+      const updated = accountStore.applyEvent(account.id, body.eventId, body.delta);
+      return sendJson(res, 200, { authenticated: true, account: accountResponse(updated) });
+    } catch (error) {
+      return deny(res, 400, error.code || "PROFILE_EVENT_FAILED");
+    }
+  }
+  if (url.pathname === "/auth/logout" && req.method === "POST") {
+    return sendJson(res, 200, { authenticated: false }, {
+      "Set-Cookie": sessionCookie("", req, 0),
+    });
+  }
+  const startMatch = url.pathname.match(/^\/auth\/(google|facebook)$/);
+  if (startMatch && req.method === "GET") {
+    const provider = startMatch[1];
+    if (!enabledProviders().includes(provider)) {
+      res.writeHead(302, { Location: authErrorLocation(url.searchParams.get("returnTo"), "provider-unavailable") });
+      return res.end();
+    }
+    const state = randomState();
+    oauthStates.set(state, {
+      provider,
+      returnTo: safeReturnPath(url.searchParams.get("returnTo")),
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+    try {
+      const location = await authorizationUrl(provider, req, state);
+      res.writeHead(302, { Location: location, "Cache-Control": "no-store" });
+      return res.end();
+    } catch {
+      oauthStates.delete(state);
+      res.writeHead(302, { Location: authErrorLocation(url.searchParams.get("returnTo"), "provider-unavailable") });
+      return res.end();
+    }
+  }
+  const callbackMatch = url.pathname.match(/^\/auth\/(google|facebook)\/callback$/);
+  if (callbackMatch && req.method === "GET") {
+    const provider = callbackMatch[1];
+    const state = oauthStates.get(url.searchParams.get("state"));
+    if (!state || state.provider !== provider || state.expiresAt <= Date.now()) {
+      res.writeHead(302, { Location: authErrorLocation("/", "invalid-state") });
+      return res.end();
+    }
+    oauthStates.delete(url.searchParams.get("state"));
+    if (url.searchParams.get("error")) {
+      res.writeHead(302, { Location: authErrorLocation(state.returnTo, "cancelled") });
+      return res.end();
+    }
+    const code = url.searchParams.get("code");
+    if (!code) {
+      res.writeHead(302, { Location: authErrorLocation(state.returnTo, "missing-code") });
+      return res.end();
+    }
+    try {
+      const identity = await providerIdentity(provider, req, code);
+      const account = accountStore.ensureProviderAccount(provider, identity.providerId, identity);
+      res.writeHead(302, {
+        Location: authErrorLocation(state.returnTo, account.username ? "signed-in" : "choose-username"),
+        "Set-Cookie": sessionCookie(createSessionToken(account.id), req),
+        "Cache-Control": "no-store",
+      });
+      return res.end();
+    } catch {
+      res.writeHead(302, { Location: authErrorLocation(state.returnTo, "provider-failed") });
+      return res.end();
+    }
+  }
+  return false;
+}
+
 async function leaderboardRequest(req, res) {
   const url = new URL(req.url, "http://localhost");
   if (url.pathname === "/api/relay-challenges" && req.method === "POST") {
@@ -3320,6 +3562,8 @@ server.on("request", async (req, res) => {
   try {
     if (res.writableEnded) return;
     if (!(await authorizeRequest(req, res))) return;
+    const authHandled = await authRequest(req, res);
+    if (authHandled !== false || res.writableEnded) return;
     const handled = await leaderboardRequest(req, res);
     if (!handled && !res.writableEnded) originalRequestHandler(req, res);
   } catch {
