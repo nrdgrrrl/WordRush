@@ -139,7 +139,7 @@ test(
     );
     const host = pages[0];
     await openFriendsPanel(host);
-    await host.locator("#sessionManage").click();
+    await host.locator("#sessionCard").click();
     await host.locator("#sessionCreate").click();
     await host.waitForFunction(() =>
       /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
@@ -147,7 +147,7 @@ test(
     const code = await host.locator("#sessionCode").textContent();
     for (const guest of pages.slice(1)) {
       await openFriendsPanel(guest);
-      await guest.locator("#sessionManage").click();
+      await guest.locator("#sessionCard").click();
       guest.once("dialog", (dialog) => dialog.accept(code));
       await guest.locator("#sessionJoin").click();
       await guest.waitForFunction(
@@ -174,7 +174,7 @@ test(
       } else {
         if (!firstRound) {
           await openFriendsPanel(host);
-          await host.locator("#sessionManage").click();
+          await host.locator("#sessionCard").click();
         }
         await host.locator("#sessionType").selectOption(mode);
         await host.locator("#sessionStart").click();
@@ -243,14 +243,14 @@ test("refreshing the creator resumes the room for connected guests", async () =>
   const guest = await browser.newPage();
   await Promise.all([host.goto(baseUrl), guest.goto(baseUrl)]);
   await openFriendsPanel(host);
-  await host.locator("#sessionManage").click();
+  await host.locator("#sessionCard").click();
   await host.locator("#sessionCreate").click();
   await host.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
   );
   const code = await host.locator("#sessionCode").textContent();
   await openFriendsPanel(guest);
-  await guest.locator("#sessionManage").click();
+  await guest.locator("#sessionCard").click();
   guest.once("dialog", (dialog) => dialog.accept(code));
   await guest.locator("#sessionJoin").click();
   await guest.waitForFunction(() =>

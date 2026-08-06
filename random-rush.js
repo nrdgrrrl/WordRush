@@ -55,7 +55,7 @@
   };
   render();
   rerollButton.onclick = reroll;
-  panel.onpointerup = launch;
+  panel.onclick = launch;
   panel.onkeydown = (event) => {
     if (event.key === "Enter" || event.key === " ") launch(event);
   };

@@ -231,6 +231,15 @@ test("mobile play board stays within its available space on short screens", asyn
     assert.ok(bounds.grid.right <= bounds.board.right);
     assert.ok(bounds.grid.bottom <= bounds.board.bottom);
     assert.ok(bounds.grid.left >= bounds.board.left);
+    const tileGaps = await page.evaluate(() => {
+      const tiles = [...document.querySelectorAll("#grid .tile")];
+      const horizontal = tiles[1].getBoundingClientRect().left -
+        tiles[0].getBoundingClientRect().right;
+      const vertical = tiles[4].getBoundingClientRect().top -
+        tiles[0].getBoundingClientRect().bottom;
+      return { horizontal, vertical };
+    });
+    assert.ok(Math.abs(tileGaps.horizontal - tileGaps.vertical) < 1);
     await page.close();
   }
   await browser.close();
