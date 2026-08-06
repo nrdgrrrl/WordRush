@@ -210,14 +210,18 @@ test("mobile play board stays within its available space on short screens", asyn
       return {
         ruleTop: rule.top,
         hintTop: hint.top,
+        boardBottom: document.querySelector(".board").getBoundingClientRect().bottom,
+        hintBottom: hint.bottom,
         ruleSize,
         hintSize,
         scoreSize,
         menuCount: document.querySelectorAll(".game-head > b").length,
       };
     });
-    assert.ok(Math.abs(gameCopy.ruleTop - gameCopy.hintTop) < 1);
-    assert.equal(gameCopy.ruleSize, gameCopy.hintSize);
+    assert.ok(gameCopy.ruleTop < gameCopy.hintTop);
+    assert.ok(gameCopy.hintTop >= gameCopy.boardBottom);
+    assert.ok(gameCopy.hintBottom > gameCopy.hintTop);
+    assert.ok(parseFloat(gameCopy.ruleSize) > parseFloat(gameCopy.hintSize));
     assert.ok(parseFloat(gameCopy.ruleSize) < parseFloat(gameCopy.scoreSize));
     assert.equal(gameCopy.menuCount, 0);
     const firstTile = await page.locator(".tile").first().boundingBox();
