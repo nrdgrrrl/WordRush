@@ -245,8 +245,11 @@ function isAdultRequest(mode, config) {
   if (mode === "dirty") return true;
   return usesAdultLexicon(config);
 }
+function requiresAdultConsent(mode, config) {
+  return mode !== "dirty" && usesAdultLexicon(config);
+}
 function isAdultRoom(room) {
-  return usesAdultLexicon(roomConfig(room));
+  return requiresAdultConsent(room.mode, roomConfig(room));
 }
 function isAdultLastResult(room) {
   return room.status === "finished" && room.lastResult && isAdultRoom(room);
@@ -1316,7 +1319,7 @@ async function startRound(
     if (!preset) return;
     config = preset;
   }
-  if (usesAdultLexicon(config)) {
+  if (requiresAdultConsent(selected, config)) {
     const validConsent =
       Array.isArray(roundConsentedPlayerIds) &&
       roundConsentedPlayerIds.length > 0 &&
@@ -1371,7 +1374,7 @@ async function startRound(
         ? [...roundConsentedPlayerIds]
         : [...room.players.keys()];
   if (
-    usesAdultLexicon(config) &&
+    requiresAdultConsent(selected, config) &&
     (!consentedPlayerIds.length ||
       !consentedPlayerIds.every((id) => room.players.get(id)?.ws?.readyState === 1))
   )
@@ -1536,26 +1539,6 @@ async function startQueuedNextRound(
   const queued = room.nextRound;
   const randomRushEpoch = room.randomRushEpoch;
   clearQueuedNextRound(room);
-  if (queued.mode === "dirty") {
-    broadcast(room, state(room));
-    const pending = createPendingConsent(
-      room,
-      queued.mode,
-      configForPreset(queued.mode),
-      room.dictionaryId,
-      {
-        randomRush: true,
-        randomRushIncludeDirty: room.randomRushIncludeDirty,
-        randomRushEpoch,
-        sourceRoundId: queued.sourceRoundId,
-      },
-    );
-    if (!pending) {
-      resetRandomRush(room);
-      broadcast(room, state(room));
-    }
-    return Boolean(pending);
-  }
   const started = await startRound(room, queued.mode);
   if (!started && rooms.get(room.code) === room && room.status === "finished")
     broadcast(room, state(room));
@@ -2368,24 +2351,6 @@ async function handle(ws, message) {
       room.randomRushEpoch += 1;
       room.randomModeQueue = [];
       const selected = randomMode(room, previousMode);
-      if (selected === "dirty") {
-        const pending = createPendingConsent(
-          room,
-          selected,
-          configForPreset(selected),
-          requestedDictionaryId,
-          {
-            randomRush: true,
-            randomRushIncludeDirty: includeDirty,
-            randomRushEpoch: room.randomRushEpoch,
-          },
-        );
-        if (!pending) {
-          resetRandomRush(room);
-          broadcast(room, state(room));
-        }
-        return;
-      }
       return startRound(room, selected, null, null, null, requestedDictionaryId);
     }
     if (room.status === "finished" && room.suddenDeathSeries) {
@@ -2404,7 +2369,7 @@ async function handle(ws, message) {
         return send(ws, { type: "error", code: "UNKNOWN_MODE" });
       config = preset;
     }
-    if (usesAdultLexicon(config)) {
+    if (requiresAdultConsent(requested, config)) {
       if (room.pendingConsent)
         cancelPendingConsent(room, "configuration_changed");
       clearQueuedNextRound(room);
@@ -2844,6 +2809,7 @@ module.exports = {
   heartbeatSocket,
   WS_HEARTBEAT_MISSES,
   isAdultRequest,
+  requiresAdultConsent,
   isAdultRoom,
   isAdultLastResult,
   roomExposesAdultContent,

@@ -760,9 +760,9 @@ html[data-theme="dark"] .result-player-card,
 html[data-theme="dark"] .result-highlights article,
 html[data-theme="dark"] #resultsScreen .achievement { color: #2c1c37; }
 @media (prefers-reduced-motion: reduce) { .result-confetti i { animation: none; } }
-.party-panel { width:100%; display:flex; align-items:center; gap:.8rem; text-align:left; border:2px solid #f6c85f; background:linear-gradient(120deg,#5b2d7f,#dd5f58); color:#fff9f0; border-radius:1.2rem; padding:1rem 1.1rem; margin:.8rem 0; box-shadow:0 .45rem 0 rgba(44,28,55,.45); }
+.party-panel { width:100%; display:flex; align-items:center; gap:1rem; text-align:left; border:2px solid #f6c85f; background:linear-gradient(120deg,#5b2d7f,#dd5f58); color:#fff9f0; border-radius:1.2rem; padding:1.05rem 1.2rem; margin:.8rem 0; box-shadow:0 .45rem 0 rgba(44,28,55,.45); }
 .mode-group .party-panel { margin: 0; }
- .party-panel > span { font-size:2rem; } .party-panel div { flex:1; display:grid; gap:.1rem; } .party-panel small { font-weight:900; letter-spacing:.11em; } .party-panel strong { font-size:1.15rem; } .party-panel em { font-style:normal; opacity:.85; font-size:.82rem; } .party-panel > b { font-size:1.6rem; }
+ .party-panel > span { font-size:2.3rem; } .party-panel div { flex:1; display:grid; gap:.2rem; } .party-panel small { font-size:.82rem; line-height:1.1; font-weight:900; letter-spacing:.06em; } .party-panel strong { font-size:1.3rem; line-height:1.1; } .party-panel em { font-style:normal; opacity:.85; font-size:.9rem; line-height:1.1; } .party-panel > b { font-size:1.8rem; }
 .home-stats {
   margin: 18px 0 16px;
   padding: 15px 10px;

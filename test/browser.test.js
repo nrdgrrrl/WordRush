@@ -394,6 +394,29 @@ test("Random Rush leads grouped daily challenges and games", async () => {
     assert.equal(await page.locator("#partyMode").evaluate((node) => node.closest("details")?.id), "games");
     assert.equal(await page.locator('[data-mode="classic"]').isVisible(), true);
 
+    const modeCards = await page.locator(".game-mode-card").evaluateAll((cards) =>
+      cards.map((card) => {
+        const small = card.querySelector("small");
+        const strong = card.querySelector("strong");
+        return {
+          id: card.id || card.dataset.mode || "",
+          tagline: small?.textContent.trim(),
+          title: strong?.textContent.trim(),
+          taglineSize: Number.parseFloat(getComputedStyle(small).fontSize),
+          titleSize: Number.parseFloat(getComputedStyle(strong).fontSize),
+          iconSize: Number.parseFloat(getComputedStyle(card.querySelector(":scope > span")).fontSize),
+          height: card.getBoundingClientRect().height,
+        };
+      }),
+    );
+    const classicCard = modeCards.find((card) => card.id === "classic");
+    assert.deepEqual(
+      { tagline: classicCard.tagline, title: classicCard.title },
+      { tagline: "Two minutes of word joy", title: "Classic" },
+    );
+    assert.ok(modeCards.every((card) => card.taglineSize < card.titleSize));
+    assert.ok(modeCards.every((card) => card.iconSize >= 30 && card.height >= 88));
+
     const navTiles = await page.locator("nav button").evaluateAll((buttons) =>
       buttons.map((button) => ({
         text: button.textContent.trim(),
@@ -980,7 +1003,7 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   await browser.close();
 });
 
-test("room recovers after consent cancellation and starts classic", async () => {
+test("multiplayer Dirty Mode starts directly without consent", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
@@ -1005,35 +1028,26 @@ test("room recovers after consent cancellation and starts classic", async () => 
       return original(message);
     };
   });
+  const startedPromise = page.waitForSelector("#roundIntroScreen.active");
   await page.evaluate(() => {
     window.wordrushStartSessionGame({ mode: "dirty" });
   });
-  await page.waitForTimeout(50);
-  const consentSent = await page.evaluate(() =>
-    window.__sentMessages.some((msg) => msg.type === "start_game"),
-  );
-  assert.equal(consentSent, true);
-  await page.waitForFunction(() =>
-    document.querySelector("#multiplayerDialog").open &&
-    !document.querySelector("#consentPanel").hidden &&
-    !document.querySelector("#consentActions").hidden,
-  );
-  assert.equal(await page.locator("#consentCancel").isVisible(), true);
-  await page.locator("#consentCancel").click();
-  await page.waitForFunction(() =>
-    document.querySelector("#consentPanel").hidden &&
-    document.querySelector("#consentActions").hidden,
-  );
-  assert.equal(await page.locator("#sessionType").isEnabled(), true);
-  assert.equal(await page.locator("#sessionStart").isEnabled(), true);
-  await page.locator("#sessionType").selectOption("coop");
-  await page.locator("#sessionStart").click();
+  await startedPromise;
+  const dirtyMessages = await page.evaluate(() => ({
+    starts: window.__sentMessages.filter((msg) => msg.type === "start_game"),
+    consentVisible: !document.querySelector("#consentPanel").hidden,
+    actionsVisible: !document.querySelector("#consentActions").hidden,
+  }));
+  assert.equal(dirtyMessages.starts.length, 1);
+  assert.equal(dirtyMessages.starts[0].mode, "dirty");
+  assert.equal(dirtyMessages.consentVisible, false);
+  assert.equal(dirtyMessages.actionsVisible, false);
   await startIntro(page);
-  assert.equal(await page.locator("#gameMode").textContent(), "CO-OP");
+  assert.equal(await page.locator("#gameMode").textContent(), "DIRTY MODE · 18+");
   await browser.close();
 });
 
-test("late join during consent sees pre-admission panel", async () => {
+test("late join to a Dirty round is admitted without consent", async () => {
   const host = await chromium.launch({ headless: true, executablePath });
   const guest = await chromium.launch({ headless: true, executablePath });
   const hostPage = await host.newPage({ viewport: { width: 390, height: 844 } });
@@ -1047,69 +1061,44 @@ test("late join during consent sees pre-admission panel", async () => {
   );
   const code = await hostPage.locator("#sessionCode").textContent();
   await hostPage.locator('#multiplayerDialog button[value="cancel"]').click();
-  await hostPage.evaluate(() => {
-    window.wordrushStartSessionGame({ mode: "dirty" });
-  });
-  await hostPage.waitForTimeout(50);
-  assert.equal(
-    await hostPage
-      .locator("#gameScreen")
-      .evaluate((node) => node.classList.contains("active")),
-    false,
-  );
+  await hostPage.evaluate(() => window.wordrushStartSessionGame({ mode: "dirty" }));
+  await hostPage.waitForSelector("#roundIntroScreen.active");
   await openFriendsPanel(guestPage);
   await guestPage.locator("#sessionCard").click();
   guestPage.once("dialog", (dialog) => dialog.accept(code));
   await guestPage.locator("#sessionJoin").click();
-  const prePanelVisible = await guestPage.locator("#preAdmissionPanel").evaluate((node) => !node.hidden);
-  assert.equal(prePanelVisible, true);
+  await guestPage.waitForFunction((expectedCode) => window.wordrushSessionCode === expectedCode, code);
   const preAdmissionState = await guestPage.evaluate(() => ({
     dialogOpen: document.querySelector("#multiplayerDialog").open,
     lobbyVisible: !document.querySelector("#sessionLobby").hidden,
     prePanelVisible: !document.querySelector("#preAdmissionPanel").hidden,
     actionsVisible: !document.querySelector("#consentActions").hidden,
-    acceptEnabled: !document.querySelector("#consentAccept").disabled,
-    declineEnabled: !document.querySelector("#consentDecline").disabled,
     consentHidden: document.querySelector("#consentPanel").hidden,
-    cancelHidden: document.querySelector("#consentCancel").hidden,
     sessionCode: window.wordrushSessionCode || "",
     savedRoom: localStorage.getItem("wordrush-room"),
   }));
   assert.deepEqual(preAdmissionState, {
-    dialogOpen: true,
+    dialogOpen: false,
     lobbyVisible: true,
-    prePanelVisible: true,
-    actionsVisible: true,
-    acceptEnabled: true,
-    declineEnabled: true,
+    prePanelVisible: false,
+    actionsVisible: false,
     consentHidden: true,
-    cancelHidden: true,
-    sessionCode: "",
-    savedRoom: null,
+    sessionCode: code,
+    savedRoom: code,
   });
-  await hostPage.locator("#consentCancel").click();
-  await hostPage.waitForFunction(() =>
-    document.querySelector("#consentPanel").hidden &&
-    document.querySelector("#consentActions").hidden,
-  );
-  await hostPage.locator("#sessionType").selectOption("classic");
-  await hostPage.locator("#sessionStart").click();
-  await startIntro(hostPage);
-  assert.equal(
-    await hostPage
-      .locator("#gameScreen")
-      .evaluate((node) => node.classList.contains("active")),
-    true,
-  );
   await host.close();
   await guest.close();
 });
 
-test("solo dirty mode still works with confirmation dialog", async () => {
+test("solo Dirty Mode starts without a confirmation dialog", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  page.on("dialog", (dialog) => dialog.accept());
+  let dialogCount = 0;
+  page.on("dialog", (dialog) => {
+    dialogCount += 1;
+    void dialog.accept();
+  });
   await openGamesPanel(page);
   await page.locator('[data-mode="dirty"]').click();
   await startIntro(page);
@@ -1120,6 +1109,7 @@ test("solo dirty mode still works with confirmation dialog", async () => {
     true,
   );
   assert.equal(await page.locator(".tile").count(), 25);
+  assert.equal(dialogCount, 0);
   await browser.close();
 });
 

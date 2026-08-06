@@ -139,7 +139,7 @@
         </details>
         <div class="game-mode-stack" aria-label="Game modes">
           <div class="game-mode-card mode-random is-featured" id="randomPanel" role="button" tabindex="0" aria-label="Start Random Rush">
-            <span>🎲</span><div><small>RANDOM RUSH</small><strong id="randomPreview">Different game every round</strong><em id="randomPreviewSub">Random modes · new rules each time</em></div><button id="reroll" type="button" aria-label="Reroll Random Rush">↻</button>
+            <span>🎲</span><div><small id="randomPreview">Different game every round</small><strong>Random Rush</strong><em id="randomPreviewSub">Random modes · new rules each time</em></div><button id="reroll" type="button" aria-label="Reroll Random Rush">↻</button>
           </div>
           <details class="mode-group" id="dailyChallenges">
             <summary class="mode-group-heading">
@@ -147,22 +147,22 @@
             </summary>
             <div class="mode-group-list">
           <button class="game-mode-card mode-daily is-featured" id="dailyRush" type="button">
-            <span>☀️</span><div><small>DAILY RUSH</small><strong>One board for everyone</strong><em>60 seconds · share a challenge</em></div><b>→</b>
+            <span>☀️</span><div><small>One board for everyone</small><strong>Daily Rush</strong><em>60 seconds · share a challenge</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-echo" id="echoRace" type="button">
-            <span>👻</span><div><small>ECHO RACE</small><strong>Race your last Daily Rush</strong><em>Same board · score pace only</em></div><b>→</b>
+            <span>👻</span><div><small>Race your last Daily Rush</small><strong>Echo Race</strong><em>Same board · score pace only</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-curse" data-mode="curse">
-            <span>🧊</span><div><small>THE CURSE</small><strong>Every word closes a path</strong><em>90 seconds · frozen final tiles</em></div><b>→</b>
+            <span>🧊</span><div><small>Every word closes a path</small><strong>The Curse</strong><em>90 seconds · frozen final tiles</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-bounty" data-mode="bounty">
-            <span>✦</span><div><small>BOUNTY TILES</small><strong>Hunt the charged letters</strong><em>90 seconds · bonus paths</em></div><b>→</b>
+            <span>✦</span><div><small>Hunt the charged letters</small><strong>Bounty Tiles</strong><em>90 seconds · bonus paths</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-heist" data-mode="heist">
-            <span>🦹</span><div><small>ROOM HEIST</small><strong>Steal the long-word haul</strong><em>Teams · 6+ letter claims</em></div><b>→</b>
+            <span>🦹</span><div><small>Steal the long-word haul</small><strong>Room Heist</strong><em>Teams · 6+ letter claims</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-relay" id="wordRelay" type="button">
-            <span>🔁</span><div><small>WORD RELAY</small><strong>Pass the chain onward</strong><em>One frozen board · share a turn</em></div><b>→</b>
+            <span>🔁</span><div><small>Pass the chain onward</small><strong>Word Relay</strong><em>One frozen board · share a turn</em></div><b>→</b>
           </button>
             </div>
           </details>
@@ -172,40 +172,40 @@
             </summary>
             <div class="mode-group-list">
           <button class="party-panel" id="partyMode" type="button">
-            <span>🎉</span><div><small>PARTY MODE</small><strong>Build the next round together</strong><em>Pick grid · words · time</em></div><b>→</b>
+            <span>🎉</span><div><small>Build the next round together</small><strong>Party Mode</strong><em>Pick grid · words · time</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-classic" data-mode="classic">
-            <span>🌈</span><div><small>CLASSIC</small><strong>Two minutes of word joy</strong><em>Free play · 4×4 grid</em></div><b>→</b>
+            <span>🌈</span><div><small>Two minutes of word joy</small><strong>Classic</strong><em>Free play · 4×4 grid</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-sudden" data-mode="sudden">
-            <span>⚡</span><div><small>SUDDEN DEATH</small><strong>One miss ends the round</strong><em>All thrill · no safety net</em></div><b>→</b>
+            <span>⚡</span><div><small>One miss ends the round</small><strong>Sudden Death</strong><em>All thrill · no safety net</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-dirty" data-mode="dirty">
-            <span>😼</span><div><small>DIRTY MODE</small><strong>Wordplay after dark</strong><em>18+ dictionary</em></div><b>→</b>
+            <span>😼</span><div><small>Wordplay after dark</small><strong>Dirty Mode</strong><em>18+ dictionary</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-race" data-mode="race">
-            <span>🏁</span><div><small>RACE TO 500</small><strong>Score fast. Finish first.</strong><em>Beat the clock to 500 points</em></div><b>→</b>
+            <span>🏁</span><div><small>Score fast. Finish first.</small><strong>Race to 500</strong><em>Beat the clock to 500 points</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-minimum" data-mode="minimum">
-            <span>🦒</span><div><small>WORD STRETCH</small><strong>Make every word count</strong><em>Long words only</em></div><b>→</b>
+            <span>🦒</span><div><small>Make every word count</small><strong>Word Stretch</strong><em>Long words only</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-blitz" data-mode="blitz">
-            <span>⚡</span><div><small>BLITZ</small><strong>Move fast, score faster</strong><em>60 seconds · lightning words</em></div><b>→</b>
+            <span>⚡</span><div><small>Move fast, score faster</small><strong>Blitz</strong><em>60 seconds · lightning words</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-longhaul" data-mode="longhaul">
-            <span>🗻</span><div><small>LONG HAUL</small><strong>Go big or go home</strong><em>6+ letters · 6×6 grid</em></div><b>→</b>
+            <span>🗻</span><div><small>Go big or go home</small><strong>Long Haul</strong><em>6+ letters · 6×6 grid</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-storm" data-mode="storm">
-            <span>🌪️</span><div><small>LETTER STORM</small><strong>Search every corner</strong><em>8×8 grid · 120 seconds</em></div><b>→</b>
+            <span>🌪️</span><div><small>Search every corner</small><strong>Letter Storm</strong><em>8×8 grid · 120 seconds</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-scoreattack" data-mode="scoreattack">
-            <span>🎯</span><div><small>SCORE ATTACK</small><strong>Hit 250 before time</strong><em>First to 250 points wins</em></div><b>→</b>
+            <span>🎯</span><div><small>Hit 250 before time</small><strong>Score Attack</strong><em>First to 250 points wins</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-chain" data-mode="chain">
-            <span>🔗</span><div><small>WORD CHAIN</small><strong>Keep the chain alive</strong><em>Each word follows the last</em></div><b>→</b>
+            <span>🔗</span><div><small>Keep the chain alive</small><strong>Word Chain</strong><em>Each word follows the last</em></div><b>→</b>
           </button>
           <button class="game-mode-card mode-custom" id="customGame">
-            <span>⚙️</span><div><small>CUSTOM GAME</small><strong>Make the rules yours</strong><em>Choose the grid, goal, and timer</em></div><b>→</b>
+            <span>⚙️</span><div><small>Make the rules yours</small><strong>Custom Game</strong><em>Choose the grid, goal, and timer</em></div><b>→</b>
           </button>
             </div>
           </details>
@@ -581,7 +581,7 @@
           </div>
           <p class="random-rush-choice-copy">
             Decide whether Dirty Mode may appear during this room’s current Random Rush run.
-            Every Dirty round still asks everyone to consent before it starts.
+            Dirty rounds start like any other game once you include them.
           </p>
           <div class="random-rush-choice-actions">
             <button type="button" class="primary" id="randomRushKeepClean">

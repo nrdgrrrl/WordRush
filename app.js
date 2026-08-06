@@ -1338,14 +1338,10 @@ async function start(
   let nextConfig;
   let nextCustomAdult;
   if (preset) {
-    if (usesAdultLexicon(preset) && !confirm("Dirty Mode contains adult language. Continue?"))
-      return;
     nextConfig = { ...preset };
     nextCustomAdult = usesAdultLexicon(preset);
   } else if (mode === "custom") {
     const raw = { ...(rawConfig || {}), adult: adultMode || Boolean(rawConfig?.adult) };
-    if (usesAdultLexicon(raw) && !confirm("Dirty Mode contains adult language. Continue?"))
-      return;
     const result = validateCustomConfig(raw);
     if (!result.valid) {
       toast(result.error || "Invalid custom configuration");

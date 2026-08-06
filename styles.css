@@ -577,11 +577,11 @@ nav small {
 .game-mode-card {
   position: relative;
   width: 100%;
-  min-height: 88px;
+  min-height: 96px;
   display: flex;
   align-items: center;
-  gap: 13px;
-  padding: 14px 16px;
+  gap: 15px;
+  padding: 15px 18px;
   text-align: left;
   color: #201a34;
   border: 2px solid var(--mode-edge, #fff8cc);
@@ -600,8 +600,8 @@ nav small {
   box-shadow: 0 3px 0 var(--mode-shadow, #5c4b7d);
 }
 .game-mode-card > span {
-  width: 42px;
-  font-size: 32px;
+  width: 48px;
+  font-size: 36px;
   text-align: center;
   filter: drop-shadow(0 2px 0 #ffffff99);
 }
@@ -609,23 +609,25 @@ nav small {
   min-width: 0;
   flex: 1;
   display: grid;
-  gap: 2px;
+  gap: 3px;
 }
 .game-mode-card small {
-  font: 900 10px monospace;
-  letter-spacing: 0.12em;
+  font: 900 11px/1.1 monospace;
+  letter-spacing: 0.06em;
 }
 .game-mode-card strong {
-  font-size: 16px;
+  font-size: 18px;
+  line-height: 1.1;
 }
 .game-mode-card em {
   color: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.1;
   font-style: normal;
   opacity: 0.78;
 }
 .game-mode-card > b {
-  font-size: 26px;
+  font-size: 29px;
 }
 .mode-classic { --mode-start: #b7f5ff; --mode-end: #80b9ff; --mode-edge: #e7fbff; --mode-shadow: #5682bb; }
 .mode-daily { --mode-start: #ffe88b; --mode-end: #ffab72; --mode-edge: #fff5be; --mode-shadow: #c97848; }
@@ -635,12 +637,12 @@ nav small {
 .mode-heist { --mode-start: #b5f4db; --mode-end: #67c9bf; --mode-edge: #e5fff4; --mode-shadow: #418c88; }
 .mode-relay { --mode-start: #ffd4e3; --mode-end: #f19ab9; --mode-edge: #fff0f6; --mode-shadow: #b56d8b; }
 .mode-daily.is-featured {
-  min-height: 96px;
+  min-height: 104px;
   border-width: 3px;
 }
 .mode-random { --mode-start: #e2ff84; --mode-end: #7fe5a6; --mode-edge: #f6ffc4; --mode-shadow: #48956b; }
 .mode-random.is-featured {
-  min-height: 104px;
+  min-height: 110px;
   border-width: 3px;
   box-shadow: 0 5px 0 var(--mode-shadow);
 }
@@ -678,9 +680,12 @@ nav small {
   .hero-art span { width: 28px; height: 38px; font-size: 18px; }
   .hero-art b { width: 24px; height: 24px; font-size: 13px; }
   .hero-art .avatar { top: 50%; right: 6px; width: 34px; height: 34px; font-size: 16px; }
-  .game-mode-card { min-height: 80px; padding: 12px; }
-  .game-mode-card > span { width: 34px; font-size: 27px; }
-  .game-mode-card strong { font-size: 14px; }
+  .game-mode-card { min-height: 88px; gap: 11px; padding: 12px 13px; }
+  .game-mode-card > span { width: 38px; font-size: 30px; }
+  .game-mode-card small { font-size: 10px; }
+  .game-mode-card strong { font-size: 16px; }
+  .game-mode-card em { font-size: 12px; }
+  .game-mode-card > b { font-size: 25px; }
 }
 
 .round-intro-screen {
