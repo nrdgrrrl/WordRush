@@ -260,6 +260,27 @@ test("shared footer follows colorful navigation on Home, Stats, and Progress", a
       /Wordrush is a fast, free online word game/,
     );
 
+    const navTiles = await page.locator("nav button").evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const rect = button.getBoundingClientRect();
+        const label = button.querySelector("small");
+        return {
+          left: rect.left,
+          right: rect.right,
+          width: rect.width,
+          height: rect.height,
+          iconSize: Number.parseFloat(getComputedStyle(button).fontSize),
+          labelSize: Number.parseFloat(getComputedStyle(label).fontSize),
+        };
+      }),
+    );
+    assert.ok(navTiles.every((tile) => tile.height >= 80));
+    assert.ok(navTiles.every((tile) => tile.iconSize >= 25));
+    assert.ok(navTiles.every((tile) => tile.labelSize >= 11));
+    assert.ok(navTiles.every((tile) => Math.abs(tile.width - navTiles[0].width) < 1));
+    assert.ok(Math.abs(navTiles[1].left - navTiles[0].right - 10) < 1);
+    assert.ok(Math.abs(navTiles[2].left - navTiles[1].right - 10) < 1);
+
     const footerFollowsNav = await page.evaluate(() => {
       const nav = document.querySelector("nav").getBoundingClientRect();
       const footer = document.querySelector(".site-footer").getBoundingClientRect();
