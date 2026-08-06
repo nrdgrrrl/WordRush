@@ -239,6 +239,9 @@ h2 {
   background: color-mix(in srgb, var(--paper) 88%, #b9f2dc);
   font: 11px monospace;
 }
+.chain-status[hidden] {
+  display: none;
+}
 .chain-status div {
   display: flex;
   justify-content: space-between;
@@ -504,14 +507,15 @@ nav small {
 }
 .hero-art .avatar {
   position: absolute;
-  top: 4px;
+  top: 50%;
   right: 8px;
   z-index: 1;
-  width: 32px;
-  height: 32px;
+  width: 38px;
+  height: 38px;
   border: 2px solid #fff9f0;
   box-shadow: 0 3px 0 #211a36;
   font-size: 18px;
+  transform: translateY(-50%);
 }
 .hero-art .avatar:focus-visible {
   outline: 3px solid var(--lime);
@@ -573,11 +577,11 @@ nav small {
 .game-mode-card {
   position: relative;
   width: 100%;
-  min-height: 88px;
+  min-height: 96px;
   display: flex;
   align-items: center;
-  gap: 13px;
-  padding: 14px 16px;
+  gap: 15px;
+  padding: 15px 18px;
   text-align: left;
   color: #201a34;
   border: 2px solid var(--mode-edge, #fff8cc);
@@ -596,8 +600,8 @@ nav small {
   box-shadow: 0 3px 0 var(--mode-shadow, #5c4b7d);
 }
 .game-mode-card > span {
-  width: 42px;
-  font-size: 32px;
+  width: 48px;
+  font-size: 36px;
   text-align: center;
   filter: drop-shadow(0 2px 0 #ffffff99);
 }
@@ -605,23 +609,25 @@ nav small {
   min-width: 0;
   flex: 1;
   display: grid;
-  gap: 2px;
+  gap: 3px;
 }
 .game-mode-card small {
-  font: 900 10px monospace;
-  letter-spacing: 0.12em;
+  font: 900 11px/1.1 monospace;
+  letter-spacing: 0.06em;
 }
 .game-mode-card strong {
-  font-size: 16px;
+  font-size: 18px;
+  line-height: 1.1;
 }
 .game-mode-card em {
   color: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.1;
   font-style: normal;
   opacity: 0.78;
 }
 .game-mode-card > b {
-  font-size: 26px;
+  font-size: 29px;
 }
 .mode-classic { --mode-start: #b7f5ff; --mode-end: #80b9ff; --mode-edge: #e7fbff; --mode-shadow: #5682bb; }
 .mode-daily { --mode-start: #ffe88b; --mode-end: #ffab72; --mode-edge: #fff5be; --mode-shadow: #c97848; }
@@ -631,14 +637,14 @@ nav small {
 .mode-heist { --mode-start: #b5f4db; --mode-end: #67c9bf; --mode-edge: #e5fff4; --mode-shadow: #418c88; }
 .mode-relay { --mode-start: #ffd4e3; --mode-end: #f19ab9; --mode-edge: #fff0f6; --mode-shadow: #b56d8b; }
 .mode-daily.is-featured {
-  min-height: 96px;
+  min-height: 104px;
   border-width: 3px;
 }
 .mode-random { --mode-start: #e2ff84; --mode-end: #7fe5a6; --mode-edge: #f6ffc4; --mode-shadow: #48956b; }
 .mode-random.is-featured {
-  min-height: 104px;
+  min-height: 110px;
   border-width: 3px;
-  box-shadow: 0 8px 0 var(--mode-shadow);
+  box-shadow: 0 5px 0 var(--mode-shadow);
 }
 .mode-random.is-featured::before {
   content: "★ FEATURED";
@@ -673,10 +679,13 @@ nav small {
   .hero-art { gap: 3px; padding-right: 44px; }
   .hero-art span { width: 28px; height: 38px; font-size: 18px; }
   .hero-art b { width: 24px; height: 24px; font-size: 13px; }
-  .hero-art .avatar { top: 4px; right: 6px; width: 28px; height: 28px; font-size: 16px; }
-  .game-mode-card { min-height: 80px; padding: 12px; }
-  .game-mode-card > span { width: 34px; font-size: 27px; }
-  .game-mode-card strong { font-size: 14px; }
+  .hero-art .avatar { top: 50%; right: 6px; width: 34px; height: 34px; font-size: 16px; }
+  .game-mode-card { min-height: 88px; gap: 11px; padding: 12px 13px; }
+  .game-mode-card > span { width: 38px; font-size: 30px; }
+  .game-mode-card small { font-size: 10px; }
+  .game-mode-card strong { font-size: 16px; }
+  .game-mode-card em { font-size: 12px; }
+  .game-mode-card > b { font-size: 25px; }
 }
 
 .round-intro-screen {
@@ -1033,12 +1042,18 @@ body:has(#gameScreen.active) .app-shell {
   padding: 6px;
 }
 .grid {
-  width: auto;
-  height: min(100%, calc(100vw - 56px));
+  width: min(100%, calc(100svh - 420px), calc(100vw - 56px));
+  height: auto;
   aspect-ratio: 1/1;
   flex: 0 0 auto;
   max-width: 100%;
   max-height: 100%;
+  grid-auto-rows: 1fr;
+}
+@media (max-height: 650px) {
+  .grid {
+    width: min(100%, calc(100svh - 380px), calc(100vw - 56px));
+  }
 }
 .tile {
   background: #f7dfe4;
@@ -1467,9 +1482,41 @@ body:has(#gameScreen.active) .app-shell {
   font-size: 18px;
 }
 #gameScreen.active .rule-banner {
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding-inline: 12px;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.1;
+  text-align: center;
+  white-space: nowrap;
   padding-block: 9px;
   margin-block: 12px 10px;
+}
+#gameScreen.active .rule-banner > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#gameScreen.active .rule-divider {
+  flex: none;
+  color: var(--coral);
+}
+#gameScreen.active #gameHint {
+  font-size: inherit;
+}
+#gameScreen.active .preview {
+  transition: opacity .22s ease, transform .22s ease;
+}
+#gameScreen.active .preview.is-tracing {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+#gameScreen.active .game-foot {
+  min-height: 28px;
 }
 #gameScreen.active .game-meta {
   margin-block: 8px 7px;
@@ -1478,8 +1525,8 @@ body:has(#gameScreen.active) .app-shell {
   font-size: 32px;
 }
 #gameScreen.active .preview {
-  font-size: 24px;
-  height: 42px;
+  font-size: 18px;
+  height: 36px;
   margin-bottom: 7px;
 }
 @media (max-height: 650px) {
@@ -1494,16 +1541,12 @@ body:has(#gameScreen.active) .app-shell {
   #gameScreen.active .live-player b {
     font-size: 28px;
   }
-  #gameScreen.active .preview {
-    font-size: 21px;
-    height: 34px;
-  }
   #gameScreen.active .game-meta {
     margin-block: 5px;
   }
   #gameScreen.active .preview {
-    height: 34px;
-    font-size: 21px;
+    height: 30px;
+    font-size: 18px;
     margin-bottom: 4px;
   }
 }

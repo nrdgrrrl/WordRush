@@ -31,10 +31,28 @@ const executablePath =
   "/home/victoria/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome";
 let baseUrl;
 async function startClassic(page) {
+  await openGamesPanel(page);
   await page.locator('button[data-mode="classic"]').click();
   await page.waitForSelector("#customDialog[open]");
   await page.locator("#customStart").click();
   await page.locator("#introStart").click();
+  await page.waitForSelector("#gameScreen.active");
+}
+async function openFriendsPanel(page) {
+  const panel = page.locator("#friendsPanel");
+  if (!(await panel.evaluate((node) => node.open)))
+    await page.locator("#friendsHeading").click();
+}
+async function openModeGroup(page, id) {
+  const panel = page.locator("#" + id);
+  if (!(await panel.evaluate((node) => node.open)))
+    await panel.locator(":scope > summary").click();
+}
+async function openGamesPanel(page) {
+  await openModeGroup(page, "games");
+}
+async function openDailyChallenges(page) {
+  await openModeGroup(page, "dailyChallenges");
 }
 async function startIntro(page) {
   await page.waitForFunction(() =>
@@ -54,6 +72,7 @@ async function traceWord(page, path) {
   await page.evaluate(() => Promise.resolve());
 }
 async function startSoloMode(page, mode) {
+  await openGamesPanel(page);
   await page.locator(`[data-mode="${mode}"]`).click();
   if (mode === "classic") {
     await page.waitForSelector("#customDialog[open]");
@@ -181,6 +200,36 @@ test("mobile play board stays within its available space on short screens", asyn
     const page = await browser.newPage({ viewport });
     await page.goto(baseUrl);
     await startClassic(page);
+    assert.equal(await page.locator("#chainStatus").isHidden(), true);
+    const gameCopy = await page.evaluate(() => {
+      const rule = document.querySelector("#ruleText").getBoundingClientRect();
+      const hint = document.querySelector("#gameHint").getBoundingClientRect();
+      const ruleSize = getComputedStyle(document.querySelector("#ruleText")).fontSize;
+      const hintSize = getComputedStyle(document.querySelector("#gameHint")).fontSize;
+      const scoreSize = getComputedStyle(document.querySelector("#gameScore")).fontSize;
+      return {
+        ruleTop: rule.top,
+        hintTop: hint.top,
+        boardBottom: document.querySelector(".board").getBoundingClientRect().bottom,
+        hintBottom: hint.bottom,
+        ruleSize,
+        hintSize,
+        scoreSize,
+        menuCount: document.querySelectorAll(".game-head > b").length,
+      };
+    });
+    assert.ok(gameCopy.ruleTop < gameCopy.hintTop);
+    assert.ok(gameCopy.hintTop >= gameCopy.boardBottom);
+    assert.ok(gameCopy.hintBottom > gameCopy.hintTop);
+    assert.ok(parseFloat(gameCopy.ruleSize) > parseFloat(gameCopy.hintSize));
+    assert.ok(parseFloat(gameCopy.ruleSize) < parseFloat(gameCopy.scoreSize));
+    assert.equal(gameCopy.menuCount, 0);
+    const firstTile = await page.locator(".tile").first().boundingBox();
+    await page.mouse.move(firstTile.x + firstTile.width / 2, firstTile.y + firstTile.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator("#preview").evaluate((node) => getComputedStyle(node).opacity), "0");
+    await page.mouse.up();
     await page.evaluate(() => {
       const status = document.querySelector("#chainStatus");
       const guidance = document.querySelector("#chainGuidance");
@@ -211,51 +260,201 @@ test("mobile play board stays within its available space on short screens", asyn
     assert.ok(bounds.grid.right <= bounds.board.right);
     assert.ok(bounds.grid.bottom <= bounds.board.bottom);
     assert.ok(bounds.grid.left >= bounds.board.left);
+    const tileGaps = await page.evaluate(() => {
+      const tiles = [...document.querySelectorAll("#grid .tile")];
+      const horizontal = tiles[1].getBoundingClientRect().left -
+        tiles[0].getBoundingClientRect().right;
+      const vertical = tiles[4].getBoundingClientRect().top -
+        tiles[0].getBoundingClientRect().bottom;
+      return { horizontal, vertical };
+    });
+    assert.ok(Math.abs(tileGaps.horizontal - tileGaps.vertical) < 1);
     await page.close();
   }
   await browser.close();
 });
 
-test("Daily Rush freezes one shared board and offers a friend challenge link", async (t) => {
+test("home friends panel starts collapsed and expands on touch", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(baseUrl);
+
+    assert.equal(await page.locator("#friendsPanel").evaluate((panel) => panel.open), false);
+    assert.equal((await page.locator("#friendsHeading").textContent()).trim(), "Play with friends");
+    assert.equal(await page.locator("#sessionCard").isHidden(), true);
+    assert.doesNotMatch(await page.locator("#friendsPanel").textContent(), /LIVE TOGETHER/);
+
+    const homeFlowGaps = await page.evaluate(() => {
+      const selectors = [
+        ".home-stats",
+        "#friendsPanel",
+        "#randomPanel",
+        "#dailyChallenges",
+        "#games",
+        "nav button",
+        ".site-footer",
+      ];
+      const boxes = selectors.map((selector) =>
+        document.querySelector(selector).getBoundingClientRect(),
+      );
+      return boxes.slice(1).map((box, index) => Math.round(box.top - boxes[index].bottom));
+    });
+    assert.deepEqual(homeFlowGaps, [10, 10, 10, 10, 10, 10]);
+
+    await page.locator("#friendsHeading").click();
+    assert.equal(await page.locator("#friendsPanel").evaluate((panel) => panel.open), true);
+    assert.equal(await page.locator("#sessionCard").isVisible(), true);
+    assert.equal(await page.locator("#scoreboardButton").isVisible(), true);
+    await page.locator("#sessionCard").click();
+    await page.waitForSelector("#multiplayerDialog[open]");
+    await page.locator('#multiplayerDialog button[value="cancel"]').click();
+
+    await page.locator("#friendsHeading").click();
+    assert.equal(await page.locator("#friendsPanel").evaluate((panel) => panel.open), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("shared footer follows colorful navigation on Home, Stats, and Progress", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(baseUrl);
+    await page.waitForSelector(".site-footer");
+
+    assert.equal(await page.locator("nav button").count(), 3);
+    assert.equal(await page.locator(".home-achievements").count(), 0);
+    assert.match(
+      await page.locator(".site-footer").textContent(),
+      /Wordrush is a fast, free online word game/,
+    );
+
+    const navTiles = await page.locator("nav button").evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const rect = button.getBoundingClientRect();
+        const label = button.querySelector("small");
+        return {
+          left: rect.left,
+          right: rect.right,
+          width: rect.width,
+          height: rect.height,
+          iconSize: Number.parseFloat(getComputedStyle(button).fontSize),
+          labelSize: Number.parseFloat(getComputedStyle(label).fontSize),
+        };
+      }),
+    );
+    assert.ok(navTiles.every((tile) => tile.height >= 80));
+    assert.ok(navTiles.every((tile) => tile.iconSize >= 25));
+    assert.ok(navTiles.every((tile) => tile.labelSize >= 11));
+    assert.ok(navTiles.every((tile) => Math.abs(tile.width - navTiles[0].width) < 1));
+    assert.ok(Math.abs(navTiles[1].left - navTiles[0].right - 10) < 1);
+    assert.ok(Math.abs(navTiles[2].left - navTiles[1].right - 10) < 1);
+
+    const footerFollowsNav = await page.evaluate(() => {
+      const nav = document.querySelector("nav").getBoundingClientRect();
+      const footer = document.querySelector(".site-footer").getBoundingClientRect();
+      return footer.top >= nav.bottom;
+    });
+    assert.equal(footerFollowsNav, true);
+
+    for (const screen of ["statsScreen", "achievementsScreen"]) {
+      await page.locator(`nav button[data-screen="${screen}"]`).click();
+      await page.waitForSelector(`#${screen}.active`);
+      assert.equal(await page.locator(".site-footer").isVisible(), true);
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Random Rush leads grouped daily challenges and games", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(baseUrl);
+    assert.equal(
+      await page.locator(".game-mode-stack > :first-child").getAttribute("id"),
+      "randomPanel",
+    );
+    assert.equal(await page.locator("#randomPreview").textContent(), "Different game every round");
+    assert.match(await page.locator("#randomPreviewSub").textContent(), /Random modes/);
+    assert.equal(await page.locator("#dailyChallenges").evaluate((node) => node.open), false);
+    assert.equal(await page.locator("#games").evaluate((node) => node.open), false);
+    assert.equal(await page.locator("#dailyRush").isHidden(), true);
+    assert.equal(await page.locator('[data-mode="classic"]').isHidden(), true);
+
+    await page.locator("#dailyChallenges > summary").click();
+    assert.equal(await page.locator("#dailyChallenges").evaluate((node) => node.open), true);
+    assert.equal(await page.locator("#dailyRush").isVisible(), true);
+    assert.equal(await page.locator('[data-mode="classic"]').isHidden(), true);
+    await page.locator("#dailyChallenges > summary").click();
+    assert.equal(await page.locator("#dailyChallenges").evaluate((node) => node.open), false);
+
+    await page.locator("#games > summary").click();
+    assert.equal(await page.locator("#games").evaluate((node) => node.open), true);
+    assert.equal(await page.locator("#partyMode").isVisible(), true);
+    assert.equal(await page.locator("#partyMode").evaluate((node) => node.closest("details")?.id), "games");
+    assert.equal(await page.locator('[data-mode="classic"]').isVisible(), true);
+
+    const modeCards = await page.locator(".game-mode-card").evaluateAll((cards) =>
+      cards.map((card) => {
+        const small = card.querySelector("small");
+        const strong = card.querySelector("strong");
+        return {
+          id: card.id || card.dataset.mode || "",
+          tagline: small?.textContent.trim(),
+          title: strong?.textContent.trim(),
+          taglineSize: Number.parseFloat(getComputedStyle(small).fontSize),
+          titleSize: Number.parseFloat(getComputedStyle(strong).fontSize),
+          iconSize: Number.parseFloat(getComputedStyle(card.querySelector(":scope > span")).fontSize),
+          height: card.getBoundingClientRect().height,
+        };
+      }),
+    );
+    const classicCard = modeCards.find((card) => card.id === "classic");
+    assert.deepEqual(
+      { tagline: classicCard.tagline, title: classicCard.title },
+      { tagline: "Two minutes of word joy", title: "Classic" },
+    );
+    assert.ok(modeCards.every((card) => card.taglineSize < card.titleSize));
+    assert.ok(modeCards.every((card) => card.iconSize >= 30 && card.height >= 88));
+
+    const navTiles = await page.locator("nav button").evaluateAll((buttons) =>
+      buttons.map((button) => ({
+        text: button.textContent.trim(),
+        background: getComputedStyle(button).backgroundImage,
+      })),
+    );
+    assert.deepEqual(navTiles.map(({ text }) => text), ["Home", "Stats", "Progress"]);
+    assert.match(navTiles[0].background, /assets\/nav\/home\.webp/);
+    assert.match(navTiles[1].background, /assets\/nav\/stats\.webp/);
+    assert.match(navTiles[2].background, /assets\/nav\/progress\.webp/);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Daily Rush freezes one shared board without adding a results panel", async (t) => {
   const browser = await chromium.launch({ headless: true, executablePath });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
+  await openDailyChallenges(page);
   await page.locator("#dailyRush").click();
   await page.waitForSelector("#roundIntroScreen.active");
   await page.locator("#introStart").click();
   await page.waitForSelector("#gameScreen.active");
   assert.equal(await page.locator(".tile").count(), 16);
+  assert.equal(await page.locator("#chainStatus").isHidden(), true);
   const board = await page.locator(".tile").allTextContents();
   assert.match(await page.locator("#gameTitle").textContent(), /^Daily Rush · \d{4}-\d{2}-\d{2}$/);
 
   await page.locator("#endGame").click();
   await page.waitForSelector("#resultsScreen.active");
-  assert.equal(await page.locator("#dailyChallengeResult").isHidden(), false);
-  await page.evaluate(() => {
-    Object.defineProperty(navigator, "share", { configurable: true, value: undefined });
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText: async (value) => { window.wordrushCopiedLink = value; } },
-    });
-  });
-  await page.locator("#shareDailyChallenge").click();
-  await page.waitForFunction(() =>
-    document.querySelector("#dailyShareStatus")?.textContent === "Challenge link copied.",
-  );
-  const link = await page.evaluate(() => window.wordrushCopiedLink);
-  const challenger = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await challenger.goto(link);
-  await challenger.waitForSelector("#roundIntroScreen.active");
-  await challenger.locator("#introStart").click();
-  await challenger.waitForSelector("#gameScreen.active");
-  assert.deepEqual(await challenger.locator(".tile").allTextContents(), board);
-  await challenger.locator("#endGame").click();
-  await challenger.waitForSelector("#resultsScreen.active");
-  assert.match(
-    await challenger.locator("#dailyChallengeResultDetail").textContent(),
-    /challenge|tie|beat/i,
-  );
+  assert.equal(await page.locator("#dailyChallengeResult").isHidden(), true);
+  assert.equal(await page.locator("#again").textContent(), "Try today again →");
 });
 
 test("browser can start, play, persist stats, and use the tile-banner profile button", async () => {
@@ -368,6 +567,21 @@ test("browser can start, play, persist stats, and use the tile-banner profile bu
     });
   });
   assert.equal(heroAvatarOverlapsTile, false);
+  const heroAvatarAlignment = await page.evaluate(() => {
+    const avatar = document.querySelector("#profileButton").getBoundingClientRect();
+    const tiles = [...document.querySelectorAll(".hero-art > span, .hero-art > b")];
+    const tileCenters = tiles.map((tile) => {
+      const box = tile.getBoundingClientRect();
+      return box.top + box.height / 2;
+    });
+    const tileCenter = tileCenters.reduce((sum, center) => sum + center, 0) / tileCenters.length;
+    return {
+      avatarHeight: avatar.height,
+      centerDistance: Math.abs(avatar.top + avatar.height / 2 - tileCenter),
+    };
+  });
+  assert.ok(heroAvatarAlignment.avatarHeight >= 34);
+  assert.ok(heroAvatarAlignment.centerDistance < 14);
   assert.deepEqual(errors, []);
   await browser.close();
 });
@@ -398,6 +612,7 @@ test("global scoreboard displays an authoritative multiplayer result and all per
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
+  await openFriendsPanel(page);
   await page.locator("#scoreboardButton").click();
   await page.waitForSelector("#scoreboardScreen.active");
   await page.waitForFunction(() => !document.querySelector("#scoreboardList").textContent.includes("Loading"));
@@ -439,6 +654,7 @@ test("random rush owns results continuation and stops on navigation", async (t) 
     (await rushEvents()).filter((event) => event.name === name).length;
   const waitPastRushDelay = () => page.clock.fastForward(5100);
 
+  await openGamesPanel(page);
   await page.locator('button[data-mode="minimum"]').click();
   await page.waitForSelector("#roundIntroScreen.active");
   const startsBeforeLeave = await countEvents("round-started");
@@ -451,6 +667,7 @@ test("random rush owns results continuation and stops on navigation", async (t) 
 
   await page.locator('nav [data-screen="homeScreen"]').click();
   await page.waitForSelector("#homeScreen.active");
+  await openGamesPanel(page);
   const introsBeforeReplacement = await countEvents("round-intro");
   await page.locator('button[data-mode="minimum"]').click();
   await page.waitForFunction(
@@ -460,6 +677,7 @@ test("random rush owns results continuation and stops on navigation", async (t) 
     introsBeforeReplacement + 1,
   );
   await page.clock.fastForward(1000);
+  await openGamesPanel(page);
   await page.evaluate(() =>
     document.querySelector('button[data-mode="race"]').click(),
   );
@@ -481,6 +699,7 @@ test("random rush owns results continuation and stops on navigation", async (t) 
 
   await page.locator("#gameBack").click();
   await page.waitForSelector("#homeScreen.active");
+  await openGamesPanel(page);
   await page.locator('button[data-mode="minimum"]').click();
   await page.waitForSelector("#roundIntroScreen.active");
   const startsBeforeStartNow = await countEvents("round-started");
@@ -495,6 +714,24 @@ test("random rush owns results continuation and stops on navigation", async (t) 
 
   await page.locator("#randomPanel").click();
   await startIntro(page);
+  const gameActions = await page.evaluate(() => {
+    const foot = document.querySelector("#gameScreen .game-foot");
+    const buttons = [...foot.querySelectorAll("button:not([hidden])")];
+    const boxes = buttons.map((button) => button.getBoundingClientRect());
+    return {
+      labels: buttons.map((button) => button.textContent.trim()),
+      widths: boxes.map((box) => box.width),
+      heights: boxes.map((box) => box.height),
+      seriesHidden: document.querySelector("#cancelSeries").hidden,
+      columns: getComputedStyle(foot).gridTemplateColumns,
+    };
+  });
+  assert.deepEqual(gameActions.labels, ["End Rush", "End Round"]);
+  assert.ok(gameActions.seriesHidden);
+  assert.ok(gameActions.widths.every((width) => width >= 0));
+  assert.ok(Math.max(...gameActions.widths) - Math.min(...gameActions.widths) < 1);
+  assert.ok(gameActions.heights.every((height) => height >= 44));
+  assert.match(gameActions.columns, /\S+\s+\S+/);
   await page.locator("#gameBack").click();
   await page.waitForSelector("#homeScreen.active");
   const backAutoAdvances = await countRushAction("auto_advance");
@@ -514,6 +751,11 @@ test("random rush owns results continuation and stops on navigation", async (t) 
     await page.locator("#rushNextRoundCountdown").textContent(),
     /^Starts in 5s · tap to start now$/,
   );
+  const nextRoundStyle = await page.locator("#rushNextRound").evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { flexDirection: style.flexDirection, textAlign: style.textAlign };
+  });
+  assert.deepEqual(nextRoundStyle, { flexDirection: "column", textAlign: "center" });
   const homeAutoAdvances = await countRushAction("auto_advance");
   await page.locator('#resultsScreen [data-screen="homeScreen"]').click();
   await page.waitForSelector("#homeScreen.active");
@@ -578,12 +820,12 @@ test("random rush owns results continuation and stops on navigation", async (t) 
   assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
   assert.equal(await page.locator("#gameScreen.active").count(), 0);
 
+  await openGamesPanel(page);
   await page.locator('button[data-mode="minimum"]').click();
   await page.waitForSelector("#roundIntroScreen.active");
   await page.locator("#introStart").click();
   await page.waitForSelector("#gameScreen.active");
   assert.equal(await page.locator("#stopRush").isHidden(), true);
-  await browser.close();
 });
 
 test("solo submission commits stay ordered across deferred dictionary responses", async () => {
@@ -670,6 +912,18 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   pending.clear();
   await resetSoloBrowserPage(page, suddenFixture);
   await startSoloMode(page, "sudden");
+  await page.evaluate(() => {
+    const explosion = document.querySelector("#suddenDeathExplosion");
+    window.__suddenDeathExplosionActivations = 0;
+    window.__suddenDeathExplosionObserver = new MutationObserver(() => {
+      if (explosion.classList.contains("is-active"))
+        window.__suddenDeathExplosionActivations++;
+    });
+    window.__suddenDeathExplosionObserver.observe(explosion, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  });
   const suddenRequests = [
     wordRequestWaiter(pending, waiters, "BAD"),
     wordRequestWaiter(pending, waiters, "RAT"),
@@ -689,6 +943,11 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   await page.waitForSelector("#resultsScreen.active");
   assert.match(await page.locator("#suddenDeathCalloutDetail").textContent(), /BAD/);
   assert.equal(await page.locator("#suddenDeathCallout").isHidden(), false);
+  assert.equal(
+    await page.evaluate(() => window.__suddenDeathExplosionActivations),
+    1,
+  );
+  await page.evaluate(() => window.__suddenDeathExplosionObserver.disconnect());
 
   const replacementFixture = {
     size: 4,
@@ -760,15 +1019,30 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   await browser.close();
 });
 
-test("room recovers after consent cancellation and starts classic", async () => {
+test("multiplayer Dirty Mode starts directly without consent", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator("#sessionManage").click();
+  await openFriendsPanel(page);
+  await page.locator("#sessionCard").click();
   await page.locator("#sessionCreate").click();
   await page.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
   );
+  const qrLayout = await page.evaluate(() => {
+    const qr = document.querySelector("#sessionQr").getBoundingClientRect();
+    const invite = document.querySelector("#sessionInvite").getBoundingClientRect();
+    return { qrWidth: qr.width, inviteWidth: invite.width };
+  });
+  assert.ok(qrLayout.qrWidth >= qrLayout.inviteWidth - 8);
+  assert.equal(await page.locator("#multiplayerDialog .cast-control").count(), 0);
+  assert.equal(
+    await page.locator("#castButton").evaluate((node) => node.closest(".dialog-head-actions") !== null),
+    true,
+  );
+  assert.equal(await page.locator("#sessionShare").isVisible(), true);
+  assert.equal(await page.locator("#sessionHostControls").isVisible(), true);
+  assert.equal(await page.locator("#sessionLeave").textContent(), "End session");
   await page.locator('#multiplayerDialog button[value="cancel"]').click();
   await page.evaluate(() => {
     window.__sentMessages = [];
@@ -778,109 +1052,78 @@ test("room recovers after consent cancellation and starts classic", async () => 
       return original(message);
     };
   });
+  const startedPromise = page.waitForSelector("#roundIntroScreen.active");
   await page.evaluate(() => {
     window.wordrushStartSessionGame({ mode: "dirty" });
   });
-  await page.waitForTimeout(50);
-  const consentSent = await page.evaluate(() =>
-    window.__sentMessages.some((msg) => msg.type === "start_game"),
-  );
-  assert.equal(consentSent, true);
-  await page.waitForFunction(() =>
-    document.querySelector("#multiplayerDialog").open &&
-    !document.querySelector("#consentPanel").hidden &&
-    !document.querySelector("#consentActions").hidden,
-  );
-  assert.equal(await page.locator("#consentCancel").isVisible(), true);
-  await page.locator("#consentCancel").click();
-  await page.waitForFunction(() =>
-    document.querySelector("#consentPanel").hidden &&
-    document.querySelector("#consentActions").hidden,
-  );
-  assert.equal(await page.locator("#sessionType").isEnabled(), true);
-  assert.equal(await page.locator("#sessionStart").isEnabled(), true);
-  await page.locator("#sessionType").selectOption("coop");
-  await page.locator("#sessionStart").click();
+  await startedPromise;
+  const dirtyMessages = await page.evaluate(() => ({
+    starts: window.__sentMessages.filter((msg) => msg.type === "start_game"),
+    consentVisible: !document.querySelector("#consentPanel").hidden,
+    actionsVisible: !document.querySelector("#consentActions").hidden,
+  }));
+  assert.equal(dirtyMessages.starts.length, 1);
+  assert.equal(dirtyMessages.starts[0].mode, "dirty");
+  assert.equal(dirtyMessages.consentVisible, false);
+  assert.equal(dirtyMessages.actionsVisible, false);
   await startIntro(page);
-  assert.equal(await page.locator("#gameMode").textContent(), "CO-OP");
+  assert.equal(await page.locator("#gameMode").textContent(), "DIRTY MODE · 18+");
   await browser.close();
 });
 
-test("late join during consent sees pre-admission panel", async () => {
+test("late join to a Dirty round is admitted without consent", async () => {
   const host = await chromium.launch({ headless: true, executablePath });
   const guest = await chromium.launch({ headless: true, executablePath });
   const hostPage = await host.newPage({ viewport: { width: 390, height: 844 } });
   const guestPage = await guest.newPage({ viewport: { width: 390, height: 844 } });
   await Promise.all([hostPage.goto(baseUrl), guestPage.goto(baseUrl)]);
-  await hostPage.locator("#sessionManage").click();
+  await openFriendsPanel(hostPage);
+  await hostPage.locator("#sessionCard").click();
   await hostPage.locator("#sessionCreate").click();
   await hostPage.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
   );
   const code = await hostPage.locator("#sessionCode").textContent();
   await hostPage.locator('#multiplayerDialog button[value="cancel"]').click();
-  await hostPage.evaluate(() => {
-    window.wordrushStartSessionGame({ mode: "dirty" });
-  });
-  await hostPage.waitForTimeout(50);
-  assert.equal(
-    await hostPage
-      .locator("#gameScreen")
-      .evaluate((node) => node.classList.contains("active")),
-    false,
-  );
-  await guestPage.locator("#sessionManage").click();
+  await hostPage.evaluate(() => window.wordrushStartSessionGame({ mode: "dirty" }));
+  await hostPage.waitForSelector("#roundIntroScreen.active");
+  await openFriendsPanel(guestPage);
+  await guestPage.locator("#sessionCard").click();
   guestPage.once("dialog", (dialog) => dialog.accept(code));
   await guestPage.locator("#sessionJoin").click();
-  const prePanelVisible = await guestPage.locator("#preAdmissionPanel").evaluate((node) => !node.hidden);
-  assert.equal(prePanelVisible, true);
+  await guestPage.waitForFunction((expectedCode) => window.wordrushSessionCode === expectedCode, code);
   const preAdmissionState = await guestPage.evaluate(() => ({
     dialogOpen: document.querySelector("#multiplayerDialog").open,
     lobbyVisible: !document.querySelector("#sessionLobby").hidden,
     prePanelVisible: !document.querySelector("#preAdmissionPanel").hidden,
     actionsVisible: !document.querySelector("#consentActions").hidden,
-    acceptEnabled: !document.querySelector("#consentAccept").disabled,
-    declineEnabled: !document.querySelector("#consentDecline").disabled,
     consentHidden: document.querySelector("#consentPanel").hidden,
-    cancelHidden: document.querySelector("#consentCancel").hidden,
     sessionCode: window.wordrushSessionCode || "",
     savedRoom: localStorage.getItem("wordrush-room"),
   }));
   assert.deepEqual(preAdmissionState, {
-    dialogOpen: true,
+    dialogOpen: false,
     lobbyVisible: true,
-    prePanelVisible: true,
-    actionsVisible: true,
-    acceptEnabled: true,
-    declineEnabled: true,
+    prePanelVisible: false,
+    actionsVisible: false,
     consentHidden: true,
-    cancelHidden: true,
-    sessionCode: "",
-    savedRoom: null,
+    sessionCode: code,
+    savedRoom: code,
   });
-  await hostPage.locator("#consentCancel").click();
-  await hostPage.waitForFunction(() =>
-    document.querySelector("#consentPanel").hidden &&
-    document.querySelector("#consentActions").hidden,
-  );
-  await hostPage.locator("#sessionType").selectOption("classic");
-  await hostPage.locator("#sessionStart").click();
-  await startIntro(hostPage);
-  assert.equal(
-    await hostPage
-      .locator("#gameScreen")
-      .evaluate((node) => node.classList.contains("active")),
-    true,
-  );
   await host.close();
   await guest.close();
 });
 
-test("solo dirty mode still works with confirmation dialog", async () => {
+test("solo Dirty Mode starts without a confirmation dialog", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  page.on("dialog", (dialog) => dialog.accept());
+  let dialogCount = 0;
+  page.on("dialog", (dialog) => {
+    dialogCount += 1;
+    void dialog.accept();
+  });
+  await openGamesPanel(page);
   await page.locator('[data-mode="dirty"]').click();
   await startIntro(page);
   assert.equal(
@@ -890,6 +1133,7 @@ test("solo dirty mode still works with confirmation dialog", async () => {
     true,
   );
   assert.equal(await page.locator(".tile").count(), 25);
+  assert.equal(dialogCount, 0);
   await browser.close();
 });
 
@@ -1026,7 +1270,8 @@ test("two-player lobby synchronizes roles and guest exit leaves the host room op
   const host = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const guest = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await host.goto(baseUrl);
-  await host.locator("#sessionManage").click();
+  await openFriendsPanel(host);
+  await host.locator("#sessionCard").click();
   await host.locator("#sessionCreate").click();
   await host.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
@@ -1087,7 +1332,8 @@ test("host ending a round and closing an active session synchronizes every playe
   const guest = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await host.goto(baseUrl);
   await guest.goto(baseUrl);
-  await host.locator("#sessionManage").click();
+  await openFriendsPanel(host);
+  await host.locator("#sessionCard").click();
   await host.locator("#sessionCreate").click();
   await host.waitForFunction(() =>
     /^[A-Z]{5}$/.test(document.querySelector("#sessionCode").textContent),
@@ -1161,6 +1407,7 @@ test("host ending a round and closing an active session synchronizes every playe
   });
   await guest.locator('nav [data-screen="homeScreen"]').click();
   await guest.waitForSelector("#homeScreen.active");
+  await openFriendsPanel(guest);
   await guest.locator("#resumeMultiplayer").click();
   await guest.waitForSelector("#roundIntroScreen.active");
   assert.equal(await guest.locator("#gameScreen.active").count(), 0);
@@ -1176,6 +1423,7 @@ test("host ending a round and closing an active session synchronizes every playe
   assert.equal(await guest.locator("#gameScreen.active").count(), 0);
   assert.deepEqual(await roundActivation(host), { starts: 1, intervals: 1 });
   assert.deepEqual(await roundActivation(guest), { starts: 1, intervals: 1 });
+  await openFriendsPanel(guest);
   await guest.locator("#resumeMultiplayer").click();
   await guest.waitForSelector("#gameScreen.active");
   const resumedTimer = await guest.locator("#timer").textContent();
@@ -1205,7 +1453,8 @@ test("multiplayer session reconnects when its socket is lost", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
-  await page.locator("#sessionManage").click();
+  await openFriendsPanel(page);
+  await page.locator("#sessionCard").click();
   assert.equal(
     await page
       .locator("#multiplayerBanner")
@@ -1267,10 +1516,24 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
         session: { wins: 1, losses: 2, points: 103 },
         words: [{ word: "MOONLIT", points: 49 }],
       },
+      {
+        id: "sun",
+        name: "Sun",
+        avatar: "🐸",
+        score: 12,
+        words: [{ word: "CAT", points: 9 }],
+      },
     ], { results: { view: "static", speed: "fast" } });
   });
   await page.waitForSelector("#resultsScreen.active");
-  assert.equal(await page.locator(".result-player-card").count(), 2);
+  assert.equal(await page.locator(".result-player-card").count(), 3);
+  assert.equal(await page.locator("#resultHeroScores .result-score-row").count(), 3);
+  assert.deepEqual(
+    await page.locator("#resultHeroScores .result-score-identity b").allTextContents(),
+    ["🦊 Comet", "🐈 Moon", "🐸 Sun"],
+  );
+  assert.equal(await page.locator("#resultHeroScores .result-score-row.is-winner").count(), 1);
+  assert.equal(await page.locator("#resultAchievement").count(), 0);
   assert.equal(await page.locator("#staticResultsView").isHidden(), false);
   assert.equal(await page.locator(".results-switcher").count(), 0);
   assert.equal(await page.locator("#animatedResultsView").count(), 0);
@@ -1286,9 +1549,17 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
     heroRadius: parseFloat(getComputedStyle(document.querySelector(".result-hero")).borderRadius),
     first: getComputedStyle(document.querySelector(".result-player-card.rank-1")).backgroundColor,
     second: getComputedStyle(document.querySelector(".result-player-card.rank-2")).backgroundColor,
+    scoreboardColumns: getComputedStyle(document.querySelector(".result-score-row")).gridTemplateColumns,
+    actionColumns: getComputedStyle(document.querySelector(".results-actions")).gridTemplateColumns,
+    actionHeights: [...document.querySelectorAll(".results-actions .result-action-tile:not([hidden])")]
+      .map((button) => button.getBoundingClientRect().height),
   }));
   assert.ok(presentation.heroRadius >= 20);
   assert.notEqual(presentation.first, presentation.second);
+  assert.match(presentation.scoreboardColumns, /\S+\s+\S+\s+\S+/);
+  assert.match(presentation.actionColumns, /\S+\s+\S+/);
+  assert.ok(presentation.actionHeights.every((height) => height >= 56));
+  assert.ok(Math.max(...presentation.actionHeights) - Math.min(...presentation.actionHeights) < 1);
   assert.equal(await page.locator(".result-confetti i").count(), 5);
   await browser.close();
 });
