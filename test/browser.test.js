@@ -1037,6 +1037,14 @@ test("multiplayer Dirty Mode starts directly without consent", async () => {
     return { qrWidth: qr.width, inviteWidth: invite.width };
   });
   assert.ok(qrLayout.qrWidth >= qrLayout.inviteWidth - 8);
+  assert.equal(await page.locator("#multiplayerDialog .cast-control").count(), 0);
+  assert.equal(
+    await page.locator("#castButton").evaluate((node) => node.closest(".dialog-head-actions") !== null),
+    true,
+  );
+  assert.equal(await page.locator("#sessionShare").isVisible(), true);
+  assert.equal(await page.locator("#sessionHostControls").isVisible(), true);
+  assert.equal(await page.locator("#sessionLeave").textContent(), "End session");
   await page.locator('#multiplayerDialog button[value="cancel"]').click();
   await page.evaluate(() => {
     window.__sentMessages = [];

@@ -49,6 +49,8 @@
       if (gameButton) gameButton.textContent = "📺 Cast to TV";
     }
     control.hidden = !hasRoom();
+    if (button)
+      button.hidden = !hasRoom() || !secureOrigin || !initialized;
     if (gameButton)
       gameButton.hidden = !hasRoom() || !secureOrigin || !initialized;
     if (!hasRoom()) return;

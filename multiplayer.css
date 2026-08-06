@@ -121,6 +121,49 @@
   font-size: clamp(2rem, 7vw, 3.2rem);
   letter-spacing: -0.07em;
 }
+#multiplayerDialog .dialog-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#multiplayerDialog .dialog-head-actions > button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 2px solid #2c1c37;
+  border-radius: 12px;
+  background: #b7f5ff;
+  color: #2c1c37;
+  box-shadow: 0 3px 0 #2c1c37;
+  font-size: 25px;
+}
+#multiplayerDialog .dialog-head-actions > button:hover,
+#multiplayerDialog .dialog-head-actions > button:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 0 #2c1c37;
+}
+#multiplayerDialog .dialog-head-actions > button:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 #2c1c37;
+}
+#multiplayerDialog .dialog-head-actions .dialog-cast-button[hidden] {
+  display: none;
+}
+#multiplayerDialog .cast-icon {
+  width: 23px;
+  height: 23px;
+  fill: currentColor;
+}
+.cast-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 #sessionChoices { padding: 4px 28px 28px; }
 .multiplayer-welcome { padding: 8px 0 18px; text-align: center; }
 .multiplayer-burst {
@@ -301,11 +344,12 @@
 .session-invite {
   display: grid;
   justify-items: center;
-  gap: 8px;
-  margin: 12px 0;
+  gap: 0;
+  width: min(220px, 100%);
+  margin: 10px auto 8px;
 }
 .session-invite img {
-  width: min(340px, 100%);
+  width: min(220px, 100%);
   height: auto;
   padding: 6px;
   border: 2px solid #5b2d7f;
@@ -413,13 +457,31 @@
   justify-content: center;
   margin: 0;
 }
-.waiting-lobby > .dialog-action {
+.waiting-lobby .lobby-share-button {
   margin-top: 10px;
 }
-.waiting-lobby .cast-control {
-  margin: 14px 0 0;
-  border-radius: 12px;
-  text-align: left;
+.waiting-lobby .lobby-end-tile {
+  min-height: 56px;
+  margin-top: 14px;
+  border: 2px solid #5b2d7f;
+  border-radius: 16px;
+  background: #e3c8ff;
+  color: #2c1c37;
+  box-shadow: 0 4px 0 #5b2d7f;
+  font-size: 16px;
+  font-weight: 900;
+}
+.waiting-lobby .lobby-end-tile:hover,
+.waiting-lobby .lobby-end-tile:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 0 #5b2d7f;
+}
+.waiting-lobby .lobby-end-tile:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #5b2d7f;
+}
+.waiting-lobby > .dialog-action {
+  margin-top: 10px;
 }
 html[data-theme="dark"] .lobby-players .live-player {
   background: #242823;
@@ -571,13 +633,6 @@ html[data-theme="dark"] .multiplayer-code-button {
   }
   .lobby-player-you {
     display: none;
-  }
-  .waiting-lobby .cast-control {
-    align-items: stretch;
-    flex-direction: column;
-  }
-  .waiting-lobby .cast-control strong {
-    max-width: none;
   }
 }
 .consent-panel {
