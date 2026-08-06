@@ -763,8 +763,11 @@ html[data-theme="dark"] #resultsScreen .achievement { color: #2c1c37; }
 .party-panel { width:100%; display:flex; align-items:center; gap:1rem; text-align:left; border:2px solid #f6c85f; background:linear-gradient(120deg,#5b2d7f,#dd5f58); color:#fff9f0; border-radius:1.2rem; padding:1.05rem 1.2rem; margin:.8rem 0; box-shadow:0 .45rem 0 rgba(44,28,55,.45); }
 .mode-group .party-panel { margin: 0; }
  .party-panel > span { font-size:2.3rem; } .party-panel div { flex:1; display:grid; gap:.2rem; } .party-panel small { font-size:.82rem; line-height:1.1; font-weight:900; letter-spacing:.06em; } .party-panel strong { font-size:1.3rem; line-height:1.1; } .party-panel em { font-style:normal; opacity:.85; font-size:.9rem; line-height:1.1; } .party-panel > b { font-size:1.8rem; }
+#homeScreen.active .hero-art {
+  margin-bottom: 12px;
+}
 .home-stats {
-  margin: 18px 0 16px;
+  margin: 10px 0;
   padding: 15px 10px;
   border: 2px solid #2c1c37;
   border-radius: 18px;
@@ -772,12 +775,12 @@ html[data-theme="dark"] #resultsScreen .achievement { color: #2c1c37; }
   box-shadow: 0 5px 0 #2c1c37;
 }
 #homeScreen.active .home-stats {
-  margin-bottom: 20px;
+  margin-bottom: 10px;
 }
 .home-stats div { border-color: rgba(44, 28, 55, .3); }
 .home-stats b { color: #5b2d7f; }
 .home-friends {
-  margin: 0 0 18px;
+  margin: 0 0 10px;
   padding: 0;
   border: 2px solid #5b2d7f;
   border-radius: 20px;
@@ -786,7 +789,7 @@ html[data-theme="dark"] #resultsScreen .achievement { color: #2c1c37; }
   overflow: hidden;
 }
 #homeScreen.active .home-friends {
-  margin-bottom: 20px;
+  margin-bottom: 10px;
 }
 .home-friends-heading {
   display: flex;
@@ -883,7 +886,7 @@ html[data-theme="dark"] #resultsScreen .achievement { color: #2c1c37; }
   padding: 12px 10px 14px;
 }
 #homeScreen.active .game-mode-stack {
-  gap: 20px;
+  gap: 10px;
   margin: 0;
 }
 
@@ -892,7 +895,7 @@ nav {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   height: auto;
   gap: 10px;
-  padding: 12px 0 0;
+  padding: 5px 0 0;
   border-top: 0;
   background: transparent;
 }
@@ -954,10 +957,10 @@ nav small {
   text-transform: uppercase;
 }
 body:has(#homeScreen.active) nav {
-  margin-top: 6px;
+  margin-top: 3px;
 }
 body:has(#homeScreen.active) .site-footer {
-  margin-top: 19px;
+  margin-top: 12px;
 }
 .site-footer {
   display: none;

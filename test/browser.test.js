@@ -296,7 +296,7 @@ test("home friends panel starts collapsed and expands on touch", async () => {
       );
       return boxes.slice(1).map((box, index) => Math.round(box.top - boxes[index].bottom));
     });
-    assert.deepEqual(homeFlowGaps, [20, 20, 20, 20, 20, 17]);
+    assert.deepEqual(homeFlowGaps, [10, 10, 10, 10, 10, 10]);
 
     await page.locator("#friendsHeading").click();
     assert.equal(await page.locator("#friendsPanel").evaluate((panel) => panel.open), true);
