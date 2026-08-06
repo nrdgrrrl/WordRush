@@ -318,12 +318,15 @@
               <small id="rushNextRoundCountdown"></small>
             </span>
           </button>
-          <div class="result-score-burst result">
-            <small id="resultScoreLabel">FINAL SCORES</small>
-            <div class="result-hero-scores" id="resultHeroScores"></div>
-            <span><b id="resultWordCount">0</b> words found</span>
+          <section class="result-scoreboard" aria-labelledby="resultScoreLabel">
+            <div class="result-scoreboard-heading">
+              <small id="resultScoreLabel">FINAL SCORES</small>
+              <span>PLAYER <b>SCORE</b></span>
+            </div>
+            <div class="result-hero-scores" id="resultHeroScores" role="list"></div>
+            <span class="result-scoreboard-footer"><b id="resultWordCount">0</b> words found</span>
             <strong id="finalScore" hidden>0</strong>
-          </div>
+          </section>
         </div>
         <div class="result-highlights" aria-label="Round highlights">
           <article><span>🔠</span><div><small id="resultLongestLabel">LONGEST WORD</small><b id="resultLongestWord">—</b></div></article>
@@ -340,16 +343,6 @@
             <ol class="series-history" id="seriesRoundHistory"></ol>
           </details>
         </section>
-        <div class="achievement" id="resultAchievement" hidden>
-          ✦
-          <div>
-            <small>ROUND SUMMARY</small
-            ><b id="resultAchievementTitle">Keep tracing</b
-            ><small id="resultAchievementDetail"
-              >Find words to unlock achievements.</small
-            >
-          </div>
-        </div>
         <section class="daily-challenge-result" id="dailyChallengeResult" hidden aria-live="polite">
           <small id="dailyChallengeResultLabel">DAILY RUSH</small>
           <b id="dailyChallengeResultDetail"></b>
@@ -358,12 +351,14 @@
           <input id="dailyShareLink" aria-label="Daily Rush challenge link" readonly hidden />
           <small id="dailyShareStatus"></small>
         </section>
-        <button class="primary" id="again">Play again →</button>
-        <button class="secondary" id="exitParty" hidden>Exit party mode</button>
-        <button class="secondary" id="stopRushResults" hidden>End Rush</button
-        ><button class="secondary" data-screen="homeScreen">
-          Back to home
-        </button>
+        <div class="results-actions" aria-label="Round actions">
+          <button class="primary game-action-tile result-action-tile" id="again">Play again →</button>
+          <button class="secondary game-action-tile result-action-tile" id="exitParty" hidden>Exit party mode</button>
+          <button class="secondary game-action-tile result-action-tile" id="stopRushResults" hidden>End Rush</button>
+          <button class="secondary game-action-tile result-action-tile" data-screen="homeScreen">
+            Back to home
+          </button>
+        </div>
       </section>
       <section class="screen" id="statsScreen">
         <div class="game-head">

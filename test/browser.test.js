@@ -912,6 +912,18 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   pending.clear();
   await resetSoloBrowserPage(page, suddenFixture);
   await startSoloMode(page, "sudden");
+  await page.evaluate(() => {
+    const explosion = document.querySelector("#suddenDeathExplosion");
+    window.__suddenDeathExplosionActivations = 0;
+    window.__suddenDeathExplosionObserver = new MutationObserver(() => {
+      if (explosion.classList.contains("is-active"))
+        window.__suddenDeathExplosionActivations++;
+    });
+    window.__suddenDeathExplosionObserver.observe(explosion, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  });
   const suddenRequests = [
     wordRequestWaiter(pending, waiters, "BAD"),
     wordRequestWaiter(pending, waiters, "RAT"),
@@ -931,6 +943,11 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   await page.waitForSelector("#resultsScreen.active");
   assert.match(await page.locator("#suddenDeathCalloutDetail").textContent(), /BAD/);
   assert.equal(await page.locator("#suddenDeathCallout").isHidden(), false);
+  assert.equal(
+    await page.evaluate(() => window.__suddenDeathExplosionActivations),
+    1,
+  );
+  await page.evaluate(() => window.__suddenDeathExplosionObserver.disconnect());
 
   const replacementFixture = {
     size: 4,
@@ -1499,10 +1516,24 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
         session: { wins: 1, losses: 2, points: 103 },
         words: [{ word: "MOONLIT", points: 49 }],
       },
+      {
+        id: "sun",
+        name: "Sun",
+        avatar: "🐸",
+        score: 12,
+        words: [{ word: "CAT", points: 9 }],
+      },
     ], { results: { view: "static", speed: "fast" } });
   });
   await page.waitForSelector("#resultsScreen.active");
-  assert.equal(await page.locator(".result-player-card").count(), 2);
+  assert.equal(await page.locator(".result-player-card").count(), 3);
+  assert.equal(await page.locator("#resultHeroScores .result-score-row").count(), 3);
+  assert.deepEqual(
+    await page.locator("#resultHeroScores .result-score-identity b").allTextContents(),
+    ["🦊 Comet", "🐈 Moon", "🐸 Sun"],
+  );
+  assert.equal(await page.locator("#resultHeroScores .result-score-row.is-winner").count(), 1);
+  assert.equal(await page.locator("#resultAchievement").count(), 0);
   assert.equal(await page.locator("#staticResultsView").isHidden(), false);
   assert.equal(await page.locator(".results-switcher").count(), 0);
   assert.equal(await page.locator("#animatedResultsView").count(), 0);
@@ -1518,9 +1549,17 @@ test("score screen celebrates rankings, highlights, and word lengths graphically
     heroRadius: parseFloat(getComputedStyle(document.querySelector(".result-hero")).borderRadius),
     first: getComputedStyle(document.querySelector(".result-player-card.rank-1")).backgroundColor,
     second: getComputedStyle(document.querySelector(".result-player-card.rank-2")).backgroundColor,
+    scoreboardColumns: getComputedStyle(document.querySelector(".result-score-row")).gridTemplateColumns,
+    actionColumns: getComputedStyle(document.querySelector(".results-actions")).gridTemplateColumns,
+    actionHeights: [...document.querySelectorAll(".results-actions .result-action-tile:not([hidden])")]
+      .map((button) => button.getBoundingClientRect().height),
   }));
   assert.ok(presentation.heroRadius >= 20);
   assert.notEqual(presentation.first, presentation.second);
+  assert.match(presentation.scoreboardColumns, /\S+\s+\S+\s+\S+/);
+  assert.match(presentation.actionColumns, /\S+\s+\S+/);
+  assert.ok(presentation.actionHeights.every((height) => height >= 56));
+  assert.ok(Math.max(...presentation.actionHeights) - Math.min(...presentation.actionHeights) < 1);
   assert.equal(await page.locator(".result-confetti i").count(), 5);
   await browser.close();
 });
