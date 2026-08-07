@@ -265,7 +265,7 @@ async function authorizeRequest(req, res) {
     res.setHeader("X-Robots-Tag", "noindex, nofollow");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self'; script-src 'self' https://www.gstatic.com; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https://*.googleusercontent.com https://*.facebook.com https://*.fbcdn.net https://*.fbsbx.com; style-src 'self'; script-src 'self' https://www.gstatic.com; base-uri 'none'; frame-ancestors 'none'",
     );
     return true;
   }
@@ -2713,6 +2713,7 @@ const server = http.createServer((req, res) => {
     requested = "/receiver/index.html";
   const publicRootFiles = new Set([
     "/index.html",
+    "/avatar-presentation.js",
     "/site-routes.js",
     "/robots.txt",
     "/sitemap.xml",

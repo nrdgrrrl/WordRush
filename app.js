@@ -463,33 +463,27 @@ profile.name = typeof profile.name === "string" ? profile.name.slice(0, 20) : ""
 if (!profile.name || profile.name === "Jordan")
   profile.name = randomGuestName();
 function isProfileAvatar(value) {
-  if (avatarOptions.includes(value)) return true;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" &&
-      ["googleusercontent.com", "facebook.com", "fbcdn.net", "fbsbx.com"].some(
-        (host) => url.hostname === host || url.hostname.endsWith("." + host),
-      );
-  } catch {
-    return false;
-  }
+  return window.WordrushAvatarPresentation?.isSupported(value) || avatarOptions.includes(value);
 }
 if (!isProfileAvatar(profile.avatar)) profile.avatar = "🐈";
 function renderAvatar(target, value, fallback = "🐈") {
   if (!target) return;
-  const avatar = isProfileAvatar(value) ? value : fallback;
-  target.replaceChildren();
-  if (avatar.startsWith("https://")) {
-    const image = document.createElement("img");
-    image.src = avatar;
-    image.alt = "";
-    image.referrerPolicy = "no-referrer";
-    target.append(image);
-  } else target.textContent = avatar;
+  if (window.WordrushAvatarPresentation)
+    window.WordrushAvatarPresentation.render(target, value, fallback);
+  else target.textContent = fallback;
 }
 window.wordrushRenderAvatar = renderAvatar;
 window.wordrushAvatarLabel = (value, fallback = "🐈") =>
-  isProfileAvatar(value) ? (String(value).startsWith("https://") ? "👤" : value) : fallback;
+  window.WordrushAvatarPresentation?.describe(value, fallback).value || fallback;
+function renderPlayerName(target, player) {
+  if (!target) return;
+  target.replaceChildren();
+  if (window.WordrushAvatarPresentation)
+    window.WordrushAvatarPresentation.appendInline(target, player?.avatar, player?.name || "");
+  else target.textContent = (player?.avatar || "🐈") + " " + (player?.name || "");
+  return true;
+}
+window.wordrushRenderPlayerName = renderPlayerName;
 function updateIdentity() {
   renderAvatar($("#profileButton"), profile.avatar);
   if ($("#profileName")) $("#profileName").value = profile.name;
@@ -940,9 +934,7 @@ function renderResults(
     if (outcomeBadge) rank.dataset.outcome = outcomeBadge.toLowerCase();
     const identity = document.createElement("div");
     const name = document.createElement("b");
-    name.textContent =
-      (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
-      " " + player.name;
+    renderPlayerName(name, player);
     const wordCount = document.createElement("small");
     wordCount.textContent = series
       ? (Number(player.series?.strikes) || 0) +
@@ -1051,9 +1043,7 @@ function renderHeroScores(
       const identity = document.createElement("span");
       identity.className = "result-score-identity";
       const name = document.createElement("b");
-      name.textContent =
-        (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
-        " " + player.name;
+      renderPlayerName(name, player);
       const status = document.createElement("small");
       status.textContent = skipped
         ? "SCORE"
@@ -1159,9 +1149,7 @@ function renderSeriesStandings(series, target) {
       row.className = "series-standing" +
         (player.status === "withdrawn" ? " is-withdrawn" : "");
       const identity = document.createElement("span");
-      identity.textContent =
-        (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
-        " " + player.name;
+      renderPlayerName(identity, player);
       const status = document.createElement("small");
       status.textContent = player.status === "withdrawn"
         ? "WITHDRAWN"

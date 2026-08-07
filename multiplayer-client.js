@@ -274,12 +274,14 @@
             : participant.id === guestId
               ? "is-you"
               : "";
-          row.textContent = (window.wordrushAvatarLabel?.(participant.avatar) || participant.avatar || "🐈") + " " +
-            participant.name + " · " +
+          if (window.wordrushRenderPlayerName)
+            window.wordrushRenderPlayerName(row, participant);
+          else row.textContent = (participant.avatar || "🐈") + " " + participant.name;
+          row.append(document.createTextNode(" · " +
             (participant.status === "withdrawn"
               ? "withdrawn"
               : (Number(participant.strikes) || 0) + " strike" +
-                (Number(participant.strikes) === 1 ? "" : "s"));
+                (Number(participant.strikes) === 1 ? "" : "s"))));
           return row;
         }),
       );
