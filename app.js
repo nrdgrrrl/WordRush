@@ -753,13 +753,14 @@ async function loadAuthProfile() {
   } finally {
     authState.loaded = true;
     updateAuthUI();
+    enforceUsernameSetup();
     const authResult = new URLSearchParams(location.search).get("auth");
     if (authResult) {
       const next = new URL(location.href);
       next.searchParams.delete("auth");
       history.replaceState(history.state, "", next.pathname + next.search + next.hash);
       if (authResult === "signed-in" || authResult === "choose-username") {
-        openProfileDialog();
+        if (!$("#profileDialog")?.open) openProfileDialog();
         if (authResult === "choose-username") $("#profileName")?.focus();
       } else if (authResult !== "complete") {
         toast("Sign-in could not be completed.");
@@ -3175,6 +3176,11 @@ function openProfileDialog() {
   profileDialogSnapshot = { name: profile.name, avatar: profile.avatar };
   updateIdentity();
   $("#profileDialog")?.showModal();
+}
+function enforceUsernameSetup() {
+  if (!authState.account?.needsUsername) return;
+  if (!$("#profileDialog")?.open) openProfileDialog();
+  $("#profileName")?.focus();
 }
 function restoreProfileDialogSnapshot() {
   if (!profileDialogSnapshot) return;

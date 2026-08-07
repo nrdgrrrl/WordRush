@@ -915,7 +915,10 @@ test("profile cancel discards drafts and required username setup cannot be dismi
       body: JSON.stringify({ authenticated: true, account }),
     });
   });
-  await page.goto(baseUrl + "/?auth=choose-username");
+  await page.goto(baseUrl);
+  assert.equal(new URL(page.url()).search, "");
+  await page.waitForSelector("#profileDialog[open]");
+  await page.reload();
   await page.waitForSelector("#profileDialog[open]");
   await page.locator("#profileName").fill("Not Saved");
   await page.locator("#profileCancel").click();
