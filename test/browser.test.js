@@ -623,6 +623,44 @@ test("browser can start, play, persist stats, and use the tile-banner profile bu
   await browser.close();
 });
 
+test("Room Heist shows an unavailable state when the authoritative team is missing", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    window.wordrushUpdateOnlineChallenge({
+      heist: {
+        teams: [
+          { id: "sun", playerIds: ["another-player"] },
+          { id: "moon", playerIds: ["different-player"] },
+        ],
+        teamByPlayer: {},
+        teamScores: { sun: 42, moon: 17 },
+        claims: [],
+      },
+    });
+  });
+  const display = await page.evaluate(() => ({
+    team: document.querySelector("#heistTeam").textContent,
+    members: document.querySelector("#heistMembers").textContent,
+    teamScore: document.querySelector("#heistTeamScore").textContent,
+    otherTeam: document.querySelector("#heistOtherTeam").textContent,
+    otherScore: document.querySelector("#heistOtherScore").textContent,
+    unavailable: document.querySelector("#heistStatus").classList.contains("is-unavailable"),
+    label: document.querySelector("#heistStatus").getAttribute("aria-label"),
+  }));
+  assert.deepEqual(display, {
+    team: "UNAVAILABLE",
+    members: "Team assignment unavailable",
+    teamScore: "—",
+    otherTeam: "SCORE STATUS",
+    otherScore: "—",
+    unavailable: true,
+    label: "Room Heist team assignment unavailable",
+  });
+  await browser.close();
+});
+
 test("signed-in provider button is disabled and greyed out", async (t) => {
   const browser = await chromium.launch({ headless: true, executablePath });
   t.after(() => browser.close());

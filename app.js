@@ -921,8 +921,24 @@ function renderChallengeStatus() {
   if (heist) {
     heist.hidden = !s.heist;
     if (!s.heist) return;
-    const teamId = s.heist.teamByPlayer?.[window.wordrushGuestId] || "sun";
+    const teamId = s.heist.teamByPlayer?.[window.wordrushGuestId];
     const team = s.heist.teams?.find((entry) => entry.id === teamId);
+    const assigned = Boolean(teamId && team);
+    heist.classList.toggle("is-unavailable", !assigned);
+    heist.setAttribute(
+      "aria-label",
+      assigned
+        ? "Room Heist team status"
+        : "Room Heist team assignment unavailable",
+    );
+    if (!assigned) {
+      $("#heistTeam").textContent = "UNAVAILABLE";
+      $("#heistMembers").textContent = "Team assignment unavailable";
+      $("#heistTeamScore").textContent = "—";
+      $("#heistOtherTeam").textContent = "SCORE STATUS";
+      $("#heistOtherScore").textContent = "—";
+      return;
+    }
     $("#heistTeam").textContent = teamId.toUpperCase();
     $("#heistTeamScore").textContent = String(s.heist.teamScores?.[teamId] || 0);
     $("#heistOtherTeam").textContent = teamId === "sun" ? "MOON" : "SUN";
