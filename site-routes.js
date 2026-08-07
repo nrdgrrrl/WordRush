@@ -46,7 +46,7 @@
       kind: "page",
       key: "gameModes",
       path: "/game-modes",
-      screen: "gameModesScreen",
+      content: "game-modes",
       title: "WordRush Game Modes — Find Your Next Game",
       description:
         "Explore WordRush game modes, from solo word challenges to multiplayer games with friends.",
@@ -55,7 +55,7 @@
       kind: "page",
       key: "howToPlay",
       path: "/how-to-play",
-      screen: "howToPlayScreen",
+      content: "how-to-play",
       title: "How to Play WordRush — Rules and Scoring",
       description:
         "Learn how to trace words, score points, and play solo or multiplayer in WordRush.",

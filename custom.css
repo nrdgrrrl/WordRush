@@ -1064,22 +1064,37 @@ body:has(#homeScreen.active) .site-footer {
 body:has(#homeScreen.active) .site-footer,
 body:has(#statsScreen.active) .site-footer,
 body:has(#achievementsScreen.active) .site-footer,
-body:has(#howToPlayScreen.active) .site-footer,
-body:has(#gameModesScreen.active) .site-footer {
+.content-document .site-footer {
   display: block;
 }
-.content-screen {
+.content-page {
   padding-bottom: 10px;
 }
-.content-screen .game-head {
+.content-page .game-head {
   align-items: center;
   margin-bottom: 22px;
 }
-.content-screen .game-head h1 {
+.content-page .game-head h1 {
   margin: 0;
   font-size: clamp(2rem, 8vw, 2.65rem);
   line-height: .95;
   letter-spacing: -.065em;
+}
+.content-back {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #d1c1d8;
+  border-radius: 50%;
+  color: #2c1c37;
+  font-size: 22px;
+  line-height: 1;
+  text-decoration: none;
+}
+html[data-theme="dark"] .content-back { border-color: #555b53; color: #fff9f0; }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .content-back { border-color: #555b53; color: #fff9f0; }
 }
 .content-lede {
   margin: 0 0 18px;

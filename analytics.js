@@ -42,7 +42,7 @@
     queue.splice(0).forEach((event) => send(event.name, event.params));
   }
   function activeScreen() {
-    return document.querySelector(".screen.active")?.id || "unknown";
+    return document.querySelector(".screen.active")?.id || document.body.dataset.page || "unknown";
   }
   function consentChoice() {
     try {

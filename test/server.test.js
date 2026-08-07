@@ -314,15 +314,13 @@ test("ordinary dictionary validation returns metadata and bounded responses with
   assert.deepEqual(JSON.parse(wordCheckBytes), { valid: true });
 });
 
-test("serves SEO app routes and redirects transient game screens", async () => {
+test("serves standalone evergreen documents, gameplay SPA routes, and redirects transient game screens", async () => {
   const origin = "http://127.0.0.1:" + server.address().port;
   const routes = [
     ["/", "Wordrush — Fast Online Word Game"],
     ["/stats", "Wordrush Stats"],
     ["/progress", "Wordrush Progress"],
     ["/multiplayer", "Wordrush Multiplayer"],
-    ["/game-modes", "WordRush Game Modes"],
-    ["/how-to-play", "How to Play WordRush"],
     ["/games/classic", "Classic — Two Minutes"],
     ["/games/random-rush", "Random Rush"],
     ["/games/word-chain", "Word Chain"],
@@ -349,28 +347,48 @@ test("serves SEO app routes and redirects transient game screens", async () => {
       ),
     );
   }
-  const howToPlay = await (await fetch(origin + "/how-to-play")).text();
-  assert.match(
-    howToPlay,
-    /<meta\s+name="description"\s+content="Learn how to trace words, score points, and play solo or multiplayer in WordRush\."/,
-  );
-  assert.match(
-    howToPlay,
-    /<meta property="og:title" content="How to Play WordRush — Rules and Scoring"/,
-  );
-  assert.match(howToPlay, /<h1>How to Play WordRush<\/h1>/);
-  assert.doesNotMatch(howToPlay, /<title>Wordrush — Fast Online Word Game<\/title>/);
-  const gameModes = await (await fetch(origin + "/game-modes")).text();
-  assert.match(
-    gameModes,
-    /<meta\s+name="description"\s+content="Explore WordRush game modes, from solo word challenges to multiplayer games with friends\."/,
-  );
-  assert.match(
-    gameModes,
-    /<meta property="og:title" content="WordRush Game Modes — Find Your Next Game"/,
-  );
-  assert.match(gameModes, /<h1>WordRush Game Modes<\/h1>/);
-  assert.doesNotMatch(gameModes, /<title>Wordrush — Fast Online Word Game<\/title>/);
+  const evergreenPages = [
+    [
+      "/how-to-play",
+      "How to Play WordRush",
+      "How to Play WordRush — Rules and Scoring",
+      "Learn how to trace words, score points, and play solo or multiplayer in WordRush.",
+      "gameModesScreen",
+    ],
+    [
+      "/game-modes",
+      "WordRush Game Modes",
+      "WordRush Game Modes — Find Your Next Game",
+      "Explore WordRush game modes, from solo word challenges to multiplayer games with friends.",
+      "howToPlayScreen",
+    ],
+  ];
+  for (const [requestPath, heading, title, description, otherContentScreen] of evergreenPages) {
+    const response = await fetch(origin + requestPath);
+    const body = await response.text();
+    assert.equal(response.status, 200, requestPath);
+    assert.match(body, new RegExp(`<title>${title}<\\/title>`));
+    assert.match(body, new RegExp(`name="description" content="${description}"`));
+    assert.match(body, /<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"/);
+    assert.match(body, new RegExp(`canonical" href="https://wordrush\\.party${requestPath}"`));
+    assert.match(body, new RegExp(`property="og:url" content="https://wordrush\\.party${requestPath}"`));
+    assert.match(body, new RegExp(`property="og:title" content="${title}"`));
+    assert.match(body, new RegExp(`property="og:description" content="${description}"`));
+    assert.match(body, new RegExp(`name="twitter:title" content="${title}"`));
+    assert.match(body, new RegExp(`name="twitter:description" content="${description}"`));
+    assert.match(body, new RegExp(`<h1>${heading}<\\/h1>`));
+    assert.match(body, /<script src="\/analytics\.js"><\/script>/);
+    assert.match(body, new RegExp(`data-page="${requestPath === "/how-to-play" ? "howToPlay" : "gameModes"}"`));
+    assert.doesNotMatch(body, /id="homeScreen"/);
+    assert.doesNotMatch(body, /id="gameScreen"/);
+    assert.doesNotMatch(body, /id="resultsScreen"/);
+    assert.doesNotMatch(body, /id="multiplayerDialog"/);
+    assert.doesNotMatch(body, /id="profileDialog"/);
+    assert.doesNotMatch(body, /id="profileButton"/);
+    assert.doesNotMatch(body, new RegExp(`id="${otherContentScreen}"`));
+  }
+  const home = await (await fetch(origin + "/")).text();
+  assert.match(home, /id="homeScreen"/);
   const sitemap = await (await fetch(origin + "/sitemap.xml")).text();
   assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/how-to-play<\/loc>/);
   assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/game-modes<\/loc>/);
