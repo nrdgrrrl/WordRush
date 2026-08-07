@@ -2565,11 +2565,6 @@ async function handle(ws, message) {
         : player.found,
     });
     const config = roomConfig(room);
-    if (result.valid && room.mode === "heist") {
-      const claimed = room.round.heist.claims.find((entry) => entry.word === result.word);
-      if (claimed && claimed.teamId !== room.round.heist.teamByPlayer[client.id])
-        result = { ...result, valid: false, reason: "heist_claimed", points: 0 };
-    }
     if (result.valid && requiresChain(config) &&
       !chainWordMatches(room.round.requiredLetter, result.word))
       result = { ...result, valid: false, reason: "chain", points: 0 };
@@ -2611,6 +2606,33 @@ async function handle(ws, message) {
     // authoritative if validation or future policy checks ever take time.
     // A word received before the deadline must not be awarded after it.
     if (Date.now() >= room.round.endsAt) return finishRound(room, "timeout");
+    let heistClaim = null;
+    if (room.mode === "heist") {
+      heistClaim = applyWordClaim(room.round.heist, {
+        teamId: room.round.heist.teamByPlayer[player.id],
+        word: result.word,
+        points: result.points,
+      });
+      if (!heistClaim.changed) {
+        const rejectionReason = {
+          team: "heist_team_missing",
+          ineligible: "heist_ineligible",
+          same_team_duplicate: "heist_same_team_duplicate",
+          cross_team_duplicate: "heist_claimed",
+        }[heistClaim.status] || "heist_claim_rejected";
+        send(ws, {
+          type: "word_rejected",
+          playerId: client.id,
+          word: result.word,
+          reason: rejectionReason,
+          minimum: heistClaim.status === "ineligible" ? 6 : config.min,
+          points: 0,
+          heistStatus: heistClaim.status,
+          heist: publicHeistState(room.round),
+        });
+        return;
+      }
+    }
     room.round.found.add(result.word);
     if (requiresChain(config))
       advanceChainFields(room.round, result.word);
@@ -2632,16 +2654,12 @@ async function handle(ws, message) {
       awardedPoints += effect.newlyClaimedIndexes.length * 25;
     }
     if (room.mode === "heist") {
-      const claim = applyWordClaim(room.round.heist, {
-        teamId: room.round.heist.teamByPlayer[player.id],
-        word: result.word,
-        points: result.points,
-      });
       room.round.heist = {
         ...room.round.heist,
-        teamScores: { ...claim.teamScores },
-        claims: [...claim.claims],
+        teamScores: { ...heistClaim.teamScores },
+        claims: [...heistClaim.claims],
       };
+      awardedPoints = heistClaim.pointsAwarded;
       player.score = playerScore(room, player);
     } else if (room.mode === "coop") {
       room.teamScore += awardedPoints;
@@ -2649,13 +2667,23 @@ async function handle(ws, message) {
         teammate.score = room.teamScore;
     } else player.score += awardedPoints;
     player.words = player.words || [];
-    player.words.push({ word: result.word, points: result.points });
+    player.words.push({
+      word: result.word,
+      points: awardedPoints,
+      ...(heistClaim ? { status: heistClaim.status } : {}),
+    });
     player.score = playerScore(room, player);
     broadcast(room, {
       type: "word_accepted",
       playerId: client.id,
       word: result.word,
       points: awardedPoints,
+      ...(heistClaim
+        ? {
+            status: heistClaim.status,
+            teamScoreDelta: heistClaim.pointsAwarded,
+          }
+        : {}),
       scores: [...room.players.values()].map((p) => ({
         id: p.id,
         name: p.name,

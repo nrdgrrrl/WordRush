@@ -734,6 +734,85 @@ test("Room Heist rejects invalid starts, freezes new admissions, and preserves a
   late.close();
 });
 
+test("Room Heist applies every claim status before storing or broadcasting points", async () => {
+  const { host, guests, code } = await createRoomWithPlayers([
+    "heist-claim-host",
+    "heist-claim-rival",
+    "heist-claim-teammate",
+  ]);
+  const started = next(host, "round_started");
+  message(host, "start_game", { mode: "heist" });
+  await started;
+  const room = rooms.get(code);
+  room.round.board = [
+    "P", "L", "A", "N",
+    "C", "A", "X", "E",
+    "X", "T", "X", "T",
+    ...Array(4).fill("X"),
+  ];
+  await startRoundImmediately(host);
+  const [rival, teammate] = guests;
+  const planetPath = wordPath(room.round.board, 4, "PLANET");
+  const catPath = wordPath(room.round.board, 4, "CAT");
+  assert.deepEqual(planetPath, [0, 1, 2, 3, 7, 11]);
+  assert.deepEqual(catPath, [4, 5, 9]);
+
+  const accepted = next(host, "word_accepted");
+  message(host, "submit_word", { word: "PLANET", path: planetPath });
+  const acceptedResult = await accepted;
+  assert.equal(acceptedResult.status, "claimed");
+  assert.equal(acceptedResult.points, 36);
+  assert.equal(acceptedResult.teamScoreDelta, 36);
+  assert.equal(acceptedResult.heist.teamScores.sun, 36);
+  assert.deepEqual(room.players.get("heist-claim-host").words, [
+    { word: "PLANET", points: 36, status: "claimed" },
+  ]);
+
+  const ineligible = next(teammate, "word_rejected");
+  message(teammate, "submit_word", { word: "CAT", path: catPath });
+  const ineligibleResult = await ineligible;
+  assert.equal(ineligibleResult.reason, "heist_ineligible");
+  assert.equal(ineligibleResult.heistStatus, "ineligible");
+  assert.equal(ineligibleResult.points, 0);
+  assert.equal(room.players.get("heist-claim-teammate").words.length, 0);
+  assert.equal(room.round.heist.teamScores.sun, 36);
+
+  const sameTeamDuplicate = next(teammate, "word_rejected");
+  message(teammate, "submit_word", { word: "PLANET", path: planetPath });
+  const sameTeamResult = await sameTeamDuplicate;
+  assert.equal(sameTeamResult.reason, "heist_same_team_duplicate");
+  assert.equal(sameTeamResult.heistStatus, "same_team_duplicate");
+  assert.equal(sameTeamResult.points, 0);
+  assert.equal(room.players.get("heist-claim-teammate").words.length, 0);
+
+  const crossTeamDuplicate = next(rival, "word_rejected");
+  message(rival, "submit_word", { word: "PLANET", path: planetPath });
+  const crossTeamResult = await crossTeamDuplicate;
+  assert.equal(crossTeamResult.reason, "heist_claimed");
+  assert.equal(crossTeamResult.heistStatus, "cross_team_duplicate");
+  assert.equal(crossTeamResult.points, 0);
+  assert.equal(room.players.get("heist-claim-rival").words.length, 0);
+
+  room.round.heist.teamByPlayer["heist-claim-rival"] = undefined;
+  const missingTeam = next(rival, "word_rejected");
+  message(rival, "submit_word", { word: "CAT", path: catPath });
+  const missingTeamResult = await missingTeam;
+  assert.equal(missingTeamResult.reason, "heist_team_missing");
+  assert.equal(missingTeamResult.heistStatus, "team");
+  assert.equal(missingTeamResult.points, 0);
+  assert.equal(room.players.get("heist-claim-rival").words.length, 0);
+
+  const finished = finishTestRound(host, [host, rival, teammate]);
+  const result = await finished;
+  const hostResult = result.ranking.find((player) => player.id === "heist-claim-host");
+  assert.equal(hostResult.score, 36);
+  assert.deepEqual(hostResult.words, [
+    { word: "PLANET", points: 36, status: "claimed" },
+  ]);
+  assert.equal(result.ranking.find((player) => player.id === "heist-claim-rival").score, 0);
+  await closeTestRoom(host, [host, rival, teammate]);
+});
+
 test("solo and multiplayer rounds use the same server generator contract", async () => {
   const contracts = [];
   const results = [];

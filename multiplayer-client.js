@@ -824,6 +824,9 @@
           duplicate: "Already found that word",
           chain: "Wrong word · follow the chain",
           heist_claimed: "That long word is locked by the other team",
+          heist_ineligible: "Room Heist claims need at least 6 letters",
+          heist_same_team_duplicate: "Your team already claimed that word",
+          heist_team_missing: "Your Room Heist team assignment is unavailable",
           dictionary: `${message.word || "That word"} is not in the Wordrush dictionary`,
         };
         toast(
