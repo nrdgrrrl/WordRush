@@ -1253,8 +1253,11 @@ test("a stale replay response cannot restore progress after switching accounts",
     contentType: "application/json",
     body: JSON.stringify({ authenticated: true, account: currentAccount }),
   }));
+  const replayRequestPromise = page.waitForRequest("**/api/profile/event", {
+    timeout: 5_000,
+  });
   await page.goto(baseUrl);
-  await page.waitForRequest("**/api/profile/event");
+  await replayRequestPromise;
   await page.locator("#profileButton").click();
   await page.locator("#profileLogout").click();
   currentAccount = accountB;
