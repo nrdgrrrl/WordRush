@@ -666,6 +666,61 @@ test("signed-in provider button is disabled and greyed out", async (t) => {
   );
 });
 
+test("switching accounts does not migrate the previous account's local stats", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  let account = {
+    id: "acct_browser-owner-a",
+    username: "PlayerA",
+    displayName: "Player A",
+    avatar: "🐈",
+    stats: { score: 12, words: 3 },
+    needsUsername: false,
+    provider: "google",
+    providers: ["google"],
+  };
+  const migrations = [];
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/migrate", async (route) => {
+    migrations.push(JSON.parse(route.request().postData() || "{}"));
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ authenticated: true, account }),
+    });
+  });
+  await page.goto(baseUrl);
+  await page.waitForFunction(() => document.querySelector("#profileLogout")?.hidden === false);
+  await page.locator("#profileButton").click();
+  await page.locator("#profileLogout").click();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("wordrush-profile")).score === 0);
+  assert.equal(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).score),
+    0,
+  );
+
+  account = {
+    ...account,
+    id: "acct_browser-owner-b",
+    username: "PlayerB",
+    displayName: "Player B",
+    stats: { score: 0, words: 0 },
+  };
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector("#profileLogout")?.hidden === false);
+  assert.equal(migrations.length, 2);
+  assert.equal(migrations[1].profile.score, 0);
+  assert.equal(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).score),
+    0,
+  );
+});
+
 test("global scoreboard displays an authoritative multiplayer result and all periods", async () => {
   const host = await wsClient("browser-leaderboard-winner");
   const guest = await wsClient("browser-leaderboard-loser");

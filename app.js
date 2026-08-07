@@ -667,13 +667,18 @@ async function loadAuthProfile() {
     const payload = await response.json();
     authState.providers = Array.isArray(payload.providers) ? payload.providers : [];
     if (payload.authenticated && payload.account) {
-      const migration = await fetch("/api/profile/migrate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ guestId: localGuestId, profile: profileStatsSnapshot() }),
-      });
-      const migrated = migration.ok ? await migration.json() : null;
+      const localOwner = typeof profile.accountId === "string" ? profile.accountId : "";
+      const belongsToThisAccount = localOwner && localOwner === payload.account.id;
+      const belongsToAnotherAccount = localOwner && localOwner !== payload.account.id;
+      const migration = !belongsToAnotherAccount && !belongsToThisAccount
+        ? await fetch("/api/profile/migrate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ guestId: localGuestId, profile: profileStatsSnapshot() }),
+          })
+        : null;
+      const migrated = migration?.ok ? await migration.json() : null;
       applyServerAccount(migrated?.account || payload.account);
     } else {
       authState.account = null;
@@ -3143,9 +3148,21 @@ document.querySelectorAll("[data-auth-provider]").forEach((button) => {
 $("#profileLogout")?.addEventListener("click", async () => {
   await fetch("/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
   authState.account = null;
+  for (const key of [
+    "score", "words", "streak", "longest", "rounds", "correct", "incorrect",
+    "totalWordLength", "totalGameSeconds", "gamesWon", "gamesLost",
+    "multiplayerWins", "multiplayerLosses", "maxGridWin",
+  ]) profile[key] = 0;
+  profile.speedAchievement = false;
+  profile.completedMultiplayerRounds = [];
+  profile.multiplayerWordRounds = [];
+  profile.days = [];
+  profile.name = randomGuestName();
+  profile.avatar = "🐈";
   profile.accountId = "";
   profileSyncBase = null;
   profileSyncEvents = [];
+  profileSyncInFlight = false;
   updateAuthUI();
   updateIdentity();
   updateProfile({ sync: false });
