@@ -494,6 +494,112 @@ test("Daily Rush freezes one shared board without adding a results panel", async
   assert.equal(await page.locator("#again").textContent(), "Try today again →");
 });
 
+test("challenge lifecycle ignores stale launches and Relay submissions", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  let releaseDaily;
+  let dailyRequestSeen;
+  const dailySeen = new Promise((resolve) => { dailyRequestSeen = resolve; });
+  const dailyResponse = {
+    challenge: {
+      id: "daily-2026-08-06",
+      date: "2026-08-06",
+      mode: "daily",
+      config: { size: 4, min: 3, seconds: 60, rule: "One shared board" },
+      dictionary: { dictionaryId: "wordrush-ca-standard-v1" },
+      board: Array(16).fill("A"),
+    },
+  };
+  await page.route("**/api/daily-challenge", async (route) => {
+    dailyRequestSeen();
+    await new Promise((resolve) => { releaseDaily = resolve; });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(dailyResponse),
+    });
+  });
+  await page.goto(baseUrl);
+  await openDailyChallenges(page);
+  await page.locator("#dailyRush").click();
+  await dailySeen;
+  await page.locator('nav button[data-screen="homeScreen"]').click();
+  await page.waitForSelector("#homeScreen.active");
+  releaseDaily();
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator("#homeScreen.active").count(), 1);
+  assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+  assert.equal(await page.locator("#gameScreen.active").count(), 0);
+
+  let relaySubmitRoute;
+  let relaySubmitSeen;
+  const relaySubmitRequest = new Promise((resolve) => { relaySubmitSeen = resolve; });
+  let relayCreateCount = 0;
+  const relayResponse = {
+    id: "relay-browser-test-20260806",
+    revision: 0,
+    config: { size: 4, min: 3, seconds: 120, chain: true, rule: "Pass the chain" },
+    dictionary: { dictionaryId: "wordrush-ca-standard-v1", version: "browser-test" },
+    board: ["C", "A", "T", "X", "D", "O", "G", "X", ...Array(8).fill("X")],
+    playableWordStarts: { C: 1, D: 1 },
+    state: { found: [], requiredLetter: "", turns: 0 },
+  };
+  await page.unroute("**/api/daily-challenge");
+  await page.route("**/api/dictionary**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      dictionary: relayResponse.dictionary,
+      words: ["CAT", "DOG"],
+    }),
+  }));
+  await page.route("**/api/relay-challenges**", async (route) => {
+    if (route.request().method() === "POST" &&
+        new URL(route.request().url()).pathname.endsWith("/relay-challenges")) {
+      relayCreateCount++;
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(relayResponse),
+      });
+      return;
+    }
+    relaySubmitRoute = route;
+    relaySubmitSeen();
+  });
+  await openDailyChallenges(page);
+  await page.locator("#wordRelay").click();
+  await startIntro(page);
+  assert.equal(relayCreateCount, 1);
+  await page.evaluate(() => {
+    window.__relayEvents = [];
+    document.addEventListener("wordrush:word-accepted", ({ detail }) => {
+      if (detail.mode === "relay") window.__relayEvents.push(detail.word);
+    });
+  });
+  await traceWord(page, [0, 1, 2]);
+  await relaySubmitRequest;
+  await traceWord(page, [4, 5, 6]);
+  await page.waitForFunction(() => /still saving/.test(document.querySelector("#toast").textContent));
+  assert.equal(await page.evaluate(() => window.__relayEvents.length), 0);
+  await page.locator("#gameBack").click();
+  await page.waitForSelector("#homeScreen.active");
+  await relaySubmitRoute.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      ...relayResponse,
+      revision: 1,
+      state: { found: ["CAT"], requiredLetter: "T", turns: 1 },
+    }),
+  });
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator("#homeScreen.active").count(), 1);
+  assert.equal(await page.evaluate(() => window.__relayEvents.length), 0);
+  assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem("wordrush-profile"))).words, 0);
+});
+
 test("browser can start, play, persist stats, and use the tile-banner profile button", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });

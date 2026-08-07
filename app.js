@@ -273,6 +273,7 @@ const s = {
   dailyChallenge: null,
   echo: null,
   relayChallenge: null,
+  challengeOperationId: 0,
   heist: null,
   frozenIndexes: new Set(),
   bounty: null,
@@ -282,6 +283,8 @@ let soloRoundGeneration = 0;
 let soloSubmissionEpoch = 0;
 let soloSubmissionTail = Promise.resolve();
 let soloSubmissionErrorCount = 0;
+let challengeLifecycleGeneration = 0;
+let relaySubmissionInFlight = null;
 let rushContinuationGeneration = 0;
 let rushContinuationTransition = false;
 let suddenDeathPresentationGeneration = 0;
@@ -321,6 +324,31 @@ function enqueueSoloSubmission(commit) {
     logSoloSubmissionError(error);
   });
   return soloSubmissionTail;
+}
+function beginChallengeOperation() {
+  relaySubmissionInFlight = null;
+  return ++challengeLifecycleGeneration;
+}
+function invalidateChallengeOperation() {
+  relaySubmissionInFlight = null;
+  return ++challengeLifecycleGeneration;
+}
+function isCurrentChallengeOperation(operation) {
+  return operation === challengeLifecycleGeneration;
+}
+function isCurrentRelaySubmission(identity) {
+  return Boolean(
+    isCurrentChallengeOperation(identity.operation) &&
+      s.challengeOperationId === identity.operation &&
+      isCurrentSoloSubmission(
+        identity.submissionEpoch,
+        identity.roundId,
+        identity.startedAt,
+        identity.endsAt,
+      ) &&
+      s.relayChallenge?.id === identity.challengeId &&
+      s.relayChallenge.revision === identity.revision,
+  );
 }
 const avatarOptions = [
     "🐈",
@@ -1363,7 +1391,10 @@ function end(completionReason) {
   const soloGameplaySeconds = !s.onlineRoundKey
     ? roundTiming.elapsedGameplaySeconds(s.startedAt, Date.now(), s.config?.seconds)
     : 0;
-  if (!s.onlineRoundKey) invalidateSoloSubmissionQueue();
+  if (!s.onlineRoundKey) {
+    invalidateChallengeOperation();
+    invalidateSoloSubmissionQueue();
+  }
   s.done = 1;
   clearInterval(s.timer);
   if (s.rush && !s.nextRushMode) {
@@ -1591,9 +1622,7 @@ function launchAppRoute(route) {
   if (route.launcher === "daily") {
     const ref = new URLSearchParams(location.search).get("challenge");
     if (/^[A-Za-z0-9_-]{20,40}$/.test(ref || ""))
-      return requestSharedChallenge(ref)
-        .then((shared) => startDailyRush(shared))
-        .catch(() => toast("That challenge link is unavailable."));
+      return startDailyRush(null, false, ref);
     return startDailyRush();
   }
   if (route.launcher === "echo") return startDailyRush(null, true);
@@ -1656,6 +1685,8 @@ function show(
       cancelSoloRushContinuation();
   }
   if (id === "homeScreen") soloGenerationRequest++;
+  if (["homeScreen", "statsScreen", "achievementsScreen"].includes(id))
+    invalidateChallengeOperation();
   document
     .querySelectorAll(".screen")
     .forEach((x) => x.classList.toggle("active", x.id === id));
@@ -1731,6 +1762,7 @@ $("#introStart")?.addEventListener("click", () => {
 function abandonActiveRound() {
   clearSuddenDeathPresentation();
   soloGenerationRequest++;
+  invalidateChallengeOperation();
   if (!s.onlineRoundKey) invalidateSoloSubmissionQueue();
   clearInterval(s.timer);
   clearTimeout(s.rushTimer);
@@ -1791,7 +1823,10 @@ async function start(
   skipRoundIntro = false,
   dailyChallenge = null,
   relayChallenge = null,
+  challengeOperationId = null,
 ) {
+  const challengeOperation = challengeOperationId ?? beginChallengeOperation();
+  if (!isCurrentChallengeOperation(challengeOperation)) return;
   const generationRequest = ++soloGenerationRequest;
   if (
     !dailyChallenge &&
@@ -1851,9 +1886,17 @@ async function start(
           }),
       fetchDictionary(generationInputs.dictionaryId),
     ]);
-    if (!dailyChallenge && !relayChallenge) generated = await applySoloBoardTestFixture(generated);
+    if (!isCurrentChallengeOperation(challengeOperation)) return;
+    if (!dailyChallenge && !relayChallenge) {
+      generated = await applySoloBoardTestFixture(generated);
+      if (!isCurrentChallengeOperation(challengeOperation)) return;
+    }
   } catch (error) {
-    if (generationRequest !== soloGenerationRequest) return;
+    if (
+      generationRequest !== soloGenerationRequest ||
+      !isCurrentChallengeOperation(challengeOperation)
+    )
+      return;
     const failureMessage =
       error.code === "BOARD_GENERATION_FAILED" &&
       error.failureCode === "QUALITY_PROFILE_UNAVAILABLE"
@@ -1867,7 +1910,11 @@ async function start(
     toast(failureMessage);
     return;
   }
-  if (generationRequest !== soloGenerationRequest) return;
+  if (
+    generationRequest !== soloGenerationRequest ||
+    !isCurrentChallengeOperation(challengeOperation)
+  )
+    return;
   const config = generated.config;
   clearSuddenDeathPresentation();
   invalidateSoloSubmissionQueue();
@@ -1898,6 +1945,7 @@ async function start(
         },
       }
     : null;
+  s.challengeOperationId = challengeOperation;
   s.heist = null;
   s.echo = s.dailyChallenge
     ? { target: dailyChallenge?.echo || null, checkpoints: [] }
@@ -2023,16 +2071,21 @@ async function start(
     onStart: startSoloGameplay,
   });
 }
-async function startDailyRush(shared = null, raceEcho = false) {
+async function startDailyRush(shared = null, raceEcho = false, sharedRef = null) {
+  const challengeOperation = beginChallengeOperation();
   let daily = shared;
   try {
-    if (!daily) daily = await requestDailyChallenge();
+    if (sharedRef) daily = await requestSharedChallenge(sharedRef);
+    else if (!daily) daily = await requestDailyChallenge();
+    if (!isCurrentChallengeOperation(challengeOperation)) return;
   } catch (error) {
+    if (!isCurrentChallengeOperation(challengeOperation)) return;
     toast(error.code === "CHALLENGE_NOT_FOUND"
       ? "That Daily Rush link has expired."
       : "Daily Rush is not ready yet. Please try again.");
     return;
   }
+  if (!isCurrentChallengeOperation(challengeOperation)) return;
   const challenge = daily.challenge;
   if (raceEcho) {
     const echo = loadDailyEcho(challenge.id);
@@ -2050,11 +2103,15 @@ async function startDailyRush(shared = null, raceEcho = false) {
     challenge.dictionary.dictionaryId,
     false,
     daily,
+    null,
+    challengeOperation,
   );
 }
 async function startWordRelay(id = null) {
+  const challengeOperation = beginChallengeOperation();
   try {
     const relay = await requestRelayChallenge(id);
+    if (!isCurrentChallengeOperation(challengeOperation)) return;
     const challenge = relay.challenge;
     return start(
       "relay",
@@ -2065,8 +2122,10 @@ async function startWordRelay(id = null) {
       false,
       null,
       relay,
+      challengeOperation,
     );
   } catch (error) {
+    if (!isCurrentChallengeOperation(challengeOperation)) return;
     toast(error.code === "RELAY_NOT_FOUND"
       ? "That Word Relay link has expired."
       : "Word Relay is not ready yet. Please try again.");
@@ -2088,6 +2147,11 @@ function pickedPathIsValid(trace, word) {
 }
 async function submitRelayWord(trace, word) {
   if (!s.relayChallenge || !s.acceptingSoloSubmissions || s.done) return;
+  if (relaySubmissionInFlight) {
+    toast("Relay turn is still saving — please wait", "wrong");
+    pulseIncorrectWord(trace);
+    return;
+  }
   const normalized = String(word || "").toUpperCase();
   const validPath = pickedPathIsValid(trace, normalized);
   if (normalized.length < s.config.min || !validPath || s.found.has(normalized)) {
@@ -2108,13 +2172,25 @@ async function submitRelayWord(trace, word) {
     return;
   }
   const challenge = s.relayChallenge;
+  const submission = {
+    operation: s.challengeOperationId,
+    submissionEpoch: soloSubmissionEpoch,
+    roundId: s.soloRoundId,
+    startedAt: s.startedAt,
+    endsAt: s.endsAt,
+    challengeId: challenge.id,
+    revision: challenge.revision,
+  };
+  relaySubmissionInFlight = submission;
   try {
     const response = await fetch("/api/relay-challenges/" + encodeURIComponent(challenge.id), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ revision: challenge.revision, word: normalized, path: trace }),
     });
+    if (!isCurrentRelaySubmission(submission)) return;
     const payload = await response.json().catch(() => null);
+    if (!isCurrentRelaySubmission(submission)) return;
     if (!response.ok || !payload?.state) {
       const reason = payload?.error;
       toast(
@@ -2128,6 +2204,7 @@ async function submitRelayWord(trace, word) {
       pulseIncorrectWord(trace);
       return;
     }
+    if (!isCurrentRelaySubmission(submission)) return;
     s.relayChallenge = {
       id: payload.id,
       revision: payload.revision,
@@ -2153,8 +2230,11 @@ async function submitRelayWord(trace, word) {
     toast("Turn saved · share the relay link");
     emit("word-accepted", { word: normalized, points, mode: "relay", multiplayer: false, randomRush: false });
   } catch {
+    if (!isCurrentRelaySubmission(submission)) return;
     toast("Relay connection failed — try again", "wrong");
     pulseIncorrectWord(trace);
+  } finally {
+    if (relaySubmissionInFlight === submission) relaySubmissionInFlight = null;
   }
 }
 async function submit() {
@@ -2657,7 +2737,7 @@ async function launchSharedChallengeFromUrl() {
   )
     return;
   try {
-    await startDailyRush(await requestSharedChallenge(refs[0]));
+    await startDailyRush(null, false, refs[0]);
   } catch {
     toast("That challenge link is unavailable.");
   }
