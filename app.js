@@ -506,29 +506,33 @@ const authState = {
   providers: [],
 };
 let profileSyncBase = null;
+let profileSyncQueuedBase = null;
 let profileSyncEvents = [];
 let profileSyncInFlight = false;
 let profileSyncSequence = 0;
-function profileStatsSnapshot() {
+let profileSyncGeneration = 0;
+let profileSyncStatus = "synced";
+const PROFILE_OUTBOX_KEY = "wordrush-profile-outbox";
+function profileStatsSnapshot(source = profile) {
   return {
-    score: profile.score,
-    words: profile.words,
-    streak: profile.streak,
-    longest: profile.longest,
-    rounds: profile.rounds,
-    correct: profile.correct,
-    incorrect: profile.incorrect,
-    totalWordLength: profile.totalWordLength,
-    totalGameSeconds: profile.totalGameSeconds,
-    gamesWon: profile.gamesWon,
-    gamesLost: profile.gamesLost,
-    multiplayerWins: profile.multiplayerWins,
-    multiplayerLosses: profile.multiplayerLosses,
-    maxGridWin: profile.maxGridWin,
-    speedAchievement: profile.speedAchievement === true,
-    days: [...(profile.days || [])],
-    completedMultiplayerRounds: [...(profile.completedMultiplayerRounds || [])],
-    multiplayerWordRounds: (profile.multiplayerWordRounds || []).map((round) => ({
+    score: source.score,
+    words: source.words,
+    streak: source.streak,
+    longest: source.longest,
+    rounds: source.rounds,
+    correct: source.correct,
+    incorrect: source.incorrect,
+    totalWordLength: source.totalWordLength,
+    totalGameSeconds: source.totalGameSeconds,
+    gamesWon: source.gamesWon,
+    gamesLost: source.gamesLost,
+    multiplayerWins: source.multiplayerWins,
+    multiplayerLosses: source.multiplayerLosses,
+    maxGridWin: source.maxGridWin,
+    speedAchievement: source.speedAchievement === true,
+    days: [...(source.days || [])],
+    completedMultiplayerRounds: [...(source.completedMultiplayerRounds || [])],
+    multiplayerWordRounds: (source.multiplayerWordRounds || []).map((round) => ({
       roundId: round.roundId,
       words: [...(round.words || [])],
     })),
@@ -570,12 +574,21 @@ function profileDeltaHasValues(delta) {
 }
 function applyServerAccount(account, replaceStats = true) {
   if (!account) return;
+  const previousOwner = profile.accountId || "";
+  const pendingEvents = profileMigration.readProfileOutbox(
+    localStorage,
+    PROFILE_OUTBOX_KEY,
+    account.id,
+  );
+  const preserveLocalStats = replaceStats === false ||
+    (previousOwner === account.id && pendingEvents.length > 0);
+  const serverStats = profileStatsSnapshot(account.stats || {});
   authState.account = account;
   profile.accountId = account.id || "";
   if (account.username) profile.name = account.username;
   else if (account.displayName) profile.name = String(account.displayName).slice(0, 20);
   if (isProfileAvatar(account.avatar)) profile.avatar = account.avatar;
-  if (replaceStats && account.stats && typeof account.stats === "object")
+  if (replaceStats && !preserveLocalStats && account.stats && typeof account.stats === "object")
     Object.assign(profile, account.stats);
   profile.days = playStreak.normalizePlayDates(profile.days);
   profile.completedMultiplayerRounds = Array.isArray(profile.completedMultiplayerRounds)
@@ -584,14 +597,34 @@ function applyServerAccount(account, replaceStats = true) {
   profile.multiplayerWordRounds = multiplayerWordReconciliation.normalizeRoundRecords(
     profile.multiplayerWordRounds,
   );
-  profileSyncBase = profileStatsSnapshot();
+  profileSyncBase = serverStats;
+  profileSyncQueuedBase = pendingEvents.at(-1)?.snapshot || serverStats;
+  profileSyncEvents = pendingEvents;
+  profileSyncStatus = pendingEvents.length ? "pending" : "synced";
   updateIdentity();
   updateProfile({ sync: false });
   window.wordrushIdentityChanged?.();
+  if (pendingEvents.length) void flushProfileEvents();
+}
+function persistProfileSyncEvents() {
+  const accountId = authState.account?.id;
+  if (accountId) {
+    profileMigration.writeProfileOutbox(
+      localStorage,
+      PROFILE_OUTBOX_KEY,
+      accountId,
+      profileSyncEvents,
+    );
+  }
 }
 async function flushProfileEvents() {
-  if (profileSyncInFlight || !authState.account || !profileSyncEvents.length) return;
+  if (
+    profileSyncInFlight || !authState.account || profile.accountId !== authState.account.id ||
+    !profileSyncEvents.length
+  ) return;
   profileSyncInFlight = true;
+  const accountId = authState.account.id;
+  const generation = profileSyncGeneration;
   const event = profileSyncEvents[0];
   let failed = false;
   try {
@@ -599,12 +632,24 @@ async function flushProfileEvents() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify(event),
+      body: JSON.stringify({ eventId: event.eventId, delta: event.delta }),
     });
     if (!response.ok) throw new Error("profile event failed");
+    if (
+      generation !== profileSyncGeneration ||
+      authState.account?.id !== accountId ||
+      profile.accountId !== accountId
+    ) return;
     profileSyncEvents.shift();
+    persistProfileSyncEvents();
+    profileSyncBase = event.snapshot;
+    profileSyncQueuedBase = profileSyncEvents.at(-1)?.snapshot || profileSyncBase;
+    profileSyncStatus = profileSyncEvents.length ? "pending" : "synced";
+    updateAuthUI();
   } catch {
     failed = true;
+    profileSyncStatus = "not-synced";
+    updateAuthUI();
     setTimeout(() => flushProfileEvents(), 5000);
   } finally {
     profileSyncInFlight = false;
@@ -612,15 +657,24 @@ async function flushProfileEvents() {
   }
 }
 function queueProfileSync() {
-  if (!authState.loaded || !authState.account || !profileSyncBase) return;
+  if (
+    !authState.loaded || !authState.account || profile.accountId !== authState.account.id ||
+    !profileSyncBase
+  ) return;
   const current = profileStatsSnapshot();
-  const delta = profileStatsDelta(current, profileSyncBase);
+  const delta = profileStatsDelta(current, profileSyncQueuedBase || profileSyncBase);
   if (!profileDeltaHasValues(delta)) return;
-  profileSyncBase = current;
+  const accountId = authState.account.id;
   profileSyncEvents.push({
-    eventId: localGuestId + ":" + Date.now() + ":" + (++profileSyncSequence),
+    accountId,
+    eventId: accountId + ":" + localGuestId + ":" + Date.now() + ":" + (++profileSyncSequence),
     delta,
+    snapshot: current,
   });
+  profileSyncQueuedBase = current;
+  profileSyncStatus = "pending";
+  persistProfileSyncEvents();
+  updateAuthUI();
   void flushProfileEvents();
 }
 function updateAuthUI() {
@@ -632,7 +686,9 @@ function updateAuthUI() {
   const save = $("#profileSave");
   if (status) {
     status.textContent = account
-      ? account.needsUsername
+      ? profileSyncStatus === "not-synced"
+        ? "Your stats are not synced yet. We will keep trying."
+        : account.needsUsername
         ? "Choose a unique username to finish your profile."
         : "Your profile and stats are synced across devices."
       : "Save your username, avatar, and stats by continuing with a provider.";
@@ -679,13 +735,21 @@ async function loadAuthProfile() {
           })
         : null;
       const migrated = migration?.ok ? await migration.json() : null;
-      applyServerAccount(migrated?.account || payload.account);
+      if (migration && !migration.ok) {
+        authState.account = payload.account;
+        profileSyncStatus = "not-synced";
+        updateAuthUI();
+      } else {
+        applyServerAccount(migrated?.account || payload.account);
+      }
     } else {
       authState.account = null;
       updateAuthUI();
     }
   } catch {
     authState.account = null;
+    profileSyncStatus = "not-synced";
+    updateAuthUI();
   } finally {
     authState.loaded = true;
     updateAuthUI();
@@ -3161,8 +3225,11 @@ $("#profileLogout")?.addEventListener("click", async () => {
   profile.avatar = "🐈";
   profile.accountId = "";
   profileSyncBase = null;
+  profileSyncQueuedBase = null;
   profileSyncEvents = [];
   profileSyncInFlight = false;
+  profileSyncGeneration++;
+  profileSyncStatus = "synced";
   updateAuthUI();
   updateIdentity();
   updateProfile({ sync: false });

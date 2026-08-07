@@ -721,6 +721,108 @@ test("switching accounts does not migrate the previous account's local stats", a
   );
 });
 
+test("failed profile migration keeps local progress and shows a not-synced state", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.addInitScript(() => {
+    localStorage.setItem("wordrush-profile", JSON.stringify({
+      accountId: "",
+      score: 21,
+      words: 4,
+      name: "GuestPlayer",
+      avatar: "🐈",
+    }));
+  });
+  const account = {
+    id: "acct_browser-migration-failure",
+    username: "Player",
+    displayName: "Player",
+    avatar: "🐈",
+    stats: { score: 0, words: 0 },
+    needsUsername: false,
+    provider: "google",
+    providers: ["google"],
+  };
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/migrate", (route) => route.fulfill({
+    status: 503,
+    contentType: "application/json",
+    body: JSON.stringify({ error: "PROFILE_MIGRATION_UNAVAILABLE" }),
+  }));
+  await page.goto(baseUrl);
+  await page.waitForFunction(() => document.querySelector("#profileLogout")?.hidden === false);
+  await page.locator("#profileButton").click();
+  assert.match(await page.locator("#profileAuthStatus").textContent(), /not synced yet/i);
+  assert.equal(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).score),
+    21,
+  );
+});
+
+test("restored profile outbox events retry and acknowledge after reload without new gameplay", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const accountId = "acct_browser-restored-outbox";
+  const event = {
+    accountId,
+    eventId: "restored-event-1",
+    delta: { score: 9, words: 1, rounds: 1 },
+    snapshot: { score: 9, words: 1, rounds: 1 },
+  };
+  await page.addInitScript((seed) => {
+    localStorage.setItem("wordrush-profile", JSON.stringify({
+      accountId: seed.accountId,
+      score: 9,
+      words: 1,
+      rounds: 1,
+      name: "RestoredPlayer",
+      avatar: "🐈",
+    }));
+    localStorage.setItem("wordrush-profile-outbox", JSON.stringify({
+      version: 1,
+      events: [seed.event],
+    }));
+  }, { accountId, event });
+  const account = {
+    id: accountId,
+    username: "RestoredPlayer",
+    displayName: "Restored Player",
+    avatar: "🐈",
+    stats: { score: 0, words: 0, rounds: 0 },
+    needsUsername: false,
+    provider: "google",
+    providers: ["google"],
+  };
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/event", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account }),
+  }));
+  const requestPromise = page.waitForRequest("**/api/profile/event");
+  await page.goto(baseUrl);
+  const request = await requestPromise;
+  assert.deepEqual(JSON.parse(request.postData()), {
+    eventId: event.eventId,
+    delta: event.delta,
+  });
+  await page.waitForFunction(() => localStorage.getItem("wordrush-profile-outbox") === null);
+  assert.equal(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).score),
+    9,
+  );
+});
+
 test("global scoreboard displays an authoritative multiplayer result and all periods", async () => {
   const host = await wsClient("browser-leaderboard-winner");
   const guest = await wsClient("browser-leaderboard-loser");
