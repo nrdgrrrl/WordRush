@@ -7,6 +7,7 @@ const RELAY_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_RELAY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_RELAY_RECORDS = 1_000;
 const MAX_STATE_BYTES = 16 * 1024;
+const STORE_UNAVAILABLE = "RELAY_CHALLENGE_STORE_UNAVAILABLE";
 const DEFAULT_DIRECTORY =
   process.env.STATE_DIRECTORY ||
   (process.env.NODE_ENV === "production"
@@ -111,19 +112,35 @@ function randomId() {
 class RelayChallengeStore {
   constructor(file = process.env.WORDRUSH_RELAY_CHALLENGES_FILE || DEFAULT_FILE) {
     this.file = file;
+    this.trusted = false;
     this.data = this.load();
   }
 
   load() {
     try {
       const data = JSON.parse(fs.readFileSync(this.file, "utf8"));
-      return validData(data) ? data : emptyData();
-    } catch {
+      if (!validData(data)) {
+        this.trusted = false;
+        return emptyData();
+      }
+      this.trusted = true;
+      return data;
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        this.trusted = true;
+        return emptyData();
+      }
+      this.trusted = false;
       return emptyData();
     }
   }
 
+  ensureAvailable() {
+    if (!this.trusted) throw new Error(STORE_UNAVAILABLE);
+  }
+
   save() {
+    this.ensureAvailable();
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const temporary = this.file + ".tmp";
     try {
@@ -138,6 +155,7 @@ class RelayChallengeStore {
   }
 
   prune(now = new Date()) {
+    this.ensureAvailable();
     const nowMs = now.valueOf();
     const live = Object.entries(this.data.challenges)
       .filter(([, record]) => Date.parse(record.expiresAt) > nowMs)
@@ -150,6 +168,7 @@ class RelayChallengeStore {
   }
 
   async create(input, now = new Date()) {
+    this.ensureAvailable();
     if (!isObject(input) || !Number.isFinite(now.valueOf()))
       throw new Error("RELAY_CHALLENGE_INVALID");
     const allowed = new Set(["board", "config", "dictionary", "state", "ttlMs"]);
@@ -180,6 +199,7 @@ class RelayChallengeStore {
   }
 
   get(id, now = new Date()) {
+    this.ensureAvailable();
     if (!validOpaqueId(id) || !Number.isFinite(now.valueOf())) return null;
     const record = this.data.challenges[id];
     if (!record) return null;
@@ -192,6 +212,7 @@ class RelayChallengeStore {
   }
 
   async transition(id, revision, apply, now = new Date()) {
+    this.ensureAvailable();
     if (!validOpaqueId(id) || !Number.isSafeInteger(revision) || revision < 0 ||
       typeof apply !== "function" || !Number.isFinite(now.valueOf()))
       throw new Error("RELAY_CHALLENGE_INVALID");
@@ -229,6 +250,7 @@ module.exports = {
   RELAY_TTL_MS,
   RelayChallengeStore,
   SCHEMA_VERSION,
+  STORE_UNAVAILABLE,
   emptyData,
   validConfig,
   validData,

@@ -43,6 +43,19 @@
     String(value ?? "").replace(/[&<>'"]/g, (character) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character],
     );
+  const avatarMarkup = (value) =>
+    window.WordrushAvatarPresentation.markup(value);
+  screen.addEventListener("error", (event) => {
+    const image = event.target;
+    if (!(image instanceof HTMLImageElement) || !image.matches(".avatar-photo[data-avatar-fallback]")) return;
+    const fallback = document.createElement("span");
+    fallback.className = "avatar-emoji";
+    fallback.setAttribute("aria-hidden", "true");
+    fallback.textContent = window.WordrushAvatarPresentation.describe(
+      image.dataset.avatarFallback,
+    ).value;
+    image.replaceWith(fallback);
+  }, true);
   const renderIdle = (message = "Choose Wordrush from your phone to show the room here.") => {
     eyebrow.textContent = "TV COMPANION";
     screen.className = "screen idle";
@@ -64,7 +77,7 @@
     suddenDeathSeries.rankParticipants(series?.participants || []).map((player) =>
       "<div class=\"series-tv-standing" +
       (player.status === "withdrawn" ? " is-withdrawn" : "") +
-      "\"><strong>" + escape(player.avatar || "🐈") + " " +
+      "\"><strong>" + avatarMarkup(player.avatar) + " " +
       escape(player.name) + "</strong><span>" +
       (player.status === "withdrawn"
         ? "WITHDRAWN"
@@ -97,7 +110,7 @@
       series?.winnerIds?.includes(player.id),
     );
     const headline = winners.length
-      ? winners.map((player) => escape(player.avatar || "🐈") + " " +
+      ? winners.map((player) => avatarMarkup(player.avatar) + " " +
           escape(player.name)).join(" & ") +
         (winners.length > 1 ? " share" : " wins") + " the series!"
       : "Sudden Death Series cancelled";
@@ -106,7 +119,7 @@
       return "<article class=\"series-tv-final-card" +
         (series?.winnerIds?.includes(player.id) ? " is-winner" : "") +
         (seriesPlayer.status === "withdrawn" ? " is-withdrawn" : "") +
-        "\"><header><strong>" + escape(player.avatar || "🐈") + " " +
+        "\"><header><strong>" + avatarMarkup(player.avatar) + " " +
         escape(player.name) + "</strong><b>" + Number(seriesPlayer.strikes || 0) +
         " strike" + (Number(seriesPlayer.strikes || 0) === 1 ? "" : "s") +
         "</b></header><p>" +
@@ -161,19 +174,19 @@
     const suddenDeath = suddenDeathOutcome.normalizeSuddenDeathOutcome(result.suddenDeath);
     const headline = suddenDeath
       ? suddenDeath.outcome === "sole_winner"
-        ? escape(suddenDeath.winner.avatar) + " " + escape(suddenDeath.winner.name) + " wins Sudden Death!"
+        ? avatarMarkup(suddenDeath.winner.avatar) + " " + escape(suddenDeath.winner.name) + " wins Sudden Death!"
         : suddenDeath.outcome === "survivors"
           ? "Sudden Death survivors!"
           : "Sudden Death — no winner"
       : cooperative
       ? "Team word power!"
       : leaders.length > 1
-        ? `${leaders.map((player) => `${escape(player.avatar || "🐈")} ${escape(player.name)}`).join(" & ")} tie for the crown!`
+        ? `${leaders.map((player) => `${avatarMarkup(player.avatar)} ${escape(player.name)}`).join(" & ")} tie for the crown!`
       : winner
-        ? `${escape(winner.avatar || "🐈")} ${escape(winner.name)} takes the crown!`
+        ? `${avatarMarkup(winner.avatar)} ${escape(winner.name)} takes the crown!`
         : "What a word rush!";
     const longestBanner = longest.length
-      ? `<div class="longest-banner"><span>🏆 LONGEST WORD${longestPlayers > 1 ? " · CO-WINNERS" : ""}</span><strong>${longest.map(({ item }) => escape(item.word)).join(" · ")}</strong><b>${longest.map(({ player, item }) => `${escape(player.avatar || "🐈")} ${escape(player.name)} · ${longestLength} letters · ${Number(item.points || 0).toLocaleString()} pts`).join("<br>")}</b></div>`
+      ? `<div class="longest-banner"><span>🏆 LONGEST WORD${longestPlayers > 1 ? " · CO-WINNERS" : ""}</span><strong>${longest.map(({ item }) => escape(item.word)).join(" · ")}</strong><b>${longest.map(({ player, item }) => `${avatarMarkup(player.avatar)} ${escape(player.name)} · ${longestLength} letters · ${Number(item.points || 0).toLocaleString()} pts`).join("<br>")}</b></div>`
       : `<div class="longest-banner empty"><span>✨ NEXT ROUND</span><strong>No words yet</strong><b>A fresh board is waiting.</b></div>`;
     const suddenDeathBanner = result.suddenDeath
       ? "<div class=\"sudden-death-banner" + (replaySuddenDeath ? "" : " no-replay") + "\"><strong>💥 SUDDEN DEATH!</strong><span>" +
@@ -182,7 +195,7 @@
     const playerCards = ranking.map((player, index) => {
       const words = player.words || [];
       const wordChips = words.length
-        ? words.map((item) => `<div class="tv-word length-${wordLengthClass(item.word)}"><b>${escape(item.word)}</b><span>${Number(item.points || 0).toLocaleString()} pts</span></div>`).join("")
+        ? words.map((item) => `<div class="tv-word length-${wordLengthClass(item.word)}"><b>${escape(item.word)}</b><span>${Number(item.points || 0).toLocaleString()} pts${Number(item.bonusPoints || 0) > 0 ? ` · +${Number(item.bonusPoints).toLocaleString()} bounty` : ""}</span></div>`).join("")
         : `<p class="no-words">No words this round</p>`;
       const density = words.length > 18 ? " ultra-dense" : words.length > 10 ? " dense" : "";
       const sessionRecord = player.session
@@ -195,7 +208,7 @@
       const playerScore = cooperative
         ? Number(player.contribution || 0).toLocaleString() + " CONTRIBUTION"
         : Number(player.score || 0).toLocaleString();
-      return `<article class="${cardClass}"><header><span class="final-rank"${outcomeBadge ? ` data-outcome="${outcomeBadge.toLowerCase()}"` : ""}>${rankBadge}</span><div><strong>${escape(player.avatar || "🐈")} ${escape(player.name)}</strong><small>${words.length} word${words.length === 1 ? "" : "s"}</small>${sessionRecord}</div><b class="final-score">${playerScore}</b></header><div class="tv-word-list${density}">${wordChips}</div></article>`;
+      return `<article class="${cardClass}"><header><span class="final-rank"${outcomeBadge ? ` data-outcome="${outcomeBadge.toLowerCase()}"` : ""}>${rankBadge}</span><div><strong>${avatarMarkup(player.avatar)} ${escape(player.name)}</strong><small>${words.length} word${words.length === 1 ? "" : "s"}</small>${sessionRecord}</div><b class="final-score">${playerScore}</b></header><div class="tv-word-list${density}">${wordChips}</div></article>`;
     }).join("");
     eyebrow.textContent = "FINAL RESULTS";
     screen.className = "screen finished results-party";
@@ -227,14 +240,14 @@
     const cards = players.map((player) => state.series
       ? '<article class="score-card' +
         (player.status === "withdrawn" ? " is-withdrawn" : "") +
-        '"><span class="name">' + escape(player.avatar || "🐈") + " " +
+        '"><span class="name">' + avatarMarkup(player.avatar) + " " +
         escape(player.name) + '</span><strong class="score">' +
         (player.status === "withdrawn"
           ? "WITHDRAWN"
           : Number(player.strikes || 0) + " STRIKES") +
         "</strong></article>"
       : '<article class="score-card"><span class="name">' +
-        escape(player.avatar || "🐈") + " " + escape(player.name) +
+        avatarMarkup(player.avatar) + " " + escape(player.name) +
         '</span><strong class="score">' +
         Number(player.score || 0).toLocaleString() +
         "</strong></article>").join("");

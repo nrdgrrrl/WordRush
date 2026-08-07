@@ -315,17 +315,26 @@ class AccountStore {
     return emptyData();
   }
 
-  save() {
+  save(data = this.data) {
     if (!this.trusted) throw new Error("ACCOUNT_STORE_REQUIRES_EXPLICIT_RESET");
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const temporary = this.file + ".tmp";
     try {
-      fs.writeFileSync(temporary, JSON.stringify(this.data, null, 2) + "\n", { mode: 0o600 });
+      fs.writeFileSync(temporary, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
       fs.renameSync(temporary, this.file);
     } catch (error) {
       try { fs.unlinkSync(temporary); } catch {}
       throw error;
     }
+  }
+
+  candidate() {
+    return JSON.parse(JSON.stringify(this.data));
+  }
+
+  commit(data) {
+    this.save(data);
+    this.data = data;
   }
 
   get(id) {
@@ -345,10 +354,13 @@ class AccountStore {
     if (existing) {
       const nextDisplayName = cleanText(displayName, existing.displayName || "Player", 80);
       if (nextDisplayName !== existing.displayName || (isAvatar(avatar) && avatar !== existing.avatar)) {
-        existing.displayName = nextDisplayName;
-        if (isAvatar(avatar)) existing.avatar = avatar;
-        existing.updatedAt = new Date().toISOString();
-        this.save();
+        const data = this.candidate();
+        const account = data.accounts[existing.id];
+        account.displayName = nextDisplayName;
+        if (isAvatar(avatar)) account.avatar = avatar;
+        account.updatedAt = new Date().toISOString();
+        this.commit(data);
+        return account;
       }
       return existing;
     }
@@ -366,9 +378,10 @@ class AccountStore {
       createdAt: now,
       updatedAt: now,
     };
-    this.data.accounts[id] = account;
-    this.data.providerIndex[provider + ":" + normalizedProviderId] = id;
-    this.save();
+    const data = this.candidate();
+    data.accounts[id] = account;
+    data.providerIndex[provider + ":" + normalizedProviderId] = id;
+    this.commit(data);
     return account;
   }
 
@@ -387,22 +400,26 @@ class AccountStore {
       error.code = "USERNAME_TAKEN";
       throw error;
     }
-    if (account.username) delete this.data.usernames[usernameKey(account.username)];
-    account.username = result.value;
-    this.data.usernames[result.key] = account.id;
-    account.updatedAt = new Date().toISOString();
-    this.save();
-    return account;
+    const data = this.candidate();
+    const nextAccount = data.accounts[account.id];
+    if (nextAccount.username) delete data.usernames[usernameKey(nextAccount.username)];
+    nextAccount.username = result.value;
+    data.usernames[result.key] = nextAccount.id;
+    nextAccount.updatedAt = new Date().toISOString();
+    this.commit(data);
+    return nextAccount;
   }
 
   updateAvatar(accountId, value) {
     const account = this.get(accountId);
     if (!account) throw new Error("ACCOUNT_NOT_FOUND");
     if (!isAvatar(value)) throw new Error("AVATAR_INVALID");
-    account.avatar = value;
-    account.updatedAt = new Date().toISOString();
-    this.save();
-    return account;
+    const data = this.candidate();
+    const nextAccount = data.accounts[account.id];
+    nextAccount.avatar = value;
+    nextAccount.updatedAt = new Date().toISOString();
+    this.commit(data);
+    return nextAccount;
   }
 
   migrate(accountId, guestId, profile) {
@@ -411,10 +428,13 @@ class AccountStore {
     const guest = cleanText(guestId, "", 100);
     if (!guest) throw new Error("GUEST_ID_REQUIRED");
     if (!account.migratedGuestIds[guest]) {
-      account.stats = mergeStats(account.stats, profile);
-      account.migratedGuestIds[guest] = new Date().toISOString();
-      account.updatedAt = new Date().toISOString();
-      this.save();
+      const data = this.candidate();
+      const nextAccount = data.accounts[account.id];
+      nextAccount.stats = mergeStats(nextAccount.stats, profile);
+      nextAccount.migratedGuestIds[guest] = new Date().toISOString();
+      nextAccount.updatedAt = new Date().toISOString();
+      this.commit(data);
+      return nextAccount;
     }
     return account;
   }
@@ -425,16 +445,18 @@ class AccountStore {
     const id = cleanText(eventId, "", 160);
     if (!id) throw new Error("PROFILE_EVENT_ID_REQUIRED");
     if (account.appliedEventIds[id]) return account;
-    account.stats = mergeStats(account.stats, delta);
-    account.appliedEventIds[id] = new Date().toISOString();
-    const ids = Object.keys(account.appliedEventIds);
+    const data = this.candidate();
+    const nextAccount = data.accounts[account.id];
+    nextAccount.stats = mergeStats(nextAccount.stats, delta);
+    nextAccount.appliedEventIds[id] = new Date().toISOString();
+    const ids = Object.keys(nextAccount.appliedEventIds);
     if (ids.length > MAX_EVENT_IDS) {
       for (const oldId of ids.slice(0, ids.length - MAX_EVENT_IDS))
-        delete account.appliedEventIds[oldId];
+        delete nextAccount.appliedEventIds[oldId];
     }
-    account.updatedAt = new Date().toISOString();
-    this.save();
-    return account;
+    nextAccount.updatedAt = new Date().toISOString();
+    this.commit(data);
+    return nextAccount;
   }
 
   public(accountId, providers = []) {

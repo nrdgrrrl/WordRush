@@ -55,9 +55,32 @@ function consumeNextRushMode() {
   s.nextRushMode = null;
   return mode;
 }
-const adult = sharedConfig.ADULT_WORDS;
 const wordCheckCache = new Map();
 const dictionaryRequestCache = new Map();
+const WORD_CHECK_ATTEMPTS = 2;
+const DICTIONARY_METADATA_PATTERN = /^[a-f0-9]{64}$/i;
+function validDictionaryMetadata(value) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      typeof value.dictionaryId === "string" &&
+      value.dictionaryId.length > 0 &&
+      DICTIONARY_METADATA_PATTERN.test(value.artifactSha256),
+  );
+}
+function sameDictionaryIdentity(left, right) {
+  return Boolean(
+    validDictionaryMetadata(left) &&
+      validDictionaryMetadata(right) &&
+      left.dictionaryId === right.dictionaryId &&
+      left.artifactSha256.toLowerCase() === right.artifactSha256.toLowerCase(),
+  );
+}
+function dictionaryVersionUnavailable() {
+  const error = new Error("Dictionary version unavailable");
+  error.code = "DICTIONARY_VERSION_UNAVAILABLE";
+  return error;
+}
 async function fetchDictionary(dictionaryId = DEFAULT_DICTIONARY_ID) {
   if (dictionaryRequestCache.has(dictionaryId))
     return dictionaryRequestCache.get(dictionaryId);
@@ -71,9 +94,9 @@ async function fetchDictionary(dictionaryId = DEFAULT_DICTIONARY_ID) {
     .then((payload) => {
       if (
         payload?.dictionary?.dictionaryId !== dictionaryId ||
-        !Array.isArray(payload.words)
+        !validDictionaryMetadata(payload.dictionary)
       )
-        throw new Error("Dictionary response was invalid");
+        throw dictionaryVersionUnavailable();
       return payload;
     });
   dictionaryRequestCache.set(dictionaryId, request);
@@ -104,6 +127,7 @@ async function requestSoloBoard({ mode, config, adultMode, dictionaryId }) {
   if (
     payload?.mode !== mode ||
     payload?.dictionary?.dictionaryId !== dictionaryId ||
+    !validDictionaryMetadata(payload.dictionary) ||
     !payload.config ||
     !Number.isInteger(payload.seed) ||
     !Array.isArray(payload.board) ||
@@ -125,7 +149,7 @@ function validDailyChallenge(challenge) {
       challenge.config &&
       Number.isInteger(challenge.config.size) &&
       Number.isInteger(challenge.config.seconds) &&
-      typeof challenge.dictionary?.dictionaryId === "string" &&
+      validDictionaryMetadata(challenge.dictionary) &&
       Array.isArray(challenge.board) &&
       challenge.board.length === challenge.config.size * challenge.config.size &&
       challenge.board.every((letter) => /^[A-Z]$/.test(letter)),
@@ -139,6 +163,9 @@ async function requestDailyChallenge() {
     error.code = payload?.error;
     throw error;
   }
+  const dictionary = await fetchDictionary(payload.challenge.dictionary.dictionaryId);
+  if (!sameDictionaryIdentity(payload.challenge.dictionary, dictionary.dictionary))
+    throw dictionaryVersionUnavailable();
   return { challenge: payload.challenge, target: null, shareRef: null };
 }
 async function requestSharedChallenge(ref) {
@@ -149,6 +176,9 @@ async function requestSharedChallenge(ref) {
     error.code = payload?.error;
     throw error;
   }
+  const dictionary = await fetchDictionary(payload.challenge.dictionary.dictionaryId);
+  if (!sameDictionaryIdentity(payload.challenge.dictionary, dictionary.dictionary))
+    throw dictionaryVersionUnavailable();
   return { challenge: payload.challenge, target: payload.target || null, shareRef: ref };
 }
 async function requestRelayChallenge(id = null) {
@@ -169,7 +199,7 @@ async function requestRelayChallenge(id = null) {
     !Array.isArray(challenge.board) ||
     challenge.board.length !== challenge.config.size * challenge.config.size ||
     !challenge.board.every((letter) => /^[A-Z]$/.test(letter)) ||
-    !challenge.dictionary?.dictionaryId ||
+    !validDictionaryMetadata(challenge.dictionary) ||
     !Number.isSafeInteger(challenge.revision) ||
     !challenge.state ||
     !Array.isArray(challenge.state.found) ||
@@ -179,6 +209,9 @@ async function requestRelayChallenge(id = null) {
     error.code = payload?.error;
     throw error;
   }
+  const dictionary = await fetchDictionary(challenge.dictionary.dictionaryId);
+  if (!sameDictionaryIdentity(challenge.dictionary, dictionary.dictionary))
+    throw dictionaryVersionUnavailable();
   return { challenge };
 }
 async function applySoloBoardTestFixture(generated) {
@@ -203,26 +236,39 @@ async function applySoloBoardTestFixture(generated) {
     : generated;
 }
 async function isServerDictionaryWord(word, dictionaryId, adultMode) {
-  const key = `${dictionaryId}:${adultMode ? "dirty" : "classic"}:${word}`;
+  const artifactSha256 = s.dictionaryMetadata?.dictionaryId === dictionaryId
+    ? s.dictionaryMetadata.artifactSha256
+    : "unknown";
+  const key = `${dictionaryId}:${artifactSha256}:${adultMode ? "dirty" : "classic"}:${word}`;
   if (wordCheckCache.has(key)) return wordCheckCache.get(key);
-  const check = fetch(
-      "/api/word-check?word=" +
-      encodeURIComponent(word) +
-      "&dictionaryId=" +
-      encodeURIComponent(dictionaryId) +
-      "&adult=" +
-      (adultMode ? "1" : "0"),
-  )
-    .then((response) => {
-      if (!response.ok) throw new Error("Word check failed");
-      return response.json();
-    })
-    .then((result) => result.valid === true)
-    .catch(() => {
-      wordCheckCache.delete(key);
-      return lex().has(String(word || "").toUpperCase());
+  const check = (async () => {
+    let lastError;
+    for (let attempt = 0; attempt < WORD_CHECK_ATTEMPTS; attempt++) {
+      try {
+        const response = await fetch(
+          "/api/word-check?word=" +
+          encodeURIComponent(word) +
+          "&dictionaryId=" +
+          encodeURIComponent(dictionaryId) +
+          "&adult=" +
+          (adultMode ? "1" : "0"),
+        );
+        if (!response.ok) throw new Error("Word check failed");
+        const result = await response.json();
+        if (typeof result?.valid !== "boolean")
+          throw new Error("Word check response was invalid");
+        return result.valid;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw Object.assign(new Error("Word check unavailable"), {
+      code: "WORD_CHECK_UNAVAILABLE",
+      cause: lastError,
     });
+  })();
   wordCheckCache.set(key, check);
+  check.catch(() => wordCheckCache.delete(key));
   return check;
 }
 const s = {
@@ -231,6 +277,7 @@ const s = {
   b: [],
   pick: [],
   found: new Set(),
+  acceptedWords: [],
   score: 0,
   time: 120,
   timer: 0,
@@ -269,10 +316,10 @@ const s = {
   config: null,
   dictionaryId: DEFAULT_DICTIONARY_ID,
   dictionaryMetadata: null,
-  dictionaryWords: [],
   dailyChallenge: null,
   echo: null,
   relayChallenge: null,
+  challengeOperationId: 0,
   heist: null,
   frozenIndexes: new Set(),
   bounty: null,
@@ -282,6 +329,8 @@ let soloRoundGeneration = 0;
 let soloSubmissionEpoch = 0;
 let soloSubmissionTail = Promise.resolve();
 let soloSubmissionErrorCount = 0;
+let challengeLifecycleGeneration = 0;
+let relaySubmissionInFlight = null;
 let rushContinuationGeneration = 0;
 let rushContinuationTransition = false;
 let suddenDeathPresentationGeneration = 0;
@@ -321,6 +370,31 @@ function enqueueSoloSubmission(commit) {
     logSoloSubmissionError(error);
   });
   return soloSubmissionTail;
+}
+function beginChallengeOperation() {
+  relaySubmissionInFlight = null;
+  return ++challengeLifecycleGeneration;
+}
+function invalidateChallengeOperation() {
+  relaySubmissionInFlight = null;
+  return ++challengeLifecycleGeneration;
+}
+function isCurrentChallengeOperation(operation) {
+  return operation === challengeLifecycleGeneration;
+}
+function isCurrentRelaySubmission(identity) {
+  return Boolean(
+    isCurrentChallengeOperation(identity.operation) &&
+      s.challengeOperationId === identity.operation &&
+      isCurrentSoloSubmission(
+        identity.submissionEpoch,
+        identity.roundId,
+        identity.startedAt,
+        identity.endsAt,
+      ) &&
+      s.relayChallenge?.id === identity.challengeId &&
+      s.relayChallenge.revision === identity.revision,
+  );
 }
 const avatarOptions = [
     "🐈",
@@ -463,33 +537,27 @@ profile.name = typeof profile.name === "string" ? profile.name.slice(0, 20) : ""
 if (!profile.name || profile.name === "Jordan")
   profile.name = randomGuestName();
 function isProfileAvatar(value) {
-  if (avatarOptions.includes(value)) return true;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" &&
-      ["googleusercontent.com", "facebook.com", "fbcdn.net", "fbsbx.com"].some(
-        (host) => url.hostname === host || url.hostname.endsWith("." + host),
-      );
-  } catch {
-    return false;
-  }
+  return window.WordrushAvatarPresentation?.isSupported(value) || avatarOptions.includes(value);
 }
 if (!isProfileAvatar(profile.avatar)) profile.avatar = "🐈";
 function renderAvatar(target, value, fallback = "🐈") {
   if (!target) return;
-  const avatar = isProfileAvatar(value) ? value : fallback;
-  target.replaceChildren();
-  if (avatar.startsWith("https://")) {
-    const image = document.createElement("img");
-    image.src = avatar;
-    image.alt = "";
-    image.referrerPolicy = "no-referrer";
-    target.append(image);
-  } else target.textContent = avatar;
+  if (window.WordrushAvatarPresentation)
+    window.WordrushAvatarPresentation.render(target, value, fallback);
+  else target.textContent = fallback;
 }
 window.wordrushRenderAvatar = renderAvatar;
 window.wordrushAvatarLabel = (value, fallback = "🐈") =>
-  isProfileAvatar(value) ? (String(value).startsWith("https://") ? "👤" : value) : fallback;
+  window.WordrushAvatarPresentation?.describe(value, fallback).value || fallback;
+function renderPlayerName(target, player) {
+  if (!target) return;
+  target.replaceChildren();
+  if (window.WordrushAvatarPresentation)
+    window.WordrushAvatarPresentation.appendInline(target, player?.avatar, player?.name || "");
+  else target.textContent = (player?.avatar || "🐈") + " " + (player?.name || "");
+  return true;
+}
+window.wordrushRenderPlayerName = renderPlayerName;
 function updateIdentity() {
   renderAvatar($("#profileButton"), profile.avatar);
   if ($("#profileName")) $("#profileName").value = profile.name;
@@ -512,29 +580,33 @@ const authState = {
   providers: [],
 };
 let profileSyncBase = null;
+let profileSyncQueuedBase = null;
 let profileSyncEvents = [];
 let profileSyncInFlight = false;
 let profileSyncSequence = 0;
-function profileStatsSnapshot() {
+let profileSyncGeneration = 0;
+let profileSyncStatus = "synced";
+const PROFILE_OUTBOX_KEY = "wordrush-profile-outbox";
+function profileStatsSnapshot(source = profile) {
   return {
-    score: profile.score,
-    words: profile.words,
-    streak: profile.streak,
-    longest: profile.longest,
-    rounds: profile.rounds,
-    correct: profile.correct,
-    incorrect: profile.incorrect,
-    totalWordLength: profile.totalWordLength,
-    totalGameSeconds: profile.totalGameSeconds,
-    gamesWon: profile.gamesWon,
-    gamesLost: profile.gamesLost,
-    multiplayerWins: profile.multiplayerWins,
-    multiplayerLosses: profile.multiplayerLosses,
-    maxGridWin: profile.maxGridWin,
-    speedAchievement: profile.speedAchievement === true,
-    days: [...(profile.days || [])],
-    completedMultiplayerRounds: [...(profile.completedMultiplayerRounds || [])],
-    multiplayerWordRounds: (profile.multiplayerWordRounds || []).map((round) => ({
+    score: source.score,
+    words: source.words,
+    streak: source.streak,
+    longest: source.longest,
+    rounds: source.rounds,
+    correct: source.correct,
+    incorrect: source.incorrect,
+    totalWordLength: source.totalWordLength,
+    totalGameSeconds: source.totalGameSeconds,
+    gamesWon: source.gamesWon,
+    gamesLost: source.gamesLost,
+    multiplayerWins: source.multiplayerWins,
+    multiplayerLosses: source.multiplayerLosses,
+    maxGridWin: source.maxGridWin,
+    speedAchievement: source.speedAchievement === true,
+    days: [...(source.days || [])],
+    completedMultiplayerRounds: [...(source.completedMultiplayerRounds || [])],
+    multiplayerWordRounds: (source.multiplayerWordRounds || []).map((round) => ({
       roundId: round.roundId,
       words: [...(round.words || [])],
     })),
@@ -576,12 +648,21 @@ function profileDeltaHasValues(delta) {
 }
 function applyServerAccount(account, replaceStats = true) {
   if (!account) return;
+  const previousOwner = profile.accountId || "";
+  const pendingEvents = profileMigration.readProfileOutbox(
+    localStorage,
+    PROFILE_OUTBOX_KEY,
+    account.id,
+  );
+  const preserveLocalStats = replaceStats === false ||
+    (previousOwner === account.id && pendingEvents.length > 0);
+  const serverStats = profileStatsSnapshot(account.stats || {});
   authState.account = account;
   profile.accountId = account.id || "";
   if (account.username) profile.name = account.username;
   else if (account.displayName) profile.name = String(account.displayName).slice(0, 20);
   if (isProfileAvatar(account.avatar)) profile.avatar = account.avatar;
-  if (replaceStats && account.stats && typeof account.stats === "object")
+  if (replaceStats && !preserveLocalStats && account.stats && typeof account.stats === "object")
     Object.assign(profile, account.stats);
   profile.days = playStreak.normalizePlayDates(profile.days);
   profile.completedMultiplayerRounds = Array.isArray(profile.completedMultiplayerRounds)
@@ -590,14 +671,135 @@ function applyServerAccount(account, replaceStats = true) {
   profile.multiplayerWordRounds = multiplayerWordReconciliation.normalizeRoundRecords(
     profile.multiplayerWordRounds,
   );
-  profileSyncBase = profileStatsSnapshot();
+  profileSyncBase = serverStats;
+  profileSyncQueuedBase = pendingEvents.at(-1)?.snapshot || serverStats;
+  profileSyncEvents = pendingEvents;
+  profileSyncStatus = pendingEvents.length ? "pending" : "synced";
   updateIdentity();
   updateProfile({ sync: false });
   window.wordrushIdentityChanged?.();
+  if (pendingEvents.length) void flushProfileEvents();
+}
+function persistProfileSyncEvents() {
+  const accountId = authState.account?.id;
+  if (accountId) {
+    profileMigration.writeProfileOutbox(
+      localStorage,
+      PROFILE_OUTBOX_KEY,
+      accountId,
+      profileSyncEvents,
+    );
+  }
+}
+function mergeProfileSyncStats(...sources) {
+  const validSources = sources.filter((source) =>
+    source && typeof source === "object" && !Array.isArray(source),
+  );
+  const merged = Object.assign({}, ...validSources);
+  for (const key of [
+    "score", "words", "streak", "longest", "rounds", "correct", "incorrect",
+    "totalWordLength", "totalGameSeconds", "gamesWon", "gamesLost",
+    "multiplayerWins", "multiplayerLosses", "maxGridWin",
+  ]) {
+    const values = validSources
+      .map((source) => Number(source[key]))
+      .filter((value) => Number.isFinite(value));
+    if (values.length) merged[key] = Math.max(...values);
+  }
+  if (validSources.some((source) => source.speedAchievement === true))
+    merged.speedAchievement = true;
+  for (const key of ["days", "completedMultiplayerRounds"]) {
+    merged[key] = [...new Set(validSources.flatMap((source) =>
+      Array.isArray(source[key]) ? source[key] : [],
+    ))];
+  }
+  const wordRounds = new Map();
+  for (const source of validSources) {
+    for (const round of Array.isArray(source.multiplayerWordRounds)
+      ? source.multiplayerWordRounds
+      : []) {
+      if (!round || typeof round.roundId !== "string") continue;
+      const current = wordRounds.get(round.roundId) || { roundId: round.roundId, words: [] };
+      current.words = [...new Set([
+        ...current.words,
+        ...(Array.isArray(round.words) ? round.words : []),
+      ])];
+      wordRounds.set(round.roundId, current);
+    }
+  }
+  if (wordRounds.size) merged.multiplayerWordRounds = [...wordRounds.values()];
+  return merged;
+}
+function profileStatsAtLeast(current, target) {
+  if (!target || typeof target !== "object" || Array.isArray(target)) return true;
+  for (const key of [
+    "score", "words", "streak", "longest", "rounds", "correct", "incorrect",
+    "totalWordLength", "totalGameSeconds", "gamesWon", "gamesLost",
+    "multiplayerWins", "multiplayerLosses", "maxGridWin",
+  ]) {
+    if ((Number(current?.[key]) || 0) < (Number(target[key]) || 0)) return false;
+  }
+  if (target.speedAchievement === true && current?.speedAchievement !== true) return false;
+  for (const key of ["days", "completedMultiplayerRounds"]) {
+    const currentValues = new Set(Array.isArray(current?.[key]) ? current[key] : []);
+    if ((Array.isArray(target[key]) ? target[key] : []).some((value) => !currentValues.has(value)))
+      return false;
+  }
+  const currentRounds = new Map((current?.multiplayerWordRounds || []).map((round) => [
+    round.roundId,
+    new Set(round.words || []),
+  ]));
+  for (const round of target.multiplayerWordRounds || []) {
+    const currentWords = currentRounds.get(round.roundId);
+    if (!currentWords || (round.words || []).some((word) => !currentWords.has(word)))
+      return false;
+  }
+  return true;
+}
+function reconcileProfileSyncSuccess(accountId, account, fallbackSnapshot) {
+  const responseStats = account?.id === accountId && account.stats &&
+    typeof account.stats === "object" && !Array.isArray(account.stats)
+    ? account.stats
+    : null;
+  const fallbackStats = fallbackSnapshot && typeof fallbackSnapshot === "object" &&
+    !Array.isArray(fallbackSnapshot)
+    ? fallbackSnapshot
+    : {};
+  const syncSnapshot = profileStatsSnapshot(
+    mergeProfileSyncStats(fallbackStats, responseStats),
+  );
+  if (!profileStatsAtLeast(profileStatsSnapshot(), fallbackStats)) {
+    const restored = profileStatsSnapshot(
+      mergeProfileSyncStats(profileStatsSnapshot(), syncSnapshot),
+    );
+    Object.assign(profile, restored);
+    if (account?.id === accountId) {
+      authState.account = { ...account, stats: syncSnapshot };
+      if (account.username) profile.name = account.username;
+      else if (account.displayName) profile.name = String(account.displayName).slice(0, 20);
+      if (isProfileAvatar(account.avatar)) profile.avatar = account.avatar;
+    }
+    profile.days = playStreak.normalizePlayDates(profile.days);
+    profile.completedMultiplayerRounds = Array.isArray(profile.completedMultiplayerRounds)
+      ? profile.completedMultiplayerRounds.filter((id) => typeof id === "string").slice(-50)
+      : [];
+    profile.multiplayerWordRounds = multiplayerWordReconciliation.normalizeRoundRecords(
+      profile.multiplayerWordRounds,
+    );
+    updateIdentity();
+    updateProfile({ sync: false });
+    window.wordrushIdentityChanged?.();
+  }
+  return syncSnapshot;
 }
 async function flushProfileEvents() {
-  if (profileSyncInFlight || !authState.account || !profileSyncEvents.length) return;
+  if (
+    profileSyncInFlight || !authState.account || profile.accountId !== authState.account.id ||
+    !profileSyncEvents.length
+  ) return;
   profileSyncInFlight = true;
+  const accountId = authState.account.id;
+  const generation = profileSyncGeneration;
   const event = profileSyncEvents[0];
   let failed = false;
   try {
@@ -605,12 +807,30 @@ async function flushProfileEvents() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify(event),
+      body: JSON.stringify({ eventId: event.eventId, delta: event.delta }),
     });
     if (!response.ok) throw new Error("profile event failed");
+    if (
+      generation !== profileSyncGeneration ||
+      authState.account?.id !== accountId ||
+      profile.accountId !== accountId
+    ) return;
+    const payload = await response.json().catch(() => null);
+    const restoredSnapshot = reconcileProfileSyncSuccess(
+      accountId,
+      payload?.account,
+      event.snapshot,
+    );
     profileSyncEvents.shift();
+    persistProfileSyncEvents();
+    profileSyncBase = restoredSnapshot || event.snapshot;
+    profileSyncQueuedBase = profileSyncEvents.at(-1)?.snapshot || profileSyncBase;
+    profileSyncStatus = profileSyncEvents.length ? "pending" : "synced";
+    updateAuthUI();
   } catch {
     failed = true;
+    profileSyncStatus = "not-synced";
+    updateAuthUI();
     setTimeout(() => flushProfileEvents(), 5000);
   } finally {
     profileSyncInFlight = false;
@@ -618,15 +838,24 @@ async function flushProfileEvents() {
   }
 }
 function queueProfileSync() {
-  if (!authState.loaded || !authState.account || !profileSyncBase) return;
+  if (
+    !authState.loaded || !authState.account || profile.accountId !== authState.account.id ||
+    !profileSyncBase
+  ) return;
   const current = profileStatsSnapshot();
-  const delta = profileStatsDelta(current, profileSyncBase);
+  const delta = profileStatsDelta(current, profileSyncQueuedBase || profileSyncBase);
   if (!profileDeltaHasValues(delta)) return;
-  profileSyncBase = current;
+  const accountId = authState.account.id;
   profileSyncEvents.push({
-    eventId: localGuestId + ":" + Date.now() + ":" + (++profileSyncSequence),
+    accountId,
+    eventId: accountId + ":" + localGuestId + ":" + Date.now() + ":" + (++profileSyncSequence),
     delta,
+    snapshot: current,
   });
+  profileSyncQueuedBase = current;
+  profileSyncStatus = "pending";
+  persistProfileSyncEvents();
+  updateAuthUI();
   void flushProfileEvents();
 }
 function updateAuthUI() {
@@ -638,7 +867,9 @@ function updateAuthUI() {
   const save = $("#profileSave");
   if (status) {
     status.textContent = account
-      ? account.needsUsername
+      ? profileSyncStatus === "not-synced"
+        ? "Your stats are not synced yet. We will keep trying."
+        : account.needsUsername
         ? "Choose a unique username to finish your profile."
         : "Your profile and stats are synced across devices."
       : "Save your username, avatar, and stats by continuing with a provider.";
@@ -673,30 +904,44 @@ async function loadAuthProfile() {
     const payload = await response.json();
     authState.providers = Array.isArray(payload.providers) ? payload.providers : [];
     if (payload.authenticated && payload.account) {
-      const migration = await fetch("/api/profile/migrate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ guestId: localGuestId, profile: profileStatsSnapshot() }),
-      });
-      const migrated = migration.ok ? await migration.json() : null;
-      applyServerAccount(migrated?.account || payload.account);
+      const localOwner = typeof profile.accountId === "string" ? profile.accountId : "";
+      const belongsToThisAccount = localOwner && localOwner === payload.account.id;
+      const belongsToAnotherAccount = localOwner && localOwner !== payload.account.id;
+      const migration = !belongsToAnotherAccount && !belongsToThisAccount
+        ? await fetch("/api/profile/migrate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ guestId: localGuestId, profile: profileStatsSnapshot() }),
+          })
+        : null;
+      const migrated = migration?.ok ? await migration.json() : null;
+      if (migration && !migration.ok) {
+        authState.account = payload.account;
+        profileSyncStatus = "not-synced";
+        updateAuthUI();
+      } else {
+        applyServerAccount(migrated?.account || payload.account);
+      }
     } else {
       authState.account = null;
       updateAuthUI();
     }
   } catch {
     authState.account = null;
+    profileSyncStatus = "not-synced";
+    updateAuthUI();
   } finally {
     authState.loaded = true;
     updateAuthUI();
+    enforceUsernameSetup();
     const authResult = new URLSearchParams(location.search).get("auth");
     if (authResult) {
       const next = new URL(location.href);
       next.searchParams.delete("auth");
       history.replaceState(history.state, "", next.pathname + next.search + next.hash);
       if (authResult === "signed-in" || authResult === "choose-username") {
-        $("#profileDialog")?.showModal();
+        if (!$("#profileDialog")?.open) openProfileDialog();
         if (authResult === "choose-username") $("#profileName")?.focus();
       } else if (authResult !== "complete") {
         toast("Sign-in could not be completed.");
@@ -786,18 +1031,6 @@ function formatTimer(seconds) {
 }
 updateIdentity();
 updateProfile();
-let lexiconCache = null;
-let lexiconCacheKey = "";
-function lex() {
-  const key = s.dictionaryId + ":" + s.mode + ":" + customAdult;
-  if (lexiconCache && lexiconCacheKey === key) return lexiconCache;
-  lexiconCacheKey = key;
-  lexiconCache = new Set([
-    ...s.dictionaryWords,
-    ...(s.mode === "dirty" || customAdult ? adult : []),
-  ]);
-  return lexiconCache;
-}
 function near(i) {
   return sharedBoardCore.neighbors(i, s.n);
 }
@@ -858,8 +1091,24 @@ function renderChallengeStatus() {
   if (heist) {
     heist.hidden = !s.heist;
     if (!s.heist) return;
-    const teamId = s.heist.teamByPlayer?.[window.wordrushGuestId] || "sun";
+    const teamId = s.heist.teamByPlayer?.[window.wordrushGuestId];
     const team = s.heist.teams?.find((entry) => entry.id === teamId);
+    const assigned = Boolean(teamId && team);
+    heist.classList.toggle("is-unavailable", !assigned);
+    heist.setAttribute(
+      "aria-label",
+      assigned
+        ? "Room Heist team status"
+        : "Room Heist team assignment unavailable",
+    );
+    if (!assigned) {
+      $("#heistTeam").textContent = "UNAVAILABLE";
+      $("#heistMembers").textContent = "Team assignment unavailable";
+      $("#heistTeamScore").textContent = "—";
+      $("#heistOtherTeam").textContent = "SCORE STATUS";
+      $("#heistOtherScore").textContent = "—";
+      return;
+    }
     $("#heistTeam").textContent = teamId.toUpperCase();
     $("#heistTeamScore").textContent = String(s.heist.teamScores?.[teamId] || 0);
     $("#heistOtherTeam").textContent = teamId === "sun" ? "MOON" : "SUN";
@@ -889,7 +1138,9 @@ function renderResults(
         name: profile.name,
         avatar: profile.avatar,
         score: s.score,
-        words: [...s.found].map((word) => ({ word, points: word.length ** 2 })),
+        words: s.bounty && s.acceptedWords.length
+          ? s.acceptedWords.map((word) => ({ ...word }))
+          : [...s.found].map((word) => ({ word, points: word.length ** 2 })),
       }];
   const rows = series
     ? suddenDeathSeries.rankParticipants(sourceRows)
@@ -940,9 +1191,7 @@ function renderResults(
     if (outcomeBadge) rank.dataset.outcome = outcomeBadge.toLowerCase();
     const identity = document.createElement("div");
     const name = document.createElement("b");
-    name.textContent =
-      (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
-      " " + player.name;
+    renderPlayerName(name, player);
     const wordCount = document.createElement("small");
     wordCount.textContent = series
       ? (Number(player.series?.strikes) || 0) +
@@ -1051,9 +1300,7 @@ function renderHeroScores(
       const identity = document.createElement("span");
       identity.className = "result-score-identity";
       const name = document.createElement("b");
-      name.textContent =
-        (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
-        " " + player.name;
+      renderPlayerName(name, player);
       const status = document.createElement("small");
       status.textContent = skipped
         ? "SCORE"
@@ -1159,9 +1406,7 @@ function renderSeriesStandings(series, target) {
       row.className = "series-standing" +
         (player.status === "withdrawn" ? " is-withdrawn" : "");
       const identity = document.createElement("span");
-      identity.textContent =
-        (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
-        " " + player.name;
+      renderPlayerName(identity, player);
       const status = document.createElement("small");
       status.textContent = player.status === "withdrawn"
         ? "WITHDRAWN"
@@ -1289,7 +1534,10 @@ function end(completionReason) {
   const soloGameplaySeconds = !s.onlineRoundKey
     ? roundTiming.elapsedGameplaySeconds(s.startedAt, Date.now(), s.config?.seconds)
     : 0;
-  if (!s.onlineRoundKey) invalidateSoloSubmissionQueue();
+  if (!s.onlineRoundKey) {
+    invalidateChallengeOperation();
+    invalidateSoloSubmissionQueue();
+  }
   s.done = 1;
   clearInterval(s.timer);
   if (s.rush && !s.nextRushMode) {
@@ -1360,10 +1608,12 @@ function end(completionReason) {
         name: profile.name,
         avatar: profile.avatar,
         score: s.score,
-        words: [...s.found].map((word) => ({
-          word,
-          points: word.length * word.length,
-        })),
+        words: s.bounty && s.acceptedWords.length
+          ? s.acceptedWords.map((word) => ({ ...word }))
+          : [...s.found].map((word) => ({
+              word,
+              points: word.length * word.length,
+            })),
       },
     ],
     multiplayer: false,
@@ -1517,9 +1767,7 @@ function launchAppRoute(route) {
   if (route.launcher === "daily") {
     const ref = new URLSearchParams(location.search).get("challenge");
     if (/^[A-Za-z0-9_-]{20,40}$/.test(ref || ""))
-      return requestSharedChallenge(ref)
-        .then((shared) => startDailyRush(shared))
-        .catch(() => toast("That challenge link is unavailable."));
+      return startDailyRush(null, false, ref);
     return startDailyRush();
   }
   if (route.launcher === "echo") return startDailyRush(null, true);
@@ -1531,6 +1779,7 @@ function launchAppRoute(route) {
   if (route.launcher === "party") return openParty();
   if (route.launcher === "custom") return openRushBuilder();
   if (route.launcher === "multiplayer") {
+    window.wordrushPendingMultiplayerMode = route.mode || null;
     window.wordrushOpenMultiplayerRoute = true;
     document.dispatchEvent(new CustomEvent("wordrush:open-multiplayer"));
     return;
@@ -1553,6 +1802,11 @@ function navigateAppRoute(route) {
   }
   abandonForRouteNavigation();
   show(route.screen, { routeMode: "none" });
+  if (route.open === "multiplayer") {
+    window.wordrushPendingMultiplayerMode = null;
+    window.wordrushOpenMultiplayerRoute = true;
+    document.dispatchEvent(new CustomEvent("wordrush:open-multiplayer"));
+  }
   document.dispatchEvent(new CustomEvent("wordrush:route-change", { detail: route }));
 }
 
@@ -1582,6 +1836,8 @@ function show(
       cancelSoloRushContinuation();
   }
   if (id === "homeScreen") soloGenerationRequest++;
+  if (["homeScreen", "statsScreen", "achievementsScreen"].includes(id))
+    invalidateChallengeOperation();
   document
     .querySelectorAll(".screen")
     .forEach((x) => x.classList.toggle("active", x.id === id));
@@ -1657,6 +1913,7 @@ $("#introStart")?.addEventListener("click", () => {
 function abandonActiveRound() {
   clearSuddenDeathPresentation();
   soloGenerationRequest++;
+  invalidateChallengeOperation();
   if (!s.onlineRoundKey) invalidateSoloSubmissionQueue();
   clearInterval(s.timer);
   clearTimeout(s.rushTimer);
@@ -1717,7 +1974,10 @@ async function start(
   skipRoundIntro = false,
   dailyChallenge = null,
   relayChallenge = null,
+  challengeOperationId = null,
 ) {
+  const challengeOperation = challengeOperationId ?? beginChallengeOperation();
+  if (!isCurrentChallengeOperation(challengeOperation)) return;
   const generationRequest = ++soloGenerationRequest;
   if (
     !dailyChallenge &&
@@ -1777,11 +2037,23 @@ async function start(
           }),
       fetchDictionary(generationInputs.dictionaryId),
     ]);
-    if (!dailyChallenge && !relayChallenge) generated = await applySoloBoardTestFixture(generated);
+    if (!isCurrentChallengeOperation(challengeOperation)) return;
+    if (!dailyChallenge && !relayChallenge) {
+      generated = await applySoloBoardTestFixture(generated);
+      if (!isCurrentChallengeOperation(challengeOperation)) return;
+    }
+    if (!sameDictionaryIdentity(generated.dictionary, dictionary.dictionary))
+      throw dictionaryVersionUnavailable();
   } catch (error) {
-    if (generationRequest !== soloGenerationRequest) return;
+    if (
+      generationRequest !== soloGenerationRequest ||
+      !isCurrentChallengeOperation(challengeOperation)
+    )
+      return;
     const failureMessage =
-      error.code === "BOARD_GENERATION_FAILED" &&
+      error.code === "DICTIONARY_VERSION_UNAVAILABLE"
+        ? "This challenge uses an unavailable dictionary version. Please start a fresh challenge."
+        : error.code === "BOARD_GENERATION_FAILED" &&
       error.failureCode === "QUALITY_PROFILE_UNAVAILABLE"
         ? "This configuration is not currently supported."
         : error.code === "BOARD_GENERATION_FAILED" &&
@@ -1793,14 +2065,17 @@ async function start(
     toast(failureMessage);
     return;
   }
-  if (generationRequest !== soloGenerationRequest) return;
+  if (
+    generationRequest !== soloGenerationRequest ||
+    !isCurrentChallengeOperation(challengeOperation)
+  )
+    return;
   const config = generated.config;
   clearSuddenDeathPresentation();
   invalidateSoloSubmissionQueue();
   s.config = config;
   s.dictionaryId = dictionary.dictionary.dictionaryId;
   s.dictionaryMetadata = dictionary.dictionary;
-  s.dictionaryWords = dictionary.words;
   customAdult = generationInputs.adultMode;
   s.mode = generationInputs.mode;
   s.rush = generationInputs.rush;
@@ -1824,6 +2099,7 @@ async function start(
         },
       }
     : null;
+  s.challengeOperationId = challengeOperation;
   s.heist = null;
   s.echo = s.dailyChallenge
     ? { target: dailyChallenge?.echo || null, checkpoints: [] }
@@ -1844,6 +2120,7 @@ async function start(
   s.time = config.seconds;
   s.score = 0;
   s.found.clear();
+  s.acceptedWords = [];
   s.lastAcceptedWord = "";
   s.requiredLetter = "";
   s.chainResetLetter = "";
@@ -1949,16 +2226,23 @@ async function start(
     onStart: startSoloGameplay,
   });
 }
-async function startDailyRush(shared = null, raceEcho = false) {
+async function startDailyRush(shared = null, raceEcho = false, sharedRef = null) {
+  const challengeOperation = beginChallengeOperation();
   let daily = shared;
   try {
-    if (!daily) daily = await requestDailyChallenge();
+    if (sharedRef) daily = await requestSharedChallenge(sharedRef);
+    else if (!daily) daily = await requestDailyChallenge();
+    if (!isCurrentChallengeOperation(challengeOperation)) return;
   } catch (error) {
+    if (!isCurrentChallengeOperation(challengeOperation)) return;
     toast(error.code === "CHALLENGE_NOT_FOUND"
       ? "That Daily Rush link has expired."
+      : error.code === "DICTIONARY_VERSION_UNAVAILABLE"
+        ? "This challenge uses an unavailable dictionary version. Start a fresh Daily Rush."
       : "Daily Rush is not ready yet. Please try again.");
     return;
   }
+  if (!isCurrentChallengeOperation(challengeOperation)) return;
   const challenge = daily.challenge;
   if (raceEcho) {
     const echo = loadDailyEcho(challenge.id);
@@ -1976,11 +2260,15 @@ async function startDailyRush(shared = null, raceEcho = false) {
     challenge.dictionary.dictionaryId,
     false,
     daily,
+    null,
+    challengeOperation,
   );
 }
 async function startWordRelay(id = null) {
+  const challengeOperation = beginChallengeOperation();
   try {
     const relay = await requestRelayChallenge(id);
+    if (!isCurrentChallengeOperation(challengeOperation)) return;
     const challenge = relay.challenge;
     return start(
       "relay",
@@ -1991,10 +2279,14 @@ async function startWordRelay(id = null) {
       false,
       null,
       relay,
+      challengeOperation,
     );
   } catch (error) {
+    if (!isCurrentChallengeOperation(challengeOperation)) return;
     toast(error.code === "RELAY_NOT_FOUND"
       ? "That Word Relay link has expired."
+      : error.code === "DICTIONARY_VERSION_UNAVAILABLE"
+        ? "This relay uses an unavailable dictionary version. Start a new relay."
       : "Word Relay is not ready yet. Please try again.");
   }
 }
@@ -2014,6 +2306,11 @@ function pickedPathIsValid(trace, word) {
 }
 async function submitRelayWord(trace, word) {
   if (!s.relayChallenge || !s.acceptingSoloSubmissions || s.done) return;
+  if (relaySubmissionInFlight) {
+    toast("Relay turn is still saving — please wait", "wrong");
+    pulseIncorrectWord(trace);
+    return;
+  }
   const normalized = String(word || "").toUpperCase();
   const validPath = pickedPathIsValid(trace, normalized);
   if (normalized.length < s.config.min || !validPath || s.found.has(normalized)) {
@@ -2034,13 +2331,25 @@ async function submitRelayWord(trace, word) {
     return;
   }
   const challenge = s.relayChallenge;
+  const submission = {
+    operation: s.challengeOperationId,
+    submissionEpoch: soloSubmissionEpoch,
+    roundId: s.soloRoundId,
+    startedAt: s.startedAt,
+    endsAt: s.endsAt,
+    challengeId: challenge.id,
+    revision: challenge.revision,
+  };
+  relaySubmissionInFlight = submission;
   try {
     const response = await fetch("/api/relay-challenges/" + encodeURIComponent(challenge.id), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ revision: challenge.revision, word: normalized, path: trace }),
     });
+    if (!isCurrentRelaySubmission(submission)) return;
     const payload = await response.json().catch(() => null);
+    if (!isCurrentRelaySubmission(submission)) return;
     if (!response.ok || !payload?.state) {
       const reason = payload?.error;
       toast(
@@ -2054,6 +2363,7 @@ async function submitRelayWord(trace, word) {
       pulseIncorrectWord(trace);
       return;
     }
+    if (!isCurrentRelaySubmission(submission)) return;
     s.relayChallenge = {
       id: payload.id,
       revision: payload.revision,
@@ -2079,8 +2389,11 @@ async function submitRelayWord(trace, word) {
     toast("Turn saved · share the relay link");
     emit("word-accepted", { word: normalized, points, mode: "relay", multiplayer: false, randomRush: false });
   } catch {
+    if (!isCurrentRelaySubmission(submission)) return;
     toast("Relay connection failed — try again", "wrong");
     pulseIncorrectWord(trace);
+  } finally {
+    if (relaySubmissionInFlight === submission) relaySubmissionInFlight = null;
   }
 }
 async function submit() {
@@ -2138,7 +2451,14 @@ async function submit() {
       ? isServerDictionaryWord(w, dictionaryId, adultMode)
       : Promise.resolve(false);
   void enqueueSoloSubmission(async () => {
-    const inDictionary = await dictionaryRequest;
+    let inDictionary;
+    try {
+      inDictionary = await dictionaryRequest;
+    } catch (error) {
+      if (isCurrentSoloSubmission(roundEpoch, roundId, roundStartedAt, roundEndsAt))
+        toast("Word check unavailable — try again", "wrong");
+      return;
+    }
     if (!isCurrentSoloSubmission(roundEpoch, roundId, roundStartedAt, roundEndsAt)) return;
     if (roundEndsAt && Date.now() >= roundEndsAt) {
       end("timeout");
@@ -2153,7 +2473,9 @@ async function submit() {
     else if (requiresChain(config) &&
       !chainWordMatches(s.requiredLetter, w)) rejectReason = "chain";
     if (!rejectReason) {
-      let points = w.length * w.length;
+      const basePoints = w.length * w.length;
+      let points = basePoints;
+      let wordRecord = { word: w, points };
       s.found.add(w);
       s.lastAcceptedWord = w;
       if (requiresChain(config)) advanceChainFields(s, w);
@@ -2170,7 +2492,13 @@ async function submit() {
           claimedIndexes: [...effect.claimedIndexes],
         };
         const bountyBonus = effect.newlyClaimedIndexes.length * 25;
-        points += bountyBonus;
+        wordRecord = challengeRules.bountyWordRecord(
+          w,
+          basePoints,
+          effect.newlyClaimedIndexes,
+        );
+        points = wordRecord.points;
+        s.acceptedWords.push({ ...wordRecord });
         if (bountyBonus) render();
       }
       s.score += points;
@@ -2190,6 +2518,7 @@ async function submit() {
       emit("word-accepted", {
         word: w,
         points,
+        wordRecord,
         mode: config.mode,
         multiplayer: false,
         randomRush: config.randomRush,
@@ -2583,7 +2912,7 @@ async function launchSharedChallengeFromUrl() {
   )
     return;
   try {
-    await startDailyRush(await requestSharedChallenge(refs[0]));
+    await startDailyRush(null, false, refs[0]);
   } catch {
     toast("That challenge link is unavailable.");
   }
@@ -2616,8 +2945,10 @@ function initializeAppRoute() {
     launchAppRoute(route);
   } else {
     show(route.screen, { routeMode: "none" });
-    if (route.open === "multiplayer")
+    if (route.open === "multiplayer") {
+      window.wordrushPendingMultiplayerMode = null;
       window.wordrushOpenMultiplayerRoute = true;
+    }
   }
 }
 initializeAppRoute();
@@ -2674,7 +3005,7 @@ window.wordrushUpdateOnlineChallenge = ({ heist = null, bounty = null } = {}) =>
   }
   if (changed) render();
 };
-window.wordrushRecordOnlineWord = (word, points, chain, challengeState) => {
+window.wordrushRecordOnlineWord = (word, points, chain, challengeState, wordRecord = null) => {
   if (s.pendingOnlineTrace?.word === word) {
     pulseAcceptedWord(s.pendingOnlineTrace.trace);
   }
@@ -2689,12 +3020,15 @@ window.wordrushRecordOnlineWord = (word, points, chain, challengeState) => {
   );
   profile.multiplayerWordRounds = recorded.records;
   if (recorded.recorded) {
+    if (wordRecord?.basePoints !== undefined || wordRecord?.bonusPoints !== undefined)
+      s.acceptedWords.push({ ...wordRecord });
     recordAcceptedWord(word);
     updateProfile();
   }
   emit("word-accepted", {
     word,
     points: Number(points) || word.length * word.length,
+    wordRecord: wordRecord || { word, points: Number(points) || word.length * word.length },
     mode: s.mode,
     multiplayer: true,
     randomRush: s.onlineRandomRush,
@@ -2799,7 +3133,6 @@ window.wordrushOnlineRound = (
   s.mode = mode || "classic";
   s.dictionaryId = round.dictionary?.dictionaryId || dictionaryMetadata?.dictionaryId || DEFAULT_DICTIONARY_ID;
   s.dictionaryMetadata = round.dictionary || dictionaryMetadata;
-  s.dictionaryWords = [];
   s.onlineRandomRush = Boolean(randomRush);
   s.onlineResultRoundId = null;
   s.onlineNextRound = null;
@@ -2942,10 +3275,18 @@ window.wordrushOnlineFinish = (
     ...player,
     score: Number(player.score) || 0,
     words: Array.isArray(player.words)
-      ? player.words.map((item) => ({
-          word: String(item.word || ""),
-          points: Number(item.points) || 0,
-        }))
+      ? player.words.map((item) => {
+          const word = String(item.word || "");
+          const record = {
+            word,
+            points: Number(item.points) || 0,
+          };
+          if (item && ("basePoints" in item || "bonusPoints" in item)) {
+            record.basePoints = Number(item.basePoints) || 0;
+            record.bonusPoints = Number(item.bonusPoints) || 0;
+          }
+          return record;
+        })
       : [],
     series: player.series
       ? {
@@ -3097,9 +3438,41 @@ window.wordrushOnlineFinish = (
 const themePreference = localStorage.getItem("wordrush-theme");
 if (themePreference) document.documentElement.dataset.theme = themePreference;
 
-$("#profileButton")?.addEventListener("click", () => {
+let profileDialogSnapshot = null;
+function openProfileDialog() {
+  profileDialogSnapshot = { name: profile.name, avatar: profile.avatar };
   updateIdentity();
-  $("#profileDialog").showModal();
+  $("#profileDialog")?.showModal();
+}
+function enforceUsernameSetup() {
+  if (!authState.account?.needsUsername) return;
+  if (!$("#profileDialog")?.open) openProfileDialog();
+  $("#profileName")?.focus();
+}
+function restoreProfileDialogSnapshot() {
+  if (!profileDialogSnapshot) return;
+  profile.name = profileDialogSnapshot.name;
+  profile.avatar = profileDialogSnapshot.avatar;
+  profileDialogSnapshot = null;
+  updateIdentity();
+}
+function cancelProfileDialog() {
+  if (authState.account?.needsUsername) {
+    const errorNode = $("#profileError");
+    if (errorNode) errorNode.textContent = "Choose a unique username or sign out to leave setup.";
+    $("#profileName")?.focus();
+    return;
+  }
+  restoreProfileDialogSnapshot();
+  $("#profileDialog")?.close();
+}
+$("#profileButton")?.addEventListener("click", () => {
+  openProfileDialog();
+});
+$("#profileCancel")?.addEventListener("click", cancelProfileDialog);
+$("#profileDialog")?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  cancelProfileDialog();
 });
 $("#avatarPicker")?.addEventListener("click", (event) => {
   const button = event.target.closest?.("[data-avatar]");
@@ -3129,6 +3502,7 @@ async function saveProfile(event) {
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error || "PROFILE_UPDATE_FAILED");
       applyServerAccount(payload.account, false);
+      profileDialogSnapshot = null;
       $("#profileDialog")?.close();
     } catch (error) {
       const errorNode = $("#profileError");
@@ -3142,6 +3516,7 @@ async function saveProfile(event) {
   localStorage.setItem("wordrush-profile", JSON.stringify(profile));
   updateIdentity();
   window.wordrushIdentityChanged?.();
+  profileDialogSnapshot = null;
   $("#profileDialog")?.close();
 }
 $("#profileForm")?.addEventListener("submit", saveProfile);
@@ -3155,9 +3530,25 @@ document.querySelectorAll("[data-auth-provider]").forEach((button) => {
 $("#profileLogout")?.addEventListener("click", async () => {
   await fetch("/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
   authState.account = null;
+  for (const key of [
+    "score", "words", "streak", "longest", "rounds", "correct", "incorrect",
+    "totalWordLength", "totalGameSeconds", "gamesWon", "gamesLost",
+    "multiplayerWins", "multiplayerLosses", "maxGridWin",
+  ]) profile[key] = 0;
+  profile.speedAchievement = false;
+  profile.completedMultiplayerRounds = [];
+  profile.multiplayerWordRounds = [];
+  profile.days = [];
+  profile.name = randomGuestName();
+  profile.avatar = "🐈";
   profile.accountId = "";
   profileSyncBase = null;
+  profileSyncQueuedBase = null;
   profileSyncEvents = [];
+  profileSyncInFlight = false;
+  profileSyncGeneration++;
+  profileSyncStatus = "synced";
+  profileDialogSnapshot = null;
   updateAuthUI();
   updateIdentity();
   updateProfile({ sync: false });

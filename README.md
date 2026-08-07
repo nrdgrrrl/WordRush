@@ -13,7 +13,7 @@ From this directory run bash serve-lan.sh. The script prints the machine Wi-Fi a
   Long Haul, Letter Storm, Score Attack, Word Chain, and Random Rush
 - Balanced board generation with short, medium, and long word targets
 - Canadian English Standard dictionary compiled from pinned ESDB data
-- Opt-in adult-word overlay for Dirty Mode
+- Explicit adult-word dictionary in Dirty Mode
 - Legacy `wordrush-custom` localStorage value is intentionally left dormant and
   does not affect gameplay. Future controlled vocabulary work is tracked in
   [issue #41](https://github.com/nrdgrrrl/WordRush/issues/41).

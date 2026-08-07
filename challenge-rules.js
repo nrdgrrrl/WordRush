@@ -124,6 +124,22 @@
     });
   }
 
+  function bountyWordRecord(word, basePoints, newlyClaimedIndexes) {
+    const normalizedWord = typeof word === "string" ? word.trim().toUpperCase() : "";
+    const base = Number.isFinite(Number(basePoints))
+      ? Math.max(0, Math.floor(Number(basePoints)))
+      : 0;
+    const bonusPoints = (Array.isArray(newlyClaimedIndexes)
+      ? new Set(newlyClaimedIndexes)
+      : new Set()).size * 25;
+    return Object.freeze({
+      word: normalizedWord,
+      basePoints: base,
+      bonusPoints,
+      points: base + bonusPoints,
+    });
+  }
+
   return Object.freeze({
     MAX_BOUNTIES,
     MAX_ECHO_CHECKPOINTS,
@@ -131,6 +147,7 @@
     MAX_ECHO_SCORE,
     blockedTraceResult,
     bountyClaimEffect,
+    bountyWordRecord,
     normalizeEchoCheckpoints,
     normalizeIndexes,
     recordEchoCheckpoint,

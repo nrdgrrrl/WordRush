@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 const {
   OUTCOME_SEMANTICS_VERSION,
   withOutcomeSemanticsVersion,
+  readProfileOutbox,
+  writeProfileOutbox,
 } = require("../profile-migration");
 
 test("unversioned profiles receive the prospective outcome semantics marker", () => {
@@ -43,4 +45,32 @@ test("malformed markers are sanitized without reconstructing historical totals",
     withOutcomeSemanticsVersion({ outcomeSemanticsVersion: 3 }).outcomeSemanticsVersion,
     3,
   );
+});
+
+test("profile outbox persists account-scoped events and removes only acknowledged account events", () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) || null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+  const eventA = {
+    accountId: "account-a",
+    eventId: "event-a",
+    delta: { score: 5 },
+    snapshot: { score: 5 },
+  };
+  const eventB = {
+    accountId: "account-b",
+    eventId: "event-b",
+    delta: { score: 7 },
+    snapshot: { score: 7 },
+  };
+  writeProfileOutbox(storage, "outbox", "account-a", [eventA]);
+  writeProfileOutbox(storage, "outbox", "account-b", [eventB]);
+  assert.deepEqual(readProfileOutbox(storage, "outbox", "account-a"), [eventA]);
+  assert.deepEqual(readProfileOutbox(storage, "outbox", "account-b"), [eventB]);
+  writeProfileOutbox(storage, "outbox", "account-a", []);
+  assert.deepEqual(readProfileOutbox(storage, "outbox", "account-a"), []);
+  assert.deepEqual(readProfileOutbox(storage, "outbox", "account-b"), [eventB]);
 });

@@ -23,6 +23,14 @@
   const suddenDeathSeries = window.WordrushSuddenDeathSeries;
   const cooperativeResults = window.WordrushCooperativeResults;
 
+  function renderPlayerName(target, player) {
+    if (window.wordrushRenderPlayerName) {
+      window.wordrushRenderPlayerName(target, player);
+      return;
+    }
+    target.textContent = (player.avatar || "🐈") + " " + player.name;
+  }
+
   function localRow() {
     const profile = window.wordrushProfile?.() || {
       name: "Player",
@@ -49,9 +57,7 @@
     const heading = document.createElement("header");
     const identity = document.createElement("span");
     identity.className = "reveal-player-name";
-    identity.textContent =
-      (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
-      " " + player.name;
+    renderPlayerName(identity, player);
     const score = document.createElement("b");
     score.className = "reveal-player-total";
     score.textContent = currentCooperative ? "0 contribution" : "0";
@@ -101,7 +107,10 @@
     const word = document.createElement("span");
     word.textContent = item.word;
     const points = document.createElement("b");
-    points.textContent = "+" + item.points;
+    points.textContent = "+" + item.points +
+      (Number(item.bonusPoints) > 0
+        ? " · +" + Number(item.bonusPoints) + " bounty"
+        : "");
     line.append(word, points);
     card.querySelector(".reveal-word-list").append(line);
   }
@@ -132,25 +141,36 @@
         : outcome
           ? "TOP SCORE · OUTCOME ABOVE"
           : "ROUND LEADER";
-    if ($("#resultTopPlayer"))
-      $("#resultTopPlayer").textContent = skipped
-        ? "Not recorded"
-        : currentCooperative
-        ? currentTeamScore.toLocaleString() + " shared points"
-        : topPlayer
-          ? (window.wordrushAvatarLabel?.(topPlayer.avatar) || topPlayer.avatar || "🐈") + " " + topPlayer.name
-          : "—";
+    if ($("#resultTopPlayer")) {
+      const topTarget = $("#resultTopPlayer");
+      topTarget.textContent = "";
+      if (skipped) topTarget.textContent = "Not recorded";
+      else if (currentCooperative) topTarget.textContent = currentTeamScore.toLocaleString() + " shared points";
+      else if (topPlayer) renderPlayerName(topTarget, topPlayer);
+      else topTarget.textContent = "—";
+    }
     if ($("#resultLongestLabel"))
       $("#resultLongestLabel").textContent = longestPlayers > 1
         ? "LONGEST WORD · CO-WINNERS"
         : "LONGEST WORD";
-    if ($("#resultLongestWord"))
-      $("#resultLongestWord").textContent = longest.length
-        ? longest.map((item) =>
-          String(item.word).toUpperCase() + " · " + item.points +
-          " pts · " + (window.wordrushAvatarLabel?.(item.player.avatar) || item.player.avatar || "🐈") + " " + item.player.name,
-        ).join(" • ")
-        : "—";
+    if ($("#resultLongestWord")) {
+      const longestTarget = $("#resultLongestWord");
+      longestTarget.replaceChildren();
+      if (!longest.length) longestTarget.textContent = "—";
+      else longest.forEach((item, index) => {
+        if (index) longestTarget.append(document.createTextNode(" • "));
+        const entry = document.createElement("span");
+        const prefix = document.createElement("span");
+        prefix.textContent =
+          String(item.word).toUpperCase() + " · " + item.points + " pts · ";
+        const playerName = document.createElement("span");
+        entry.append(prefix, playerName);
+        if (window.wordrushRenderPlayerName)
+          window.wordrushRenderPlayerName(playerName, item.player);
+        else playerName.textContent = (item.player.avatar || "🐈") + " " + item.player.name;
+        longestTarget.append(entry);
+      });
+    }
   }
   function renderSeriesFinal(series, ranking) {
     const panel = $("#seriesFinalPanel");
@@ -170,9 +190,7 @@
           (series.winnerIds?.includes(player.id) ? " is-winner" : "") +
           (player.series?.status === "withdrawn" ? " is-withdrawn" : "");
         const name = document.createElement("strong");
-        name.textContent =
-          (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
-          " " + player.name;
+        renderPlayerName(name, player);
         const detail = document.createElement("span");
         detail.textContent =
           (Number(player.series?.strikes) || 0) + " strike" +
@@ -354,10 +372,12 @@
   });
   document.addEventListener("wordrush:word-accepted", ({ detail }) => {
     if (!localWords.some((item) => item.word === detail.word))
-      localWords.push({
-        word: detail.word,
-        points: Number(detail.points) || 0,
-      });
+      localWords.push(detail.wordRecord
+        ? { ...detail.wordRecord }
+        : {
+            word: detail.word,
+            points: Number(detail.points) || 0,
+          });
   });
   document.addEventListener("wordrush:round-complete", ({ detail }) => {
     const presentation = cooperativeResults.normalizeResultPresentation({

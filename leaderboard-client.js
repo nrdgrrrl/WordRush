@@ -102,9 +102,10 @@
       .then((player) => {
         if (token !== profileLoadToken) return;
         const dialog = document.querySelector("#leaderboardProfileDialog");
-        document.querySelector("#leaderboardProfileName").textContent =
-          (window.wordrushAvatarLabel?.(player.avatar) || player.avatar || "🐈") +
-          " " + player.name;
+        const profileName = document.querySelector("#leaderboardProfileName");
+        if (window.wordrushRenderPlayerName)
+          window.wordrushRenderPlayerName(profileName, player);
+        else profileName.textContent = (player.avatar || "🐈") + " " + player.name;
         document.querySelector("#leaderboardProfileBody").innerHTML =
           '<div class="profile-score"><strong>' +
           player.totalScore.toLocaleString() +

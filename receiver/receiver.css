@@ -22,6 +22,8 @@ footer { color: #d1c1d8; font-size: clamp(.9rem, 1.35vw, 1.35rem); }
 .score-card:first-child { border-color: #f6c85f; background: #3b2949; }
 .score-card .name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: clamp(1.2rem, 2vw, 2.2rem); font-weight: 800; }
 .score-card .score { display: block; margin-top: .1em; color: #f6c85f; font-size: clamp(2rem, 4.3vw, 5rem); font-weight: 900; line-height: 1; }
+.avatar-photo { display: inline-block; width: 1.2em; height: 1.2em; border-radius: 50%; object-fit: cover; vertical-align: -.2em; }
+.avatar-emoji { display: inline-block; line-height: 1; }
 .score-card.is-withdrawn,
 .series-tv-standing.is-withdrawn,
 .series-tv-final-card.is-withdrawn { opacity: .62; }

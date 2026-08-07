@@ -30,6 +30,9 @@ const executablePath =
   process.env.PLAYWRIGHT_CHROMIUM ||
   "/home/victoria/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome";
 let baseUrl;
+const DICTIONARY_ARTIFACT_SHA256 = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "..", "dictionaries/artifacts/wordrush-ca-standard-v1.manifest.json"), "utf8"),
+).artifactSha256;
 async function startClassic(page) {
   await openGamesPanel(page);
   await page.locator('button[data-mode="classic"]').click();
@@ -84,23 +87,32 @@ async function startSoloMode(page, mode) {
 }
 function wordRequestWaiter(pending, waiters, word) {
   if (pending.has(word)) return Promise.resolve();
-  return new Promise((resolve) => waiters.set(word, resolve));
+  return new Promise((resolve) => {
+    const resolvers = waiters.get(word) || [];
+    resolvers.push(resolve);
+    waiters.set(word, resolvers);
+  });
 }
 async function resolveWord(pending, word, valid) {
-  const route = pending.get(word);
+  const routes = pending.get(word) || [];
+  const route = routes.shift();
   assert.ok(route, "deferred word-check request for " + word);
-  pending.delete(word);
+  if (!routes.length) pending.delete(word);
   await route.fulfill({
     status: 200,
     contentType: "application/json",
     body: JSON.stringify({ valid }),
   });
 }
-async function failWord(pending, word) {
-  const route = pending.get(word);
-  assert.ok(route, "deferred word-check request for " + word);
-  pending.delete(word);
-  await route.abort("failed");
+async function failWord(pending, waiters, word) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!pending.has(word)) await wordRequestWaiter(pending, waiters, word);
+    const routes = pending.get(word) || [];
+    const route = routes.shift();
+    assert.ok(route, "deferred word-check request for " + word);
+    if (!routes.length) pending.delete(word);
+    await route.abort("failed");
+  }
 }
 async function installBoardFixtureHook(page) {
   await page.addInitScript(() => {
@@ -226,6 +238,81 @@ test("public routes update the URL and browser Back stays inside the app", async
   await page.waitForSelector("#multiplayerDialog[open]");
   assert.equal(new URL(page.url()).pathname, "/multiplayer");
   await browser.close();
+});
+
+test("multiplayer game routes preselect their mode without starting and allow a manual override", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(baseUrl + "/games/room-heist");
+    await page.waitForSelector("#multiplayerDialog[open]");
+    assert.equal(new URL(page.url()).pathname, "/games/room-heist");
+    assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+    await page.locator("#sessionCreate").click();
+    await page.waitForSelector("#sessionLobby:not([hidden])");
+    assert.equal(await page.locator("#sessionType").inputValue(), "heist");
+    assert.equal(await page.locator("#sessionStart").isVisible(), true);
+    assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+
+    await page.locator("#sessionType").selectOption("classic");
+    assert.equal(
+      await page.evaluate(() => window.wordrushPendingMultiplayerMode),
+      "classic",
+    );
+    await page.reload();
+    await page.waitForSelector("#sessionLobby:not([hidden])");
+    assert.equal(await page.locator("#sessionType").inputValue(), "classic");
+
+    await page.goto(baseUrl + "/games/sudden-death-series");
+    await page.waitForSelector("#sessionLobby:not([hidden])");
+    assert.equal(await page.locator("#sessionType").inputValue(), "sudden_series");
+    assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+
+    await page.goto(baseUrl + "/multiplayer");
+    await page.waitForSelector("#sessionLobby:not([hidden])");
+    assert.equal(await page.locator("#sessionType").inputValue(), "classic");
+
+    await page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#sessionLeave").click();
+    await page.waitForFunction(() => document.querySelector("#multiplayerBanner").hidden);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Sudden Death Series multiplayer route preselects its lobby mode", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(baseUrl + "/games/sudden-death-series");
+    await page.waitForSelector("#multiplayerDialog[open]");
+    await page.locator("#sessionCreate").click();
+    await page.waitForSelector("#sessionLobby:not([hidden])");
+    assert.equal(await page.locator("#sessionType").inputValue(), "sudden_series");
+    assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+    await page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#sessionLeave").click();
+    await page.waitForFunction(() => document.querySelector("#multiplayerBanner").hidden);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("generic multiplayer keeps Classic as the new-room default", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(baseUrl + "/multiplayer");
+    await page.waitForSelector("#multiplayerDialog[open]");
+    await page.locator("#sessionCreate").click();
+    await page.waitForSelector("#sessionLobby:not([hidden])");
+    assert.equal(await page.locator("#sessionType").inputValue(), "classic");
+    await page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#sessionLeave").click();
+    await page.waitForFunction(() => document.querySelector("#multiplayerBanner").hidden);
+  } finally {
+    await browser.close();
+  }
 });
 
 test("mobile play board stays within its available space on short screens", async () => {
@@ -494,6 +581,158 @@ test("Daily Rush freezes one shared board without adding a results panel", async
   assert.equal(await page.locator("#again").textContent(), "Try today again →");
 });
 
+test("challenge lifecycle ignores stale launches and Relay submissions", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  let releaseDaily;
+  let dailyRequestSeen;
+  const dailySeen = new Promise((resolve) => { dailyRequestSeen = resolve; });
+  const dailyResponse = {
+    challenge: {
+      id: "daily-2026-08-06",
+      date: "2026-08-06",
+      mode: "daily",
+      config: { size: 4, min: 3, seconds: 60, rule: "One shared board" },
+      dictionary: {
+        dictionaryId: "wordrush-ca-standard-v1",
+        artifactSha256: DICTIONARY_ARTIFACT_SHA256,
+      },
+      board: Array(16).fill("A"),
+    },
+  };
+  await page.route("**/api/daily-challenge", async (route) => {
+    dailyRequestSeen();
+    await new Promise((resolve) => { releaseDaily = resolve; });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(dailyResponse),
+    });
+  });
+  await page.goto(baseUrl);
+  await openDailyChallenges(page);
+  await page.locator("#dailyRush").click();
+  await dailySeen;
+  await page.locator('nav button[data-screen="homeScreen"]').click();
+  await page.waitForSelector("#homeScreen.active");
+  releaseDaily();
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator("#homeScreen.active").count(), 1);
+  assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+  assert.equal(await page.locator("#gameScreen.active").count(), 0);
+
+  let relaySubmitRoute;
+  let relaySubmitSeen;
+  const relaySubmitRequest = new Promise((resolve) => { relaySubmitSeen = resolve; });
+  let relayCreateCount = 0;
+  const relayResponse = {
+    id: "relay-browser-test-20260806",
+    revision: 0,
+    config: { size: 4, min: 3, seconds: 120, chain: true, rule: "Pass the chain" },
+    dictionary: {
+      dictionaryId: "wordrush-ca-standard-v1",
+      artifactSha256: DICTIONARY_ARTIFACT_SHA256,
+    },
+    board: ["C", "A", "T", "X", "D", "O", "G", "X", ...Array(8).fill("X")],
+    playableWordStarts: { C: 1, D: 1 },
+    state: { found: [], requiredLetter: "", turns: 0 },
+  };
+  await page.unroute("**/api/daily-challenge");
+  await page.route("**/api/dictionary**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      dictionary: relayResponse.dictionary,
+    }),
+  }));
+  await page.route("**/api/relay-challenges**", async (route) => {
+    if (route.request().method() === "POST" &&
+        new URL(route.request().url()).pathname.endsWith("/relay-challenges")) {
+      relayCreateCount++;
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(relayResponse),
+      });
+      return;
+    }
+    relaySubmitRoute = route;
+    relaySubmitSeen();
+  });
+  await openDailyChallenges(page);
+  await page.locator("#wordRelay").click();
+  await startIntro(page);
+  assert.equal(relayCreateCount, 1);
+  await page.evaluate(() => {
+    window.__relayEvents = [];
+    document.addEventListener("wordrush:word-accepted", ({ detail }) => {
+      if (detail.mode === "relay") window.__relayEvents.push(detail.word);
+    });
+  });
+  await traceWord(page, [0, 1, 2]);
+  await relaySubmitRequest;
+  await traceWord(page, [4, 5, 6]);
+  await page.waitForFunction(() => /still saving/.test(document.querySelector("#toast").textContent));
+  assert.equal(await page.evaluate(() => window.__relayEvents.length), 0);
+  await page.locator("#gameBack").click();
+  await page.waitForSelector("#homeScreen.active");
+  await relaySubmitRoute.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      ...relayResponse,
+      revision: 1,
+      state: { found: ["CAT"], requiredLetter: "T", turns: 1 },
+    }),
+  });
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator("#homeScreen.active").count(), 1);
+  assert.equal(await page.evaluate(() => window.__relayEvents.length), 0);
+  assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem("wordrush-profile"))).words, 0);
+});
+
+test("browser explains a challenge dictionary version mismatch", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.route("**/api/dictionary**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      dictionary: {
+        dictionaryId: "wordrush-ca-standard-v1",
+        artifactSha256: DICTIONARY_ARTIFACT_SHA256,
+      },
+    }),
+  }));
+  await page.route("**/api/daily-challenge", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      challenge: {
+        id: "daily-2026-08-06",
+        date: "2026-08-06",
+        mode: "daily",
+        config: { size: 4, seconds: 60 },
+        board: Array(16).fill("A"),
+        dictionary: {
+          dictionaryId: "wordrush-ca-standard-v1",
+          artifactSha256: "0".repeat(64),
+        },
+      },
+    }),
+  }));
+  await page.goto(baseUrl);
+  await openDailyChallenges(page);
+  await page.locator("#dailyRush").click();
+  await page.waitForFunction(() => /unavailable dictionary version/i.test(
+    document.querySelector("#toast")?.textContent || "",
+  ));
+  assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+  assert.equal(await page.locator("#gameScreen.active").count(), 0);
+});
+
 test("browser can start, play, persist stats, and use the tile-banner profile button", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -623,6 +862,44 @@ test("browser can start, play, persist stats, and use the tile-banner profile bu
   await browser.close();
 });
 
+test("Room Heist shows an unavailable state when the authoritative team is missing", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  await page.evaluate(() => {
+    window.wordrushUpdateOnlineChallenge({
+      heist: {
+        teams: [
+          { id: "sun", playerIds: ["another-player"] },
+          { id: "moon", playerIds: ["different-player"] },
+        ],
+        teamByPlayer: {},
+        teamScores: { sun: 42, moon: 17 },
+        claims: [],
+      },
+    });
+  });
+  const display = await page.evaluate(() => ({
+    team: document.querySelector("#heistTeam").textContent,
+    members: document.querySelector("#heistMembers").textContent,
+    teamScore: document.querySelector("#heistTeamScore").textContent,
+    otherTeam: document.querySelector("#heistOtherTeam").textContent,
+    otherScore: document.querySelector("#heistOtherScore").textContent,
+    unavailable: document.querySelector("#heistStatus").classList.contains("is-unavailable"),
+    label: document.querySelector("#heistStatus").getAttribute("aria-label"),
+  }));
+  assert.deepEqual(display, {
+    team: "UNAVAILABLE",
+    members: "Team assignment unavailable",
+    teamScore: "—",
+    otherTeam: "SCORE STATUS",
+    otherScore: "—",
+    unavailable: true,
+    label: "Room Heist team assignment unavailable",
+  });
+  await browser.close();
+});
+
 test("signed-in provider button is disabled and greyed out", async (t) => {
   const browser = await chromium.launch({ headless: true, executablePath });
   t.after(() => browser.close());
@@ -664,6 +941,444 @@ test("signed-in provider button is disabled and greyed out", async (t) => {
     })),
     { facebookHidden: true },
   );
+});
+
+test("switching accounts does not migrate the previous account's local stats", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  let account = {
+    id: "acct_browser-owner-a",
+    username: "PlayerA",
+    displayName: "Player A",
+    avatar: "🐈",
+    stats: { score: 12, words: 3 },
+    needsUsername: false,
+    provider: "google",
+    providers: ["google"],
+  };
+  const migrations = [];
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/migrate", async (route) => {
+    migrations.push(JSON.parse(route.request().postData() || "{}"));
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ authenticated: true, account }),
+    });
+  });
+  await page.goto(baseUrl);
+  await page.waitForFunction(() => document.querySelector("#profileLogout")?.hidden === false);
+  await page.locator("#profileButton").click();
+  await page.locator("#profileLogout").click();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("wordrush-profile")).score === 0);
+  assert.equal(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).score),
+    0,
+  );
+
+  account = {
+    ...account,
+    id: "acct_browser-owner-b",
+    username: "PlayerB",
+    displayName: "Player B",
+    stats: { score: 0, words: 0 },
+  };
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector("#profileLogout")?.hidden === false);
+  assert.equal(migrations.length, 2);
+  assert.equal(migrations[1].profile.score, 0);
+  assert.equal(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).score),
+    0,
+  );
+});
+
+test("failed profile migration keeps local progress and shows a not-synced state", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.addInitScript(() => {
+    localStorage.setItem("wordrush-profile", JSON.stringify({
+      accountId: "",
+      score: 21,
+      words: 4,
+      name: "GuestPlayer",
+      avatar: "🐈",
+    }));
+  });
+  const account = {
+    id: "acct_browser-migration-failure",
+    username: "Player",
+    displayName: "Player",
+    avatar: "🐈",
+    stats: { score: 0, words: 0 },
+    needsUsername: false,
+    provider: "google",
+    providers: ["google"],
+  };
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/migrate", (route) => route.fulfill({
+    status: 503,
+    contentType: "application/json",
+    body: JSON.stringify({ error: "PROFILE_MIGRATION_UNAVAILABLE" }),
+  }));
+  await page.goto(baseUrl);
+  await page.waitForFunction(() => document.querySelector("#profileLogout")?.hidden === false);
+  await page.locator("#profileButton").click();
+  assert.match(await page.locator("#profileAuthStatus").textContent(), /not synced yet/i);
+  assert.equal(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).score),
+    21,
+  );
+});
+
+test("restored profile outbox events retry and acknowledge after reload without new gameplay", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const accountId = "acct_browser-restored-outbox";
+  const event = {
+    accountId,
+    eventId: "restored-event-1",
+    delta: { score: 9, words: 1, rounds: 1 },
+    snapshot: { score: 9, words: 1, rounds: 1 },
+  };
+  await page.addInitScript((seed) => {
+    localStorage.setItem("wordrush-profile", JSON.stringify({
+      accountId: seed.accountId,
+      score: 9,
+      words: 1,
+      rounds: 1,
+      name: "RestoredPlayer",
+      avatar: "🐈",
+    }));
+    localStorage.setItem("wordrush-profile-outbox", JSON.stringify({
+      version: 1,
+      events: [seed.event],
+    }));
+  }, { accountId, event });
+  const account = {
+    id: accountId,
+    username: "RestoredPlayer",
+    displayName: "Restored Player",
+    avatar: "🐈",
+    stats: { score: 0, words: 0, rounds: 0 },
+    needsUsername: false,
+    provider: "google",
+    providers: ["google"],
+  };
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/event", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account }),
+  }));
+  const requestPromise = page.waitForRequest("**/api/profile/event");
+  await page.goto(baseUrl);
+  const request = await requestPromise;
+  assert.deepEqual(JSON.parse(request.postData()), {
+    eventId: event.eventId,
+    delta: event.delta,
+  });
+  await page.waitForFunction(() => localStorage.getItem("wordrush-profile-outbox") === null);
+  assert.equal(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).score),
+    9,
+  );
+});
+
+test("successful replay restores queued profile progress after sign-out and re-login", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const accountId = "acct_browser-replay-after-logout";
+  const account = {
+    id: accountId,
+    username: "ReplayPlayer",
+    displayName: "Replay Player",
+    avatar: "🐈",
+    stats: { score: 0, words: 0, rounds: 0 },
+    needsUsername: false,
+    provider: "google",
+    providers: ["google"],
+  };
+  const event = {
+    accountId,
+    eventId: "replay-after-logout-1",
+    delta: { score: 9, words: 1, rounds: 1 },
+    snapshot: { score: 9, words: 1, rounds: 1 },
+  };
+  let eventAttempts = 0;
+  await page.addInitScript((seed) => {
+    localStorage.setItem("wordrush-profile", JSON.stringify({
+      accountId: seed.accountId,
+      score: 9,
+      words: 1,
+      rounds: 1,
+      name: "ReplayPlayer",
+      avatar: "🐈",
+    }));
+    localStorage.setItem("wordrush-profile-outbox", JSON.stringify({
+      version: 1,
+      events: [seed.event],
+    }));
+  }, { accountId, event });
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/migrate", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account }),
+  }));
+  await page.route("**/api/profile/event", (route) => {
+    eventAttempts++;
+    if (eventAttempts === 1) return route.abort("failed");
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        authenticated: true,
+        account: { ...account, stats: { score: 9, words: 1, rounds: 1 } },
+      }),
+    });
+  });
+  await page.goto(baseUrl);
+  await page.waitForFunction(() => document.querySelector("#profileAuthStatus")?.textContent.includes("not synced"));
+  await page.locator("#profileButton").click();
+  await page.locator("#profileLogout").click();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("wordrush-profile")).accountId === "");
+  await page.reload();
+  await page.waitForFunction(() => localStorage.getItem("wordrush-profile-outbox") === null);
+  assert.equal(await page.locator("#homeScore").textContent(), "9");
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).score), 9);
+  assert.equal(eventAttempts, 2);
+});
+
+test("a stale replay response cannot restore progress after switching accounts", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const accountA = {
+    id: "acct_browser-stale-a",
+    username: "PlayerA",
+    displayName: "Player A",
+    avatar: "🐈",
+    stats: { score: 0 },
+    needsUsername: false,
+    provider: "google",
+    providers: ["google"],
+  };
+  const accountB = {
+    ...accountA,
+    id: "acct_browser-stale-b",
+    username: "PlayerB",
+    displayName: "Player B",
+    stats: { score: 2 },
+  };
+  const event = {
+    accountId: accountA.id,
+    eventId: "stale-replay-1",
+    delta: { score: 9 },
+    snapshot: { score: 9 },
+  };
+  let currentAccount = accountA;
+  let releaseStaleResponse;
+  await page.addInitScript((seed) => {
+    localStorage.setItem("wordrush-profile", JSON.stringify({
+      accountId: seed.accountId,
+      score: 9,
+      name: "PlayerA",
+      avatar: "🐈",
+    }));
+    localStorage.setItem("wordrush-profile-outbox", JSON.stringify({
+      version: 1,
+      events: [seed.event],
+    }));
+  }, { accountId: accountA.id, event });
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account: currentAccount, providers: currentAccount.providers }),
+  }));
+  await page.route("**/api/profile/event", (route) => new Promise((resolve) => {
+    releaseStaleResponse = async () => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ authenticated: true, account: { ...accountA, stats: { score: 9 } } }),
+      });
+      resolve();
+    };
+  }));
+  await page.route("**/api/profile/migrate", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account: currentAccount }),
+  }));
+  await page.goto(baseUrl);
+  await page.waitForRequest("**/api/profile/event");
+  await page.locator("#profileButton").click();
+  await page.locator("#profileLogout").click();
+  currentAccount = accountB;
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector("#profileLogout")?.hidden === false);
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).accountId), accountB.id);
+  assert.equal(await page.locator("#homeScore").textContent(), "2");
+  await releaseStaleResponse();
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).accountId), accountB.id);
+  assert.equal(await page.locator("#homeScore").textContent(), "2");
+});
+
+test("newer queued profile progress stays visible when an earlier replay succeeds", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const account = {
+    id: "acct_browser-replay-order",
+    username: "ReplayOrder",
+    displayName: "Replay Order",
+    avatar: "🐈",
+    stats: { score: 0, words: 0 },
+    needsUsername: false,
+    provider: "google",
+    providers: ["google"],
+  };
+  const firstEvent = {
+    accountId: account.id,
+    eventId: "replay-order-a",
+    delta: { score: 9, words: 1 },
+    snapshot: { score: 9, words: 1 },
+  };
+  const secondEvent = {
+    accountId: account.id,
+    eventId: "replay-order-b",
+    delta: { score: 5, words: 1 },
+    snapshot: { score: 14, words: 2 },
+  };
+  await page.addInitScript((seed) => {
+    localStorage.setItem("wordrush-profile", JSON.stringify({
+      accountId: seed.account.id,
+      score: 14,
+      words: 2,
+      name: seed.account.username,
+      avatar: "🐈",
+    }));
+    localStorage.setItem("wordrush-profile-outbox", JSON.stringify({
+      version: 1,
+      events: [seed.firstEvent, seed.secondEvent],
+    }));
+  }, { account, firstEvent, secondEvent });
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/event", (route) => {
+    const request = JSON.parse(route.request().postData() || "{}");
+    if (request.eventId === firstEvent.eventId)
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ authenticated: true, account: { ...account, stats: firstEvent.snapshot } }),
+      });
+    return route.abort("failed");
+  });
+  await page.goto(baseUrl);
+  await page.waitForFunction(() => document.querySelector("#profileAuthStatus")?.textContent.includes("not synced"));
+  await page.waitForFunction(() => {
+    const profile = JSON.parse(localStorage.getItem("wordrush-profile"));
+    const outbox = JSON.parse(localStorage.getItem("wordrush-profile-outbox"));
+    return profile.score === 14 && outbox?.events?.length === 1 &&
+      outbox.events[0].eventId === "replay-order-b";
+  });
+  assert.equal(await page.locator("#homeScore").textContent(), "14");
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).score), 14);
+});
+
+test("profile cancel discards drafts and required username setup cannot be dismissed", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  const originalName = await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).name);
+  await page.locator("#profileButton").click();
+  await page.waitForSelector("#profileDialog[open]");
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      profileCancelOwner: document.querySelector("#profileCancel")?.closest("dialog")?.id,
+      randomRushCloseCount: document.querySelectorAll(
+        '#randomRushChoiceDialog .dialog-head button[value="cancel"]',
+      ).length,
+    })),
+    { profileCancelOwner: "profileDialog", randomRushCloseCount: 1 },
+  );
+  await page.locator("#profileName").fill("Unsaved Player");
+  await page.locator("#profileCancel").click();
+  assert.equal(await page.locator("#profileDialog[open]").count(), 0);
+  assert.equal(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).name),
+    originalName,
+  );
+
+  const account = {
+    id: "acct_browser-needs-username",
+    username: null,
+    displayName: "Provider Display Name",
+    avatar: "🐈",
+    stats: {},
+    needsUsername: true,
+    provider: "google",
+    providers: ["google"],
+  };
+  let saveCount = 0;
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/migrate", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account }),
+  }));
+  await page.route("**/api/profile", (route) => {
+    saveCount++;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ authenticated: true, account }),
+    });
+  });
+  await page.goto(baseUrl);
+  assert.equal(new URL(page.url()).search, "");
+  await page.waitForSelector("#profileDialog[open]");
+  await page.reload();
+  await page.waitForSelector("#profileDialog[open]");
+  await page.locator("#profileName").fill("Not Saved");
+  await page.locator("#profileCancel").click();
+  assert.equal(await page.locator("#profileDialog[open]").count(), 1);
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("#profileDialog[open]").count(), 1);
+  assert.equal(saveCount, 0);
+  await page.locator("#profileLogout").click();
+  await page.waitForFunction(() => document.querySelector("#profileDialog")?.open === false);
 });
 
 test("global scoreboard displays an authoritative multiplayer result and all periods", async () => {
@@ -908,8 +1623,9 @@ test("random rush owns results continuation and stops on navigation", async (t) 
   assert.equal(await page.locator("#stopRush").isHidden(), true);
 });
 
-test("solo submission commits stay ordered across deferred dictionary responses", async () => {
+test("solo submission commits stay ordered across deferred dictionary responses", async (t) => {
   const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const pending = new Map();
   const waiters = new Map();
@@ -922,15 +1638,19 @@ test("solo submission commits stay ordered across deferred dictionary responses"
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        dictionary: { dictionaryId: "wordrush-ca-standard-v1", version: "browser-test" },
-        words: ["BAD", "CAT", "DOG", "FOX", "MAP", "NOD", "OWL", "PIG", "RAT", "SUN"],
+        dictionary: {
+          dictionaryId: "wordrush-ca-standard-v1",
+          artifactSha256: DICTIONARY_ARTIFACT_SHA256,
+        },
       }),
     }),
   );
   await page.route("**/api/word-check**", (route) => {
     const word = new URL(route.request().url()).searchParams.get("word");
-    pending.set(word, route);
-    waiters.get(word)?.();
+    const routes = pending.get(word) || [];
+    routes.push(route);
+    pending.set(word, routes);
+    for (const resolve of waiters.get(word) || []) resolve();
     waiters.delete(word);
   });
   await installBoardFixtureHook(page);
@@ -950,16 +1670,16 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   await traceWord(page, [4, 5, 6]);
   await Promise.all(generalRequests);
   assert.deepEqual([...pending.keys()].sort(), ["CAT", "DOG"]);
-  await resolveWord(pending, "DOG", false);
+  await resolveWord(pending, "DOG", true);
   assert.equal(await page.locator("#gameScore").textContent(), "0");
-  await failWord(pending, "CAT");
-  await page.waitForFunction(() => window.__soloEvents.length === 2);
+  await failWord(pending, waiters, "CAT");
+  await page.waitForFunction(() => window.__soloEvents.length === 1);
   assert.deepEqual(
     await page.evaluate(() => window.__soloEvents.map((event) => event.type)),
-    ["word-accepted", "word-rejected"],
+    ["word-accepted"],
   );
   assert.equal(await page.locator("#gameScore").textContent(), "9");
-  assert.match(await page.locator("#toast").textContent(), /Wrong word/);
+  assert.match(await page.locator("#toast").textContent(), /unavailable/);
 
   const chainFixture = {
     size: 5,
@@ -1099,7 +1819,7 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   await browser.close();
 });
 
-test("multiplayer Dirty Mode starts directly without consent", async () => {
+test("multiplayer Dirty Mode starts directly", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
@@ -1139,19 +1859,18 @@ test("multiplayer Dirty Mode starts directly without consent", async () => {
   await startedPromise;
   const dirtyMessages = await page.evaluate(() => ({
     starts: window.__sentMessages.filter((msg) => msg.type === "start_game"),
-    consentVisible: !document.querySelector("#consentPanel").hidden,
-    actionsVisible: !document.querySelector("#consentActions").hidden,
+    adultDecisionButtons: [...document.querySelectorAll("#sessionLobby button")]
+      .filter((button) => /accept|decline|consent/i.test(button.textContent || "")).length,
   }));
   assert.equal(dirtyMessages.starts.length, 1);
   assert.equal(dirtyMessages.starts[0].mode, "dirty");
-  assert.equal(dirtyMessages.consentVisible, false);
-  assert.equal(dirtyMessages.actionsVisible, false);
+  assert.equal(dirtyMessages.adultDecisionButtons, 0);
   await startIntro(page);
   assert.equal(await page.locator("#gameMode").textContent(), "DIRTY MODE · 18+");
   await browser.close();
 });
 
-test("late join to a Dirty round is admitted without consent", async () => {
+test("late join to a Dirty round uses normal admission", async () => {
   const host = await chromium.launch({ headless: true, executablePath });
   const guest = await chromium.launch({ headless: true, executablePath });
   const hostPage = await host.newPage({ viewport: { width: 390, height: 844 } });
@@ -1172,21 +1891,18 @@ test("late join to a Dirty round is admitted without consent", async () => {
   guestPage.once("dialog", (dialog) => dialog.accept(code));
   await guestPage.locator("#sessionJoin").click();
   await guestPage.waitForFunction((expectedCode) => window.wordrushSessionCode === expectedCode, code);
-  const preAdmissionState = await guestPage.evaluate(() => ({
+  const admissionState = await guestPage.evaluate(() => ({
     dialogOpen: document.querySelector("#multiplayerDialog").open,
     lobbyVisible: !document.querySelector("#sessionLobby").hidden,
-    prePanelVisible: !document.querySelector("#preAdmissionPanel").hidden,
-    actionsVisible: !document.querySelector("#consentActions").hidden,
-    consentHidden: document.querySelector("#consentPanel").hidden,
+    adultDecisionButtons: [...document.querySelectorAll("#sessionLobby button")]
+      .filter((button) => /accept|decline|consent/i.test(button.textContent || "")).length,
     sessionCode: window.wordrushSessionCode || "",
     savedRoom: localStorage.getItem("wordrush-room"),
   }));
-  assert.deepEqual(preAdmissionState, {
+  assert.deepEqual(admissionState, {
     dialogOpen: false,
     lobbyVisible: true,
-    prePanelVisible: false,
-    actionsVisible: false,
-    consentHidden: true,
+    adultDecisionButtons: 0,
     sessionCode: code,
     savedRoom: code,
   });

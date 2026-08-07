@@ -1,6 +1,15 @@
-const RANDOM_RUSH_DELAY = Number(process.env.RANDOM_RUSH_DELAY || 20000);
-const CONSENT_TIMEOUT_MS = Number(process.env.WORDRUSH_CONSENT_TIMEOUT_MS || 60_000);
-const CHALLENGE_TIMEOUT_MS = Number(process.env.WORDRUSH_CHALLENGE_TIMEOUT_MS || 30_000);
+const { runtimeConfig } = require("./runtime-config");
+const {
+  PORT,
+  RANDOM_RUSH_DELAY,
+  WORDRUSH_DISPLAY_TOKEN_TTL_MS: DISPLAY_TOKEN_TTL_MS,
+  WORDRUSH_DISPLAY_RECONNECT_TTL_MS: DISPLAY_RECONNECT_TTL_MS,
+  WORDRUSH_ROOM_RECONNECT_GRACE_MS: ROOM_RECONNECT_GRACE_MS,
+  WORDRUSH_MAX_WS_PER_IP: MAX_WS_CONNECTIONS_PER_IP,
+  WORDRUSH_MAX_WS_MESSAGES_PER_WINDOW: MAX_WS_MESSAGES_PER_WINDOW,
+  WORDRUSH_WS_HEARTBEAT_INTERVAL_MS: WS_HEARTBEAT_INTERVAL_MS,
+  WORDRUSH_WS_HEARTBEAT_MISSES: WS_HEARTBEAT_MISSES,
+} = runtimeConfig;
 const http = require("node:http"),
   fs = require("node:fs"),
   path = require("node:path"),
@@ -62,11 +71,14 @@ const {
   DailyChallengeStore,
   utcDateKey,
 } = require("./daily-challenges");
-const { RelayChallengeStore } = require("./relay-challenges");
+const { RelayChallengeStore, STORE_UNAVAILABLE: RELAY_STORE_UNAVAILABLE } = require("./relay-challenges");
 const { applyWordClaim, validateTeamAssignments } = require("./heist-rules");
-const { bountyClaimEffect, selectBountyIndexes } = require("./challenge-rules");
-const PORT = Number(process.env.PORT || 8000),
-  HOST = process.env.HOST || "127.0.0.1",
+const {
+  bountyClaimEffect,
+  bountyWordRecord,
+  selectBountyIndexes,
+} = require("./challenge-rules");
+const HOST = process.env.HOST || "127.0.0.1",
   MAX_PLAYERS = 10,
   CONSENT_COUNT_FILE =
     process.env.WORDRUSH_ANALYTICS_CONSENT_FILE ||
@@ -76,30 +88,10 @@ const PORT = Number(process.env.PORT || 8000),
   displays = new Map();
 const IS_LOOPBACK = ["127.0.0.1", "::1", "localhost"].includes(HOST);
 const LAN_MODE = process.env.WORDRUSH_LAN_MODE === "1";
-const DISPLAY_TOKEN_TTL_MS = Number(
-  process.env.WORDRUSH_DISPLAY_TOKEN_TTL_MS || 5 * 60 * 1000,
-);
-const DISPLAY_RECONNECT_TTL_MS = Number(
-  process.env.WORDRUSH_DISPLAY_RECONNECT_TTL_MS || 8 * 60 * 60 * 1000,
-);
-const ROOM_RECONNECT_GRACE_MS = Number(
-  process.env.WORDRUSH_ROOM_RECONNECT_GRACE_MS || 15 * 60 * 1000,
-);
-const MAX_WS_CONNECTIONS_PER_IP = Number(process.env.WORDRUSH_MAX_WS_PER_IP || 60);
-const MAX_WS_MESSAGES_PER_WINDOW = Number(
-  process.env.WORDRUSH_MAX_WS_MESSAGES_PER_WINDOW || 60,
-);
-const WS_HEARTBEAT_INTERVAL_MS = Number(
-  process.env.WORDRUSH_WS_HEARTBEAT_INTERVAL_MS || 30_000,
-);
-const WS_HEARTBEAT_MISSES = Number(
-  process.env.WORDRUSH_WS_HEARTBEAT_MISSES || 2,
-);
 const RATE_WINDOW_MS = 60_000;
 const displayTokens = new Map();
 const displayCredentials = new Map();
 const rateLimits = new Map();
-const preAdmissionChallenges = new Map();
 const configuredOrigins = (process.env.WORDRUSH_ALLOWED_ORIGINS || "")
   .split(",")
   .map((value) => value.trim())
@@ -124,6 +116,7 @@ const dailyChallenges = new DailyChallengeStore();
 const relayChallenges = new RelayChallengeStore();
 const accountStore = new AccountStore();
 const pendingDailyChallenges = new Map();
+const DICTIONARY_VERSION_UNAVAILABLE = "DICTIONARY_VERSION_UNAVAILABLE";
 const oauthStates = new Map();
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_COOKIE = "wordrush_session";
@@ -265,7 +258,7 @@ async function authorizeRequest(req, res) {
     res.setHeader("X-Robots-Tag", "noindex, nofollow");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self'; script-src 'self' https://www.gstatic.com; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: https://*.googleusercontent.com https://*.facebook.com https://*.fbcdn.net https://*.fbsbx.com; style-src 'self'; script-src 'self' https://www.gstatic.com; base-uri 'none'; frame-ancestors 'none'",
     );
     return true;
   }
@@ -308,22 +301,6 @@ function boundedNumber(value, fallback, minimum, maximum) {
   return Number.isFinite(parsed)
     ? Math.max(minimum, Math.min(maximum, parsed))
     : fallback;
-}
-function isAdultRequest(mode, config) {
-  if (mode === "dirty") return true;
-  return usesAdultLexicon(config);
-}
-function requiresAdultConsent(mode, config) {
-  return mode !== "dirty" && usesAdultLexicon(config);
-}
-function isAdultRoom(room) {
-  return requiresAdultConsent(room.mode, roomConfig(room));
-}
-function isAdultLastResult(room) {
-  return room.status === "finished" && room.lastResult && isAdultRoom(room);
-}
-function roomExposesAdultContent(room) {
-  return Boolean(room.pendingConsent) || isAdultRoom(room) || isAdultLastResult(room);
 }
 function requestedConfig(mode, raw) {
   if (mode === "custom") {
@@ -460,10 +437,30 @@ async function getTodayDailyChallenge() {
   });
   pendingDailyChallenges.set(key, pending);
   try {
-    return await pending;
+    const challenge = await pending;
+    assertCurrentChallengeDictionary(challenge.dictionary);
+    return challenge;
   } finally {
     pendingDailyChallenges.delete(key);
   }
+}
+function assertCurrentChallengeDictionary(dictionary) {
+  let current;
+  try {
+    current = getDictionaryMetadata(dictionary?.dictionaryId);
+  } catch {
+    throw Object.assign(new Error(DICTIONARY_VERSION_UNAVAILABLE), {
+      code: DICTIONARY_VERSION_UNAVAILABLE,
+    });
+  }
+  if (
+    typeof dictionary?.artifactSha256 !== "string" ||
+    dictionary.artifactSha256.toLowerCase() !== current.artifactSha256.toLowerCase()
+  )
+    throw Object.assign(new Error(DICTIONARY_VERSION_UNAVAILABLE), {
+      code: DICTIONARY_VERSION_UNAVAILABLE,
+    });
+  return current;
 }
 async function createRelayChallenge() {
   const daily = await getTodayDailyChallenge();
@@ -504,6 +501,17 @@ function rejectDetachedRoundParticipant(room, client, ws) {
   send(ws, { type: "error", code: ROUND_PARTICIPANT_RESERVED });
   return true;
 }
+function rejectHeistAdmission(room, client, ws) {
+  if (
+    room.status !== "playing" ||
+    room.mode !== "heist" ||
+    !room.round?.heist ||
+    room.round.participants.has(client.id)
+  )
+    return false;
+  send(ws, { type: "error", code: "HEIST_ROSTER_FROZEN" });
+  return true;
+}
 function createPlayer(room, client, ws) {
   return {
     ...client,
@@ -518,179 +526,17 @@ function createPlayer(room, client, ws) {
     sessionPoints: 0,
   };
 }
+function leaderboardOwnerId(player) {
+  return player?.accountId || player?.id;
+}
 function admitPlayerToRoom(room, client, ws) {
   if (rejectDetachedRoundParticipant(room, client, ws)) return null;
+  if (rejectHeistAdmission(room, client, ws)) return null;
   const player = createPlayer(room, client, ws);
   room.players.set(client.id, player);
   if (room.status === "playing" && room.round)
     room.round.participants.set(client.id, player);
   return player;
-}
-function createPendingConsent(
-  room,
-  mode,
-  config,
-  dictionaryId = room.dictionaryId || DEFAULT_DICTIONARY_ID,
-  options = {},
-) {
-  if (!config) return null;
-  const adultConfig = { ...config, adult: true };
-  const requestId = crypto.randomUUID();
-  const expiresAt = Date.now() + CONSENT_TIMEOUT_MS;
-  const connectedIds = [...room.players.values()]
-    .filter((p) => p.ws?.readyState === 1)
-    .map((p) => p.id);
-  if (!connectedIds.length) return null;
-  room.pendingConsent = {
-    requestId,
-    mode,
-    config: adultConfig,
-    dictionaryId,
-    randomRush: options.randomRush === true,
-    randomRushIncludeDirty: options.randomRushIncludeDirty === true,
-    randomRushEpoch: options.randomRushEpoch ?? room.randomRushEpoch,
-    sourceRoundId: options.sourceRoundId || null,
-    requiredPlayerIds: connectedIds,
-    acceptedPlayerIds: [],
-    expiresAt,
-    timer: setTimeout(() => {
-      if (room.pendingConsent?.requestId === requestId)
-        cancelPendingConsent(room, "timeout");
-    }, CONSENT_TIMEOUT_MS),
-  };
-  room.pendingConsent.timer.unref?.();
-  broadcast(room, {
-    type: "adult_consent_request",
-    requestId,
-    mode,
-    config: { adult: true, min: config.min, size: config.size, seconds: config.seconds },
-    requiredPlayerIds: connectedIds,
-    acceptedPlayerIds: [],
-    expiresAt,
-  });
-  return room.pendingConsent;
-}
-function pendingConsentContextIsCurrent(room, pending) {
-  if (!pending) return false;
-  if (!pending.randomRush)
-    return room.status === "lobby" && room.round === null;
-  if (
-    !room.randomRush ||
-    room.randomRushEpoch !== pending.randomRushEpoch
-  )
-    return false;
-  if (!pending.sourceRoundId)
-    return room.status === "lobby" && room.round === null;
-  return Boolean(
-    room.status === "finished" &&
-      room.round?.id === pending.sourceRoundId &&
-      room.lastResult?.roundId === pending.sourceRoundId &&
-      !room.nextRound
-  );
-}
-function cancelPendingConsent(room, reason) {
-  const pending = room.pendingConsent;
-  if (!pending) return;
-  if (
-    pending.generating &&
-    room.generation?.consentRequestId === pending.requestId
-  )
-    room.generation.cancelled = true;
-  clearTimeout(pending.timer);
-  room.pendingConsent = null;
-  if (pending.randomRush) resetRandomRush(room);
-  broadcast(room, {
-    type: "adult_consent_cancelled",
-    requestId: pending.requestId,
-    reason,
-  });
-  if (pending.randomRush) broadcast(room, state(room));
-}
-async function completeAdultConsent(room, requestId) {
-  const pending = room.pendingConsent;
-  if (
-    !pending ||
-    pending.requestId !== requestId ||
-    !pendingConsentContextIsCurrent(room, pending) ||
-    pending.generating
-  )
-    return false;
-  if (pending.acceptedPlayerIds.length !== pending.requiredPlayerIds.length)
-    return false;
-  for (const id of pending.requiredPlayerIds) {
-    if (!pending.acceptedPlayerIds.includes(id)) return false;
-    if (room.pendingConsent !== pending || pending.generating) return false;
-    const player = room.players.get(id);
-    if (!player || player.ws?.readyState !== 1) return false;
-  }
-  const acceptedIds = [...pending.acceptedPlayerIds];
-  const storedRequestId = pending.requestId;
-  pending.generating = true;
-  clearTimeout(pending.timer);
-  const started = await startRound(
-    room,
-    pending.mode,
-    pending.config,
-    acceptedIds,
-    storedRequestId,
-    pending.dictionaryId,
-  );
-  if (!started && room.pendingConsent === pending)
-    cancelPendingConsent(room, "generation_failed");
-  return started;
-}
-function createPreAdmissionChallenge(room, client, ws, options = {}) {
-  const challengeId = crypto.randomUUID();
-  const challenge = {
-    challengeId,
-    roomCode: room.code,
-    clientId: client.id,
-    ws,
-    targetRequestId: options.targetRequestId || (room.pendingConsent ? room.pendingConsent.requestId : null),
-    roundId: options.roundId || (room.round ? room.round.id : null),
-    resultRoundId: options.resultRoundId || null,
-    expiresAt: Date.now() + CHALLENGE_TIMEOUT_MS,
-  };
-  preAdmissionChallenges.set(challengeId, challenge);
-  const sourceConfig = room.pendingConsent ? room.pendingConsent.config : roomConfig(room);
-  const safeMeta = {
-    adult: true,
-    min: sourceConfig.min,
-    size: sourceConfig.size,
-    seconds: sourceConfig.seconds,
-  };
-  const mode = room.pendingConsent?.mode || room.mode;
-  const payload = {
-    type: "adult_pre_admission_challenge",
-    challengeId,
-    roomCode: room.code,
-    expiresAt: challenge.expiresAt,
-    mode,
-    config: safeMeta,
-  };
-  if (room.round) payload.roundId = room.round.id;
-  if (room.lastResult && isAdultLastResult(room)) payload.resultRoundId = room.lastResult.roundId;
-  if (room.pendingConsent) payload.targetRequestId = room.pendingConsent.requestId;
-  send(ws, payload);
-  return challenge;
-}
-function findPreAdmissionBySocket(ws) {
-  for (const challenge of preAdmissionChallenges.values())
-    if (challenge.ws === ws) return challenge;
-  return null;
-}
-function cleanupPreAdmission(ws) {
-  const challenge = findPreAdmissionBySocket(ws);
-  if (challenge) preAdmissionChallenges.delete(challenge.challengeId);
-}
-function prunePreAdmissionChallenges(now = Date.now()) {
-  for (const [id, challenge] of preAdmissionChallenges) {
-    if (challenge.expiresAt <= now) {
-      preAdmissionChallenges.delete(id);
-      if (challenge.ws?.readyState === 1)
-        send(challenge.ws, { type: "adult_pre_admission_timeout", challengeId: id });
-    }
-  }
 }
 function playerScore(room, player) {
   return room.mode === "coop"
@@ -843,20 +689,8 @@ function closeRoom(room, reason) {
     releaseSeriesGenerationWait(room.generation);
   }
   room.generation = null;
-  if (room.pendingConsent) cancelPendingConsent(room, "room_closed");
   resetRandomRush(room);
   room.suddenDeathSeries = null;
-  for (const [id, challenge] of preAdmissionChallenges) {
-    if (challenge.roomCode === room.code) {
-      preAdmissionChallenges.delete(id);
-      if (challenge.ws?.readyState === 1)
-        send(challenge.ws, {
-          type: "session_closed",
-          code: room.code,
-          reason,
-        });
-    }
-  }
   rooms.delete(room.code);
   for (const member of room.players.values()) {
     clearTimeout(member.disconnectTimer);
@@ -924,6 +758,7 @@ function connectedSeriesRoster(room) {
     .filter((player) => player.ws?.readyState === 1)
     .map((player) => ({
       id: player.id,
+      accountId: player.accountId || null,
       name: player.name,
       avatar: player.avatar || "🐈",
       session: {
@@ -1078,7 +913,7 @@ function recordSuddenDeathSeriesAccounting(room, series) {
     player.sessionLosses += deltas.multiplayerLosses;
     const words = participant.acceptedWords || [];
     entries.push({
-      id: participant.id,
+      id: participant.accountId || participant.id,
       name: participant.name,
       avatar: participant.avatar,
       score: participant.aggregateScore,
@@ -1211,8 +1046,6 @@ function settleSuddenDeathSeriesRound(
     room,
     SUDDEN_SERIES_MODE,
     configForPreset(SUDDEN_SERIES_MODE),
-    null,
-    null,
     room.dictionaryId,
   );
   return true;
@@ -1220,8 +1053,7 @@ function settleSuddenDeathSeriesRound(
 function retireFinishedRoundForReplacement(room) {
   if (room.status !== "finished") return false;
   clearRoomTimer(room);
-  if (room.pendingConsent) cancelPendingConsent(room, "configuration_changed");
-  else resetRandomRush(room);
+  resetRandomRush(room);
   room.round = null;
   room.lastResult = null;
   room.suddenDeathSeries = null;
@@ -1243,7 +1075,6 @@ function generationFailure(room, generation, result) {
   releaseSeriesGenerationWait(generation);
   if (
     room.randomRush &&
-    !generation.consentRequestId &&
     generation.randomRushEpoch === room.randomRushEpoch
   )
     resetRandomRush(room);
@@ -1252,7 +1083,7 @@ function generationFailure(room, generation, result) {
   const diagnostics = result?.diagnostics
     ? { ...result.diagnostics, dictionary: generation.dictionary }
     : null;
-  if (failureCode !== "QUALITY_SELECTION_CANCELLED" && failureCode !== "CONSENT_INVALIDATED")
+  if (failureCode !== "QUALITY_SELECTION_CANCELLED")
     console.warn("Wordrush quality board generation failed", JSON.stringify({
       failureCode,
       diagnostics,
@@ -1361,8 +1192,6 @@ async function startRound(
   room,
   selected = room.mode,
   configArg = null,
-  roundConsentedPlayerIds = null,
-  consentRequestId = null,
   dictionaryId = room.dictionaryId || DEFAULT_DICTIONARY_ID,
 ) {
   if (room.generation) return false;
@@ -1374,28 +1203,37 @@ async function startRound(
     seriesTransitionId,
   }))
     return false;
-  const pendingConsent = consentRequestId
-    ? room.pendingConsent?.requestId === consentRequestId
-      ? room.pendingConsent
-      : null
-    : null;
-  if (consentRequestId && !pendingConsentContextIsCurrent(room, pendingConsent))
-    return false;
   let config = configArg;
   if (!config) {
     const preset = configForPreset(selected);
     if (!preset) return;
     config = preset;
   }
-  if (requiresAdultConsent(selected, config)) {
-    const validConsent =
-      Array.isArray(roundConsentedPlayerIds) &&
-      roundConsentedPlayerIds.length > 0 &&
-      roundConsentedPlayerIds.every(id => {
-        const player = room.players.get(id);
-        return player && player.ws?.readyState === 1;
+  let heistState = null;
+  if (selected === "heist") {
+    const players = [...room.players.keys()];
+    const assignments = [
+      { id: "sun", playerIds: players.filter((_, index) => index % 2 === 0) },
+      { id: "moon", playerIds: players.filter((_, index) => index % 2 === 1) },
+    ];
+    const valid = validateTeamAssignments(players, assignments);
+    if (!valid.valid) {
+      send(room.players.get(room.creatorId)?.ws, {
+        type: "error",
+        code: "HEIST_INVALID_ROSTER",
+        reason: valid.reason,
+        minimumPlayers: 2,
       });
-    if (!validConsent) return;
+      return false;
+    }
+    heistState = {
+      teams: valid.teams,
+      teamByPlayer: Object.fromEntries(
+        valid.teams.flatMap((team) => team.playerIds.map((id) => [id, team.id])),
+      ),
+      teamScores: { sun: 0, moon: 0 },
+      claims: [],
+    };
   }
   clearRoomTimer(room);
   const contract = boardGenerationContract(config, dictionaryId);
@@ -1403,7 +1241,6 @@ async function startRound(
   const validationMode = contract.validationMode;
   const generation = {
     token: crypto.randomUUID(),
-    consentRequestId,
     randomRushEpoch: room.randomRushEpoch,
     seriesId: series?.id || null,
     seriesTransitionId,
@@ -1425,32 +1262,6 @@ async function startRound(
     generation.cancelled = true;
     return false;
   }
-  if (
-    consentRequestId &&
-    (!pendingConsentContextIsCurrent(room, room.pendingConsent) ||
-      room.pendingConsent?.requestId !== consentRequestId)
-  )
-    return generationFailure(room, generation, {
-      ok: false,
-      error: { code: "CONSENT_INVALIDATED" },
-      diagnostics: result?.diagnostics,
-    });
-  const consentedPlayerIds =
-    consentRequestId && room.pendingConsent?.requestId === consentRequestId
-      ? [...room.pendingConsent.acceptedPlayerIds]
-      : roundConsentedPlayerIds
-        ? [...roundConsentedPlayerIds]
-        : [...room.players.keys()];
-  if (
-    requiresAdultConsent(selected, config) &&
-    (!consentedPlayerIds.length ||
-      !consentedPlayerIds.every((id) => room.players.get(id)?.ws?.readyState === 1))
-  )
-    return generationFailure(room, generation, {
-      ok: false,
-      error: { code: "CONSENT_INVALIDATED" },
-      diagnostics: result?.diagnostics,
-    });
   if (!result.ok) return generationFailure(room, generation, result);
   if (generation.seriesId && generation.seriesTransitionId) {
     await waitForSeriesDeadline(room, generation);
@@ -1464,10 +1275,6 @@ async function startRound(
     }
   }
   room.generation = null;
-  if (consentRequestId && room.pendingConsent?.requestId === consentRequestId) {
-    clearTimeout(room.pendingConsent.timer);
-    room.pendingConsent = null;
-  }
   room.mode = selected;
   room.config = config;
   room.dictionaryId = dictionary.id;
@@ -1507,30 +1314,13 @@ async function startRound(
     dictionary: dictionary.metadata,
     validationMode,
     quality: result.compactDiagnostics || null,
-    adultConsentRequestId: consentRequestId,
-    consentedPlayerIds,
     participants: series ? new Map(seriesRoundPlayers) : new Map(room.players),
     seriesId: series?.id || null,
     seriesRoundNumber,
     seriesParticipantIds: series
       ? seriesRoundPlayers.map(([id]) => id)
       : [],
-    ...(selected === "heist"
-      ? {
-          heist: (() => {
-            const players = [...room.players.keys()];
-            const teams = [
-              { id: "sun", playerIds: players.filter((_, index) => index % 2 === 0) },
-              { id: "moon", playerIds: players.filter((_, index) => index % 2 === 1) },
-            ];
-            const valid = validateTeamAssignments(players, teams);
-            const teamByPlayer = Object.fromEntries(
-              valid.teams.flatMap((team) => team.playerIds.map((id) => [id, team.id])),
-            );
-            return { teams: valid.teams, teamByPlayer, teamScores: { sun: 0, moon: 0 }, claims: [] };
-          })(),
-        }
-      : {}),
+    ...(heistState ? { heist: heistState } : {}),
     ...(selected === "bounty"
       ? {
           bounty: {
@@ -1714,13 +1504,13 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
   room.lastResult = result;
   if (recorded) {
     recordLeaderboardScores(
-      () => result.ranking.map((rankedPlayer) => {
+      () => rankedPlayers.map((rankedPlayer) => {
         const words = rankedPlayer.words || [];
         return {
-          id: rankedPlayer.id,
+          id: leaderboardOwnerId(rankedPlayer),
           name: rankedPlayer.name,
           avatar: rankedPlayer.avatar,
-          score: rankedPlayer.score,
+          score: playerScore(room, rankedPlayer),
           words: words.length,
           correct: words.length,
           longest: Math.max(0, ...words.map((item) => item.word.length)),
@@ -1833,7 +1623,6 @@ function expireDisconnectedPlayer(room, player, ws) {
   broadcast(room, state(room));
 }
 function leave(ws) {
-  cleanupPreAdmission(ws);
   const info = clients.get(ws);
   if (!info) return leaveDisplay(ws);
   clients.delete(ws);
@@ -1841,11 +1630,6 @@ function leave(ws) {
   if (!room) return;
   const player = room.players.get(info.id);
   if (!player || player.ws !== ws) return;
-  if (
-    room.pendingConsent &&
-    room.pendingConsent.requiredPlayerIds.includes(info.id)
-  )
-    cancelPendingConsent(room, "player_disconnected");
   clearTimeout(player.disconnectTimer);
   player.disconnectTimer = null;
   // Preserve the seat during the bounded reconnect grace period for both host
@@ -1903,6 +1687,7 @@ async function handle(ws, message) {
     const id = cleanText(message.guestId, crypto.randomUUID(), 80);
     clients.set(ws, {
       id,
+      accountId: ws.authenticatedAccountId,
       name: cleanText(message.name, "Guest"),
       avatar: cleanAvatar(message.avatar),
       roomCode: null,
@@ -1936,11 +1721,6 @@ async function handle(ws, message) {
           ? "SERIES_ROSTER_FROZEN"
           : "RESUME_FAILED",
       });
-    if (
-      roomExposesAdultContent(room) &&
-      !room.round?.consentedPlayerIds?.includes(client.id)
-    )
-      return send(ws, { type: "error", code: "RESUME_FAILED" });
     const oldSocket = player.ws;
     clearTimeout(player.disconnectTimer);
     player.disconnectTimer = null;
@@ -2027,12 +1807,6 @@ async function handle(ws, message) {
         return send(ws, { type: "error", code: "ALREADY_JOINED" });
       if (existingPlayer.reconnectToken !== message.reconnectToken)
         return send(ws, { type: "error", code: "RECONNECT_TOKEN_REQUIRED" });
-      if (
-        roomExposesAdultContent(room) &&
-        !room.round?.consentedPlayerIds?.includes(client.id) &&
-        !room.lastResult?.consentedPlayerIds?.includes(client.id)
-      )
-        return send(ws, { type: "error", code: "RESUME_FAILED" });
       const oldSocket = existingPlayer.ws;
       clearTimeout(existingPlayer.disconnectTimer);
       existingPlayer.disconnectTimer = null;
@@ -2065,17 +1839,12 @@ async function handle(ws, message) {
         code: seriesParticipant(room, client.id)?.status === "withdrawn"
           ? "SERIES_PARTICIPANT_WITHDRAWN"
           : "SERIES_ROSTER_FROZEN",
-      });
+        });
     }
+    if (rejectHeistAdmission(room, client, ws)) return;
     if (rejectDetachedRoundParticipant(room, client, ws)) return;
     if (room.players.size >= MAX_PLAYERS)
       return send(ws, { type: "error", code: "ROOM_FULL" });
-    if (roomExposesAdultContent(room)) {
-      const existingChallenge = findPreAdmissionBySocket(ws);
-      if (existingChallenge) preAdmissionChallenges.delete(existingChallenge.challengeId);
-      createPreAdmissionChallenge(room, client, ws);
-      return;
-    }
     client.roomCode = room.code;
     client.name = cleanText(message.name, client.name);
     client.avatar = cleanAvatar(message.avatar, client.avatar || "🐈");
@@ -2086,164 +1855,6 @@ async function handle(ws, message) {
       reconnectToken: player.reconnectToken,
     });
     broadcast(room, state(room));
-    return;
-  }
-  if (type === "adult_consent_response") {
-    const hasRequestId = typeof message.requestId === "string";
-    const hasChallengeId = typeof message.challengeId === "string";
-    if (hasRequestId && hasChallengeId)
-      return send(ws, { type: "error", code: "CONSENT_AMBIGUOUS" });
-    if (!hasRequestId && !hasChallengeId)
-      return send(ws, { type: "error", code: "CONSENT_MISSING_TARGET" });
-    if (message.accepted !== true && message.accepted !== false)
-      return send(ws, { type: "error", code: "CONSENT_INVALID_VALUE" });
-    if (hasChallengeId) {
-      const challenge = preAdmissionChallenges.get(message.challengeId);
-      if (!challenge || challenge.ws !== ws) return;
-      const challengeClient = clients.get(ws);
-      if (!challengeClient || challengeClient.id !== challenge.clientId) return;
-      const targetRoom = rooms.get(challenge.roomCode);
-      if (!targetRoom || targetRoom.status === "closed") {
-        preAdmissionChallenges.delete(challenge.challengeId);
-        return send(ws, { type: "adult_pre_admission_declined", challengeId: message.challengeId });
-      }
-      if (challenge.expiresAt <= Date.now()) {
-        preAdmissionChallenges.delete(challenge.challengeId);
-        return send(ws, { type: "adult_pre_admission_timeout", challengeId: message.challengeId });
-      }
-      if (!message.accepted) {
-        preAdmissionChallenges.delete(challenge.challengeId);
-        return send(ws, { type: "adult_pre_admission_declined", challengeId: message.challengeId });
-      }
-      preAdmissionChallenges.delete(challenge.challengeId);
-
-      function admitPlayer() {
-        if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
-        if (
-          targetRoom.suddenDeathSeries &&
-          ["playing", "interstitial"].includes(targetRoom.suddenDeathSeries.phase)
-        ) {
-          const frozenIdentity = seriesParticipant(targetRoom, challengeClient.id);
-          send(ws, {
-            type: "error",
-            code: frozenIdentity?.status === "withdrawn"
-              ? "SERIES_PARTICIPANT_WITHDRAWN"
-              : "SERIES_ROSTER_FROZEN",
-          });
-          return null;
-        }
-        if (rejectDetachedRoundParticipant(targetRoom, challengeClient, ws)) return null;
-        if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
-        challengeClient.roomCode = targetRoom.code;
-        const player = admitPlayerToRoom(targetRoom, challengeClient, ws);
-        send(ws, {
-          type: "adult_pre_admission_accepted",
-          challengeId: challenge.challengeId,
-          code: targetRoom.code,
-          reconnectToken: player.reconnectToken,
-        });
-        send(ws, {
-          type: "joined_room",
-          code: targetRoom.code,
-          reconnectToken: player.reconnectToken,
-        });
-        broadcast(targetRoom, state(targetRoom));
-        return player;
-      }
-
-      const samePending = challenge.targetRequestId && targetRoom.pendingConsent?.requestId === challenge.targetRequestId;
-      const sameActiveRound = challenge.targetRequestId && targetRoom.round?.adultConsentRequestId === challenge.targetRequestId;
-      const sameActiveRoundById = !challenge.targetRequestId && challenge.roundId && targetRoom.round?.id === challenge.roundId;
-      const sameFinishedResult = challenge.resultRoundId && targetRoom.lastResult?.roundId === challenge.resultRoundId;
-
-      if (samePending) {
-        const admitted = admitPlayer();
-        if (!admitted) return;
-        if (!targetRoom.pendingConsent.requiredPlayerIds.includes(challengeClient.id))
-          targetRoom.pendingConsent.requiredPlayerIds.push(challengeClient.id);
-        if (!targetRoom.pendingConsent.acceptedPlayerIds.includes(challengeClient.id))
-          targetRoom.pendingConsent.acceptedPlayerIds.push(challengeClient.id);
-        if (!targetRoom.pendingConsent.generating)
-          await completeAdultConsent(targetRoom, challenge.targetRequestId);
-        return;
-      }
-      if (sameActiveRound || sameActiveRoundById) {
-        if (!isAdultRoom(targetRoom)) return admitNormalJoin();
-        const admitted = admitPlayer();
-        if (!admitted) return;
-        targetRoom.round.consentedPlayerIds.push(challengeClient.id);
-        return;
-      }
-      if (sameFinishedResult) {
-        if (!isAdultLastResult(targetRoom)) return admitNormalJoin();
-        const admitted = admitPlayer();
-        if (!admitted) return;
-        targetRoom.lastResult.consentedPlayerIds = targetRoom.lastResult.consentedPlayerIds || [];
-        targetRoom.lastResult.consentedPlayerIds.push(challengeClient.id);
-        return;
-      }
-
-      function admitNormalJoin() {
-        if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
-        if (rejectDetachedRoundParticipant(targetRoom, challengeClient, ws)) return null;
-        if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
-        challengeClient.roomCode = targetRoom.code;
-        const player = admitPlayerToRoom(targetRoom, challengeClient, ws);
-        send(ws, {
-          type: "joined_room",
-          code: targetRoom.code,
-          reconnectToken: player.reconnectToken,
-        });
-        broadcast(targetRoom, state(targetRoom));
-        return player;
-      }
-
-      if (!targetRoom.pendingConsent && !isAdultRoom(targetRoom) && !isAdultLastResult(targetRoom)) {
-        admitNormalJoin();
-        return;
-      }
-
-      if (challenge.targetRequestId && challenge.targetRequestId !== targetRoom.pendingConsent?.requestId && challenge.targetRequestId !== targetRoom.round?.adultConsentRequestId) {
-        createPreAdmissionChallenge(targetRoom, challengeClient, ws);
-        return;
-      }
-      createPreAdmissionChallenge(targetRoom, challengeClient, ws);
-      return;
-    }
-    const responseClient = clients.get(ws);
-    if (!responseClient) return send(ws, { type: "error", code: "HELLO_REQUIRED" });
-    const responseRoom = rooms.get(responseClient.roomCode);
-    if (!responseRoom) return send(ws, { type: "error", code: "NOT_IN_ROOM" });
-    const pending = responseRoom.pendingConsent;
-    if (!pending || pending.requestId !== message.requestId)
-      return send(ws, { type: "error", code: "CONSENT_MISMATCH" });
-    if (!pending.requiredPlayerIds.includes(responseClient.id))
-      return send(ws, { type: "error", code: "CONSENT_NOT_REQUIRED" });
-    if (!message.accepted) {
-      cancelPendingConsent(responseRoom, "player_declined");
-      return;
-    }
-    if (!pending.acceptedPlayerIds.includes(responseClient.id))
-      pending.acceptedPlayerIds.push(responseClient.id);
-    broadcast(responseRoom, {
-      type: "adult_consent_player_accepted",
-      requestId: pending.requestId,
-      playerId: responseClient.id,
-      acceptedPlayerIds: pending.acceptedPlayerIds,
-      requiredPlayerIds: pending.requiredPlayerIds,
-    });
-    await completeAdultConsent(responseRoom, pending.requestId);
-    return;
-  }
-  if (type === "adult_consent_cancel") {
-    const cancelClient = clients.get(ws);
-    if (!cancelClient) return send(ws, { type: "error", code: "HELLO_REQUIRED" });
-    const cancelRoom = rooms.get(cancelClient.roomCode);
-    if (!cancelRoom) return send(ws, { type: "error", code: "NOT_IN_ROOM" });
-    if (cancelClient.id !== cancelRoom.creatorId)
-      return send(ws, { type: "error", code: "CREATOR_ONLY" });
-    if (cancelRoom.pendingConsent && cancelRoom.pendingConsent.requestId === message.requestId)
-      cancelPendingConsent(cancelRoom, "host_cancelled");
     return;
   }
   const room = rooms.get(client.roomCode);
@@ -2285,11 +1896,6 @@ async function handle(ws, message) {
       send(ws, { type: "session_left" });
       return;
     }
-    if (
-      leavingRoom.pendingConsent &&
-      leavingRoom.pendingConsent.requiredPlayerIds.includes(client.id)
-    )
-      cancelPendingConsent(leavingRoom, "player_left");
     clearTimeout(leavingRoom.players.get(client.id)?.disconnectTimer);
     leavingRoom.players.delete(client.id);
     client.roomCode = null;
@@ -2371,7 +1977,6 @@ async function handle(ws, message) {
         broadcast(room, state(room));
       }
       removeExcludedSeriesSeats(room, roster);
-      if (room.pendingConsent) cancelPendingConsent(room, "configuration_changed");
       clearQueuedNextRound(room);
       room.randomRush = false;
       room.randomRushIncludeDirty = false;
@@ -2382,12 +1987,13 @@ async function handle(ws, message) {
         id: seriesId,
         accountingId: seriesId,
       });
+      const accountIds = new Map(roster.map((player) => [player.id, player.accountId]));
+      for (const participant of room.suddenDeathSeries.participants)
+        participant.accountId = accountIds.get(participant.id) || null;
       const started = await startRound(
         room,
         SUDDEN_SERIES_MODE,
         configForPreset(SUDDEN_SERIES_MODE),
-        null,
-        null,
         requestedDictionaryId,
       );
       if (!started && room.suddenDeathSeries?.id === seriesId)
@@ -2400,22 +2006,13 @@ async function handle(ws, message) {
       if (room.status === "finished") {
         retireFinishedRoundForReplacement(room);
         broadcast(room, state(room));
-      } else {
-        if (
-          room.pendingConsent?.randomRush &&
-          room.pendingConsent.randomRushIncludeDirty === includeDirty
-        )
-          return send(ws, { type: "error", code: "CONSENT_PENDING" });
-        if (room.pendingConsent)
-          cancelPendingConsent(room, "configuration_changed");
-        clearQueuedNextRound(room);
-      }
+      } else clearQueuedNextRound(room);
       room.randomRush = true;
       room.randomRushIncludeDirty = includeDirty;
       room.randomRushEpoch += 1;
       room.randomModeQueue = [];
       const selected = randomMode(room, previousMode);
-      return startRound(room, selected, null, null, null, requestedDictionaryId);
+      return startRound(room, selected, null, requestedDictionaryId);
     }
     if (room.status === "finished" && room.suddenDeathSeries) {
       retireFinishedRoundForReplacement(room);
@@ -2433,25 +2030,12 @@ async function handle(ws, message) {
         return send(ws, { type: "error", code: "UNKNOWN_MODE" });
       config = preset;
     }
-    if (requiresAdultConsent(requested, config)) {
-      if (room.pendingConsent)
-        cancelPendingConsent(room, "configuration_changed");
-      clearQueuedNextRound(room);
-      room.randomRush = false;
-      room.randomRushIncludeDirty = false;
-      room.randomRushEpoch += 1;
-      room.randomModeQueue = [];
-      createPendingConsent(room, requested, config, requestedDictionaryId);
-      return;
-    }
-    if (room.pendingConsent)
-      cancelPendingConsent(room, "configuration_changed");
     clearQueuedNextRound(room);
     room.randomRush = false;
     room.randomRushIncludeDirty = false;
     room.randomRushEpoch += 1;
     room.randomModeQueue = [];
-    return startRound(room, requested, config, null, null, requestedDictionaryId);
+    return startRound(room, requested, config, requestedDictionaryId);
   }
   if (type === "start_next_round") {
     if (client.id !== room.creatorId)
@@ -2548,11 +2132,6 @@ async function handle(ws, message) {
         : player.found,
     });
     const config = roomConfig(room);
-    if (result.valid && room.mode === "heist") {
-      const claimed = room.round.heist.claims.find((entry) => entry.word === result.word);
-      if (claimed && claimed.teamId !== room.round.heist.teamByPlayer[client.id])
-        result = { ...result, valid: false, reason: "heist_claimed", points: 0 };
-    }
     if (result.valid && requiresChain(config) &&
       !chainWordMatches(room.round.requiredLetter, result.word))
       result = { ...result, valid: false, reason: "chain", points: 0 };
@@ -2594,6 +2173,33 @@ async function handle(ws, message) {
     // authoritative if validation or future policy checks ever take time.
     // A word received before the deadline must not be awarded after it.
     if (Date.now() >= room.round.endsAt) return finishRound(room, "timeout");
+    let heistClaim = null;
+    if (room.mode === "heist") {
+      heistClaim = applyWordClaim(room.round.heist, {
+        teamId: room.round.heist.teamByPlayer[player.id],
+        word: result.word,
+        points: result.points,
+      });
+      if (!heistClaim.changed) {
+        const rejectionReason = {
+          team: "heist_team_missing",
+          ineligible: "heist_ineligible",
+          same_team_duplicate: "heist_same_team_duplicate",
+          cross_team_duplicate: "heist_claimed",
+        }[heistClaim.status] || "heist_claim_rejected";
+        send(ws, {
+          type: "word_rejected",
+          playerId: client.id,
+          word: result.word,
+          reason: rejectionReason,
+          minimum: heistClaim.status === "ineligible" ? 6 : config.min,
+          points: 0,
+          heistStatus: heistClaim.status,
+          heist: publicHeistState(room.round),
+        });
+        return;
+      }
+    }
     room.round.found.add(result.word);
     if (requiresChain(config))
       advanceChainFields(room.round, result.word);
@@ -2606,25 +2212,27 @@ async function handle(ws, message) {
         result.points,
       );
     let awardedPoints = result.points;
+    let wordRecord = { word: result.word, points: result.points };
     if (room.mode === "bounty") {
       const effect = bountyClaimEffect(room.round.bounty, message.path);
       room.round.bounty = {
         bountyIndexes: [...room.round.bounty.bountyIndexes],
         claimedIndexes: [...effect.claimedIndexes],
       };
-      awardedPoints += effect.newlyClaimedIndexes.length * 25;
+      wordRecord = bountyWordRecord(
+        result.word,
+        result.points,
+        effect.newlyClaimedIndexes,
+      );
+      awardedPoints = wordRecord.points;
     }
     if (room.mode === "heist") {
-      const claim = applyWordClaim(room.round.heist, {
-        teamId: room.round.heist.teamByPlayer[player.id],
-        word: result.word,
-        points: result.points,
-      });
       room.round.heist = {
         ...room.round.heist,
-        teamScores: { ...claim.teamScores },
-        claims: [...claim.claims],
+        teamScores: { ...heistClaim.teamScores },
+        claims: [...heistClaim.claims],
       };
+      awardedPoints = heistClaim.pointsAwarded;
       player.score = playerScore(room, player);
     } else if (room.mode === "coop") {
       room.teamScore += awardedPoints;
@@ -2632,13 +2240,23 @@ async function handle(ws, message) {
         teammate.score = room.teamScore;
     } else player.score += awardedPoints;
     player.words = player.words || [];
-    player.words.push({ word: result.word, points: result.points });
+    player.words.push({
+      ...wordRecord,
+      ...(heistClaim ? { status: heistClaim.status } : {}),
+    });
     player.score = playerScore(room, player);
     broadcast(room, {
       type: "word_accepted",
       playerId: client.id,
       word: result.word,
       points: awardedPoints,
+      ...(room.mode === "bounty" ? { wordRecord: { ...wordRecord } } : {}),
+      ...(heistClaim
+        ? {
+            status: heistClaim.status,
+            teamScoreDelta: heistClaim.pointsAwarded,
+          }
+        : {}),
       scores: [...room.players.values()].map((p) => ({
         id: p.id,
         name: p.name,
@@ -2713,6 +2331,7 @@ const server = http.createServer((req, res) => {
     requested = "/receiver/index.html";
   const publicRootFiles = new Set([
     "/index.html",
+    "/avatar-presentation.js",
     "/site-routes.js",
     "/robots.txt",
     "/sitemap.xml",
@@ -2794,6 +2413,7 @@ wss.on("connection", (ws, req) => {
       : "player";
   ws.missedHeartbeats = 0;
   ws.connectedAt = Date.now();
+  ws.authenticatedAccountId = accountFromRequest(req)?.id || null;
   ws.messageWindow = { startedAt: Date.now(), count: 0 };
   ws.on("pong", () => {
     ws.missedHeartbeats = 0;
@@ -2851,7 +2471,6 @@ const heartbeat = setInterval(() => {
         credential.expiresAt = now + DISPLAY_RECONNECT_TTL_MS;
       else displayCredentials.delete(token);
     }
-  prunePreAdmissionChallenges(now);
   pruneOAuthStates(now);
   for (const ws of wss.clients) {
     heartbeatSocket(ws);
@@ -2874,31 +2493,18 @@ module.exports = {
   validateSoloBoardRequest,
   getTodayDailyChallenge,
   dailyChallenges,
+  relayChallenges,
   generationTestHooks,
   MAX_PLAYERS,
   displayTokens,
   displayCredentials,
   rateLimits,
-  preAdmissionChallenges,
   clientIp,
   pruneExpiredRateLimits,
   heartbeatSocket,
   WS_HEARTBEAT_MISSES,
-  isAdultRequest,
-  requiresAdultConsent,
-  isAdultRoom,
-  isAdultLastResult,
-  roomExposesAdultContent,
-  createPendingConsent,
-  cancelPendingConsent,
-  completeAdultConsent,
   randomRushModes,
   startQueuedNextRound,
-  createPreAdmissionChallenge,
-  cleanupPreAdmission,
-  prunePreAdmissionChallenges,
-  CONSENT_TIMEOUT_MS,
-  CHALLENGE_TIMEOUT_MS,
   ROUND_PARTICIPANT_RESERVED,
   SUDDEN_SERIES_MODE,
   cancelSuddenDeathSeries,
@@ -3287,8 +2893,21 @@ async function leaderboardRequest(req, res) {
     }
   }
   if (url.pathname.startsWith("/api/relay-challenges/") && req.method === "GET") {
-    const challenge = relayChallenges.get(url.pathname.slice("/api/relay-challenges/".length));
+    let challenge;
+    try {
+      challenge = relayChallenges.get(url.pathname.slice("/api/relay-challenges/".length));
+    } catch (error) {
+      if (error.message === RELAY_STORE_UNAVAILABLE) return deny(res, 503, "RELAY_UNAVAILABLE");
+      throw error;
+    }
     if (!challenge) return deny(res, 404, "RELAY_NOT_FOUND");
+    try {
+      assertCurrentChallengeDictionary(challenge.dictionary);
+    } catch (error) {
+      if (error.code === DICTIONARY_VERSION_UNAVAILABLE)
+        return deny(res, 409, DICTIONARY_VERSION_UNAVAILABLE);
+      throw error;
+    }
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
     return res.end(JSON.stringify(challenge));
   }
@@ -3299,6 +2918,7 @@ async function leaderboardRequest(req, res) {
       return deny(res, 400, "RELAY_REQUEST_INVALID");
     try {
       const challenge = await relayChallenges.transition(id, body.revision, (state, record) => {
+        assertCurrentChallengeDictionary(record.dictionary);
         const result = validateSubmission({ board: record.board, size: record.config.size, word: body.word, path: body.path, mode: "classic", dictionaryId: record.dictionary.dictionaryId, minimum: record.config.min, found: new Set(state.found) });
         if (!result.valid) throw Object.assign(new Error("RELAY_WORD_REJECTED"), { code: result.reason });
         if (state.requiredLetter && !chainWordMatches(state.requiredLetter, result.word))
@@ -3308,8 +2928,8 @@ async function leaderboardRequest(req, res) {
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       return res.end(JSON.stringify(challenge));
     } catch (error) {
-      const code = error.message === "RELAY_CHALLENGE_STALE_REVISION" ? "RELAY_STALE_REVISION" : error.message === "RELAY_CHALLENGE_NOT_FOUND" ? "RELAY_NOT_FOUND" : error.message === "RELAY_WORD_REJECTED" ? error.code || "RELAY_WORD_REJECTED" : "RELAY_REQUEST_INVALID";
-      return deny(res, code === "RELAY_NOT_FOUND" ? 404 : 409, code);
+      const code = error.code === DICTIONARY_VERSION_UNAVAILABLE ? DICTIONARY_VERSION_UNAVAILABLE : error.message === RELAY_STORE_UNAVAILABLE ? "RELAY_UNAVAILABLE" : error.message === "RELAY_CHALLENGE_STALE_REVISION" ? "RELAY_STALE_REVISION" : error.message === "RELAY_CHALLENGE_NOT_FOUND" ? "RELAY_NOT_FOUND" : error.message === "RELAY_WORD_REJECTED" ? error.code || "RELAY_WORD_REJECTED" : "RELAY_REQUEST_INVALID";
+      return deny(res, code === "RELAY_NOT_FOUND" ? 404 : code === "RELAY_UNAVAILABLE" ? 503 : 409, code);
     }
   }
   if (url.pathname === "/api/daily-challenge" && req.method === "GET") {
@@ -3327,7 +2947,7 @@ async function leaderboardRequest(req, res) {
         failureCode: error.code || "GENERATION_FAILED",
         diagnostics: error.diagnostics || null,
       }));
-      return deny(res, 503, "DAILY_CHALLENGE_UNAVAILABLE");
+      return deny(res, error.code === DICTIONARY_VERSION_UNAVAILABLE ? 409 : 503, error.code === DICTIONARY_VERSION_UNAVAILABLE ? DICTIONARY_VERSION_UNAVAILABLE : "DAILY_CHALLENGE_UNAVAILABLE");
     }
   }
   if (url.pathname === "/api/daily-challenge/shares" && req.method === "POST") {
@@ -3336,8 +2956,14 @@ async function leaderboardRequest(req, res) {
     const body = await readJson(req);
     let share;
     try {
+      const daily = dailyChallenges.data.dailies[body?.challengeId];
+      if (daily) assertCurrentChallengeDictionary(daily.dictionary);
       share = dailyChallenges.createShare(body);
-    } catch {
+    } catch (error) {
+      if (error.code === DICTIONARY_VERSION_UNAVAILABLE)
+        return deny(res, 409, DICTIONARY_VERSION_UNAVAILABLE);
+      if (error.message === "DAILY_CHALLENGE_STORE_UNAVAILABLE")
+        return deny(res, 503, "DAILY_CHALLENGE_UNAVAILABLE");
       return deny(res, 400, "CHALLENGE_SHARE_INVALID");
     }
     res.writeHead(201, {
@@ -3350,8 +2976,22 @@ async function leaderboardRequest(req, res) {
     if (!rateLimit("challenge-share:" + clientIp(req), 60))
       return deny(res, 429, "RATE_LIMITED");
     const ref = url.pathname.slice("/api/challenges/".length);
-    const shared = dailyChallenges.getShare(ref);
+    let shared;
+    try {
+      shared = dailyChallenges.getShare(ref);
+    } catch (error) {
+      if (error.message === "DAILY_CHALLENGE_STORE_UNAVAILABLE")
+        return deny(res, 503, "DAILY_CHALLENGE_UNAVAILABLE");
+      throw error;
+    }
     if (!shared) return deny(res, 404, "CHALLENGE_NOT_FOUND");
+    try {
+      assertCurrentChallengeDictionary(shared.challenge.dictionary);
+    } catch (error) {
+      if (error.code === DICTIONARY_VERSION_UNAVAILABLE)
+        return deny(res, 409, DICTIONARY_VERSION_UNAVAILABLE);
+      throw error;
+    }
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
@@ -3430,7 +3070,7 @@ async function leaderboardRequest(req, res) {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "public, max-age=86400",
     });
-    return res.end(JSON.stringify({ dictionary: dictionary.metadata, words: dictionary.words }));
+    return res.end(JSON.stringify({ dictionary: dictionary.metadata }));
   }
   if (url.pathname === "/api/word-check" && req.method === "GET") {
     const word = String(url.searchParams.get("word") || "")

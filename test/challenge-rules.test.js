@@ -92,3 +92,31 @@ test("bounty selection is deterministic and claim effects are immutable", () => 
     remainingIndexes: [4, 7],
   });
 });
+
+test("bounty word records reconcile zero, new, multiple, and claimed tiles", () => {
+  const state = { bountyIndexes: [0, 1, 2], claimedIndexes: [] };
+  const zero = rules.bountyClaimEffect(state, [9]);
+  const one = rules.bountyClaimEffect(state, [0]);
+  const multiple = rules.bountyClaimEffect(state, [0, 1, 1, 2]);
+  const alreadyClaimed = rules.bountyClaimEffect(
+    { ...state, claimedIndexes: [0] },
+    [0, 9],
+  );
+  assert.deepEqual(rules.bountyWordRecord("cat", 9, zero.newlyClaimedIndexes), {
+    word: "CAT",
+    basePoints: 9,
+    bonusPoints: 0,
+    points: 9,
+  });
+  assert.equal(rules.bountyWordRecord("CAT", 9, one.newlyClaimedIndexes).points, 34);
+  assert.deepEqual(rules.bountyWordRecord("CAT", 9, multiple.newlyClaimedIndexes), {
+    word: "CAT",
+    basePoints: 9,
+    bonusPoints: 75,
+    points: 84,
+  });
+  assert.equal(
+    rules.bountyWordRecord("CAT", 9, alreadyClaimed.newlyClaimedIndexes).bonusPoints,
+    0,
+  );
+});

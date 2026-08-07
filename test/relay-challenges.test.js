@@ -6,6 +6,7 @@ const test = require("node:test");
 const {
   MAX_STATE_BYTES,
   RelayChallengeStore,
+  STORE_UNAVAILABLE,
 } = require("../relay-challenges");
 
 function fixtureInput(state = { turns: [] }) {
@@ -92,4 +93,38 @@ test("Relay challenge bounds input state and expiry", async () => {
   const now = new Date("2026-08-05T12:00:00.000Z");
   const shortLived = await store.create({ ...fixtureInput(), ttlMs: 1_000 }, now);
   assert.equal(store.get(shortLived.id, new Date(now.valueOf() + 1_000)), null);
+});
+
+test("Relay challenge store initializes an absent file as an available empty store", async () => {
+  const store = temporaryStore();
+  const challenge = await store.create(fixtureInput());
+  assert.equal(typeof challenge.id, "string");
+  assert.equal(store.trusted, true);
+});
+
+test("Relay challenge store stays unavailable and preserves failed-load bytes", async () => {
+  const invalidRecordData = {
+    schemaVersion: 1,
+    challenges: Object.fromEntries([["a".repeat(20), {}]]),
+  };
+  const invalidData = [
+    ["malformed JSON", "{\"schemaVersion\":1"],
+    ["wrong schema", JSON.stringify({ schemaVersion: 99, challenges: {} })],
+    ["invalid record", JSON.stringify(invalidRecordData)],
+  ];
+  for (const [label, bytes] of invalidData) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-relay-invalid-"));
+    const file = path.join(directory, "relay-challenges.json");
+    fs.writeFileSync(file, bytes);
+    const store = new RelayChallengeStore(file);
+    assert.equal(store.trusted, false, label);
+    await assert.rejects(store.create(fixtureInput()), new RegExp(STORE_UNAVAILABLE), label);
+    assert.throws(() => store.get("a".repeat(20)), new RegExp(STORE_UNAVAILABLE), label);
+    await assert.rejects(
+      store.transition("a".repeat(20), 0, () => ({ turns: [] })),
+      new RegExp(STORE_UNAVAILABLE),
+      label,
+    );
+    assert.equal(fs.readFileSync(file, "utf8"), bytes, label);
+  }
 });
