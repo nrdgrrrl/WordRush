@@ -823,6 +823,72 @@ test("restored profile outbox events retry and acknowledge after reload without 
   );
 });
 
+test("profile cancel discards drafts and required username setup cannot be dismissed", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(baseUrl);
+  const originalName = await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).name);
+  await page.locator("#profileButton").click();
+  await page.waitForSelector("#profileDialog[open]");
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      profileCancelOwner: document.querySelector("#profileCancel")?.closest("dialog")?.id,
+      randomRushCloseCount: document.querySelectorAll(
+        '#randomRushChoiceDialog .dialog-head button[value="cancel"]',
+      ).length,
+    })),
+    { profileCancelOwner: "profileDialog", randomRushCloseCount: 1 },
+  );
+  await page.locator("#profileName").fill("Unsaved Player");
+  await page.locator("#profileCancel").click();
+  assert.equal(await page.locator("#profileDialog[open]").count(), 0);
+  assert.equal(
+    await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).name),
+    originalName,
+  );
+
+  const account = {
+    id: "acct_browser-needs-username",
+    username: null,
+    displayName: "Provider Display Name",
+    avatar: "🐈",
+    stats: {},
+    needsUsername: true,
+    provider: "google",
+    providers: ["google"],
+  };
+  let saveCount = 0;
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/migrate", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account }),
+  }));
+  await page.route("**/api/profile", (route) => {
+    saveCount++;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ authenticated: true, account }),
+    });
+  });
+  await page.goto(baseUrl + "/?auth=choose-username");
+  await page.waitForSelector("#profileDialog[open]");
+  await page.locator("#profileName").fill("Not Saved");
+  await page.locator("#profileCancel").click();
+  assert.equal(await page.locator("#profileDialog[open]").count(), 1);
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("#profileDialog[open]").count(), 1);
+  assert.equal(saveCount, 0);
+  await page.locator("#profileLogout").click();
+  await page.waitForFunction(() => document.querySelector("#profileDialog")?.open === false);
+});
+
 test("global scoreboard displays an authoritative multiplayer result and all periods", async () => {
   const host = await wsClient("browser-leaderboard-winner");
   const guest = await wsClient("browser-leaderboard-loser");

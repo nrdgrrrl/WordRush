@@ -759,7 +759,7 @@ async function loadAuthProfile() {
       next.searchParams.delete("auth");
       history.replaceState(history.state, "", next.pathname + next.search + next.hash);
       if (authResult === "signed-in" || authResult === "choose-username") {
-        $("#profileDialog")?.showModal();
+        openProfileDialog();
         if (authResult === "choose-username") $("#profileName")?.focus();
       } else if (authResult !== "complete") {
         toast("Sign-in could not be completed.");
@@ -3154,9 +3154,36 @@ window.wordrushOnlineFinish = (
 const themePreference = localStorage.getItem("wordrush-theme");
 if (themePreference) document.documentElement.dataset.theme = themePreference;
 
-$("#profileButton")?.addEventListener("click", () => {
+let profileDialogSnapshot = null;
+function openProfileDialog() {
+  profileDialogSnapshot = { name: profile.name, avatar: profile.avatar };
   updateIdentity();
-  $("#profileDialog").showModal();
+  $("#profileDialog")?.showModal();
+}
+function restoreProfileDialogSnapshot() {
+  if (!profileDialogSnapshot) return;
+  profile.name = profileDialogSnapshot.name;
+  profile.avatar = profileDialogSnapshot.avatar;
+  profileDialogSnapshot = null;
+  updateIdentity();
+}
+function cancelProfileDialog() {
+  if (authState.account?.needsUsername) {
+    const errorNode = $("#profileError");
+    if (errorNode) errorNode.textContent = "Choose a unique username or sign out to leave setup.";
+    $("#profileName")?.focus();
+    return;
+  }
+  restoreProfileDialogSnapshot();
+  $("#profileDialog")?.close();
+}
+$("#profileButton")?.addEventListener("click", () => {
+  openProfileDialog();
+});
+$("#profileCancel")?.addEventListener("click", cancelProfileDialog);
+$("#profileDialog")?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  cancelProfileDialog();
 });
 $("#avatarPicker")?.addEventListener("click", (event) => {
   const button = event.target.closest?.("[data-avatar]");
@@ -3186,6 +3213,7 @@ async function saveProfile(event) {
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error || "PROFILE_UPDATE_FAILED");
       applyServerAccount(payload.account, false);
+      profileDialogSnapshot = null;
       $("#profileDialog")?.close();
     } catch (error) {
       const errorNode = $("#profileError");
@@ -3199,6 +3227,7 @@ async function saveProfile(event) {
   localStorage.setItem("wordrush-profile", JSON.stringify(profile));
   updateIdentity();
   window.wordrushIdentityChanged?.();
+  profileDialogSnapshot = null;
   $("#profileDialog")?.close();
 }
 $("#profileForm")?.addEventListener("submit", saveProfile);
@@ -3230,6 +3259,7 @@ $("#profileLogout")?.addEventListener("click", async () => {
   profileSyncInFlight = false;
   profileSyncGeneration++;
   profileSyncStatus = "synced";
+  profileDialogSnapshot = null;
   updateAuthUI();
   updateIdentity();
   updateProfile({ sync: false });
