@@ -1064,51 +1064,52 @@ body:has(#homeScreen.active) .site-footer {
 body:has(#homeScreen.active) .site-footer,
 body:has(#statsScreen.active) .site-footer,
 body:has(#achievementsScreen.active) .site-footer,
-body:has(#howToPlayScreen.active) .site-footer {
+body:has(#howToPlayScreen.active) .site-footer,
+body:has(#gameModesScreen.active) .site-footer {
   display: block;
 }
-.how-to-play-screen {
+.content-screen {
   padding-bottom: 10px;
 }
-.how-to-play-screen .game-head {
+.content-screen .game-head {
   align-items: center;
   margin-bottom: 22px;
 }
-.how-to-play-screen .game-head h1 {
+.content-screen .game-head h1 {
   margin: 0;
   font-size: clamp(2rem, 8vw, 2.65rem);
   line-height: .95;
   letter-spacing: -.065em;
 }
-.how-to-play-lede {
+.content-lede {
   margin: 0 0 18px;
   color: #5e5266;
   font-size: 1rem;
   line-height: 1.55;
 }
-.how-to-play-cta {
+.content-cta {
   text-decoration: none;
   margin-bottom: 30px;
 }
-.how-to-play-section {
+.content-section {
   margin: 30px 0 0;
   padding-top: 24px;
   border-top: 2px solid rgba(91, 45, 127, .18);
 }
-.how-to-play-section h2 {
+.content-section h2 {
   margin: 0 0 12px;
   color: #2c1c37;
   font-size: 1.35rem;
   letter-spacing: -.035em;
 }
-.how-to-play-section p,
-.how-to-play-section li {
+.content-section p,
+.content-section li {
   color: #5e5266;
   font-size: .92rem;
   line-height: 1.55;
 }
-.how-to-play-section p { margin: 0 0 12px; }
-.how-to-play-section a {
+.content-section p { margin: 0 0 12px; }
+.content-section a {
   color: #5b2d7f;
   font-weight: 800;
 }
@@ -1138,16 +1139,16 @@ body:has(#howToPlayScreen.active) .site-footer {
 }
 .how-to-play-example p { margin: 6px 0 0; color: #2c1c37; }
 .how-to-play-example b { white-space: nowrap; }
-.how-to-play-note {
+.content-note {
   color: #6e6374 !important;
   font-size: .8rem !important;
 }
-.how-to-play-mode-list {
+.content-mode-list {
   display: grid;
   gap: 8px;
   margin: 16px 0;
 }
-.how-to-play-mode-list article {
+.content-mode-list article {
   display: grid;
   gap: 3px;
   padding: 11px 12px;
@@ -1155,38 +1156,93 @@ body:has(#howToPlayScreen.active) .site-footer {
   border-radius: 10px;
   background: #fff9f0;
 }
-.how-to-play-mode-list strong {
+.content-mode-list strong {
   color: #2c1c37;
   font-size: .88rem;
 }
-.how-to-play-mode-list span {
+.content-mode-list span {
   color: #6e6374;
   font-size: .76rem;
   line-height: 1.4;
 }
-html[data-theme="dark"] .how-to-play-lede,
-html[data-theme="dark"] .how-to-play-section p,
-html[data-theme="dark"] .how-to-play-section li { color: #d1c1d8; }
-html[data-theme="dark"] .how-to-play-section h2,
+html[data-theme="dark"] .content-lede,
+html[data-theme="dark"] .content-section p,
+html[data-theme="dark"] .content-section li { color: #d1c1d8; }
+html[data-theme="dark"] .content-section h2,
 html[data-theme="dark"] .how-to-play-steps strong,
 html[data-theme="dark"] .how-to-play-rule-list strong,
-html[data-theme="dark"] .how-to-play-mode-list strong { color: #fff9f0; }
-html[data-theme="dark"] .how-to-play-mode-list article { background: #242823; border-color: #555b53; }
-html[data-theme="dark"] .how-to-play-mode-list span,
-html[data-theme="dark"] .how-to-play-note { color: #aaa99f !important; }
-html[data-theme="dark"] .how-to-play-section a { color: #f6c85f; }
+html[data-theme="dark"] .content-mode-list strong { color: #fff9f0; }
+html[data-theme="dark"] .content-mode-list article { background: #242823; border-color: #555b53; }
+html[data-theme="dark"] .content-mode-list span,
+html[data-theme="dark"] .content-note { color: #aaa99f !important; }
+html[data-theme="dark"] .content-section a { color: #f6c85f; }
 @media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .how-to-play-lede,
-  html:not([data-theme="light"]) .how-to-play-section p,
-  html:not([data-theme="light"]) .how-to-play-section li { color: #d1c1d8; }
-  html:not([data-theme="light"]) .how-to-play-section h2,
+  html:not([data-theme="light"]) .content-lede,
+  html:not([data-theme="light"]) .content-section p,
+  html:not([data-theme="light"]) .content-section li { color: #d1c1d8; }
+  html:not([data-theme="light"]) .content-section h2,
   html:not([data-theme="light"]) .how-to-play-steps strong,
   html:not([data-theme="light"]) .how-to-play-rule-list strong,
-  html:not([data-theme="light"]) .how-to-play-mode-list strong { color: #fff9f0; }
-  html:not([data-theme="light"]) .how-to-play-mode-list article { background: #242823; border-color: #555b53; }
-  html:not([data-theme="light"]) .how-to-play-mode-list span,
-  html:not([data-theme="light"]) .how-to-play-note { color: #aaa99f !important; }
-  html:not([data-theme="light"]) .how-to-play-section a { color: #f6c85f; }
+  html:not([data-theme="light"]) .content-mode-list strong { color: #fff9f0; }
+  html:not([data-theme="light"]) .content-mode-list article { background: #242823; border-color: #555b53; }
+  html:not([data-theme="light"]) .content-mode-list span,
+  html:not([data-theme="light"]) .content-note { color: #aaa99f !important; }
+  html:not([data-theme="light"]) .content-section a { color: #f6c85f; }
+}
+.mode-overview-list {
+  display: grid;
+  gap: 10px;
+}
+.mode-overview-card {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px;
+  border: 1px solid #d1c1d8;
+  border-radius: 12px;
+  background: #fff9f0;
+}
+.mode-overview-card > div { min-width: 0; }
+.mode-overview-heading {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.mode-overview-heading h3 {
+  margin: 0;
+  color: #2c1c37;
+  font-size: 1rem;
+  letter-spacing: -.02em;
+}
+.mode-overview-heading span {
+  padding: 3px 6px;
+  border-radius: 99px;
+  background: #eaf9d2;
+  color: #2c1c37;
+  font-size: .67rem;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.mode-overview-card p { margin: 0; font-size: .82rem; }
+.content-section .mode-overview-play {
+  flex: none;
+  padding: 7px 9px;
+  border: 1px solid #5b2d7f;
+  border-radius: 8px;
+  text-decoration: none;
+  font-size: .78rem;
+}
+html[data-theme="dark"] .mode-overview-card { background: #242823; border-color: #555b53; }
+html[data-theme="dark"] .mode-overview-heading h3 { color: #fff9f0; }
+html[data-theme="dark"] .mode-overview-heading span { background: #3f5239; color: #fff9f0; }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .mode-overview-card { background: #242823; border-color: #555b53; }
+  html:not([data-theme="light"]) .mode-overview-heading h3 { color: #fff9f0; }
+  html:not([data-theme="light"]) .mode-overview-heading span { background: #3f5239; color: #fff9f0; }
 }
 .progress {
   margin: 30px 0 25px;

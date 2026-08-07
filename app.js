@@ -2879,7 +2879,7 @@ $("#customForm")?.addEventListener("submit", (event) => {
     classic: "CLASSIC",
     minimum: "WORD STRETCH",
     sudden: "SUDDEN DEATH",
-    race: "RACE MODE",
+    race: "RACE TO 500",
     dirty: "DIRTY MODE \u00b7 18+",
   };
   const rule = type === "race"

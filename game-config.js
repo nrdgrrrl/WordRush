@@ -65,7 +65,7 @@
       party: false,
     },
     minimum: {
-      label: "MINIMUM WORD",
+      label: "WORD STRETCH",
       min: 5,
       size: 6,
       seconds: 180,
@@ -93,7 +93,7 @@
       min: 3,
       size: 4,
       seconds: 30,
-      rule: "10 rounds · first rejected word gives a strike",
+      rule: "10 rounds · invalid word gives a strike",
       target: null,
       sudden: true,
       chain: false,
@@ -102,7 +102,7 @@
       series: true,
     },
     race: {
-      label: "RACE MODE",
+      label: "RACE TO 500",
       min: 3,
       size: 4,
       seconds: 240,
