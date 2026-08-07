@@ -47,6 +47,7 @@
       key: "gameModes",
       path: "/game-modes",
       screen: "gameModesScreen",
+      contentPage: "game-modes",
       title: "WordRush Game Modes — Find Your Next Game",
       description:
         "Explore WordRush game modes, from solo word challenges to multiplayer games with friends.",
@@ -56,6 +57,7 @@
       key: "howToPlay",
       path: "/how-to-play",
       screen: "howToPlayScreen",
+      contentPage: "how-to-play",
       title: "How to Play WordRush — Rules and Scoring",
       description:
         "Learn how to trace words, score points, and play solo or multiplayer in WordRush.",
@@ -280,6 +282,12 @@
     return routeForPath(pathname) || HOME;
   }
 
+  const contentPages = new Map(
+    Object.values(PAGES)
+      .filter((route) => route.contentPage)
+      .map((route) => [route.path, route.contentPage]),
+  );
+
   return Object.freeze({
     HOME,
     PAGES: Object.freeze(PAGES),
@@ -289,5 +297,6 @@
     routeForPath,
     routeForMode,
     seoForPath,
+    contentPages,
   });
 });

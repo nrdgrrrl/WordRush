@@ -186,6 +186,7 @@ function staticCacheControl(requested) {
   return "public, max-age=3600, stale-while-revalidate=86400";
 }
 const appDocument = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+const siteFooterHtml = fs.readFileSync(path.join(__dirname, "site-footer.html"), "utf8").trim();
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -225,6 +226,85 @@ function sendAppDocument(res, pathname) {
     "Cache-Control": "no-cache",
   });
   res.end(renderAppDocument(pathname));
+}
+function renderContentDocument(pathname) {
+  const route = wordrushRoutes.seoForPath(pathname);
+  const fragmentName = wordrushRoutes.contentPages.get(route.path);
+  if (!fragmentName) return null;
+  const fragmentPath = path.join(__dirname, "content", fragmentName + ".html");
+  let contentBody;
+  try {
+    contentBody = fs.readFileSync(fragmentPath, "utf8");
+  } catch {
+    return null;
+  }
+  const title = escapeHtml(route.title);
+  const description = escapeHtml(route.description);
+  const canonical = escapeHtml("https://wordrush.party" + route.path);
+  return [
+    '<!doctype html>',
+    '<html lang="en">',
+    '<head>',
+    '<meta charset="UTF-8" />',
+    '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />',
+    '<title>' + title + '</title>',
+    '<meta name="description" content="' + description + '" />',
+    '<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />',
+    '<meta name="theme-color" content="#f5f3ee" />',
+    '<link rel="canonical" href="' + canonical + '" />',
+    '<link rel="icon" href="/favicon.svg" type="image/svg+xml" />',
+    '<link rel="manifest" href="/manifest.webmanifest" />',
+    '<meta property="og:type" content="website" />',
+    '<meta property="og:site_name" content="Wordrush" />',
+    '<meta property="og:url" content="' + canonical + '" />',
+    '<meta property="og:title" content="' + title + '" />',
+    '<meta property="og:description" content="' + description + '" />',
+    '<meta property="og:image" content="https://wordrush.party/assets/cat-rush.png" />',
+    '<meta property="og:image:type" content="image/png" />',
+    '<meta property="og:image:width" content="1536" />',
+    '<meta property="og:image:height" content="1024" />',
+    '<meta property="og:image:alt" content="Wordrush word game board with playful cats" />',
+    '<meta name="twitter:card" content="summary_large_image" />',
+    '<meta name="twitter:title" content="' + title + '" />',
+    '<meta name="twitter:description" content="' + description + '" />',
+    '<meta name="twitter:image" content="https://wordrush.party/assets/cat-rush.png" />',
+    '<meta name="twitter:image:alt" content="Wordrush word game board with playful cats" />',
+    '<link rel="stylesheet" href="/styles.css" />',
+    '<link rel="stylesheet" href="/stats.css" />',
+    '<link rel="stylesheet" href="/custom.css" />',
+    '<link rel="stylesheet" href="/multiplayer.css" />',
+    '</head>',
+    '<body>',
+    '<main class="app-shell">',
+    '<div class="screen active content-screen">',
+    contentBody,
+    '</div>',
+    '<nav>',
+    '<a class="active" href="/"><small>Home</small></a>',
+    '<a href="/stats"><small>Stats</small></a>',
+    '<a href="/progress"><small>Progress</small></a>',
+    '</nav>',
+    '<div data-site-footer></div>',
+    '</main>',
+    '<script src="/site-routes.js"></script>',
+    '<script src="/analytics.js"></script>',
+    '<script src="/site-footer.js"></script>',
+    '</body>',
+    '</html>',
+  ].join("\n");
+}
+function sendContentDocument(res, pathname) {
+  const html = renderContentDocument(pathname);
+  if (!html) {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    return res.end("Not found");
+  }
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-cache",
+  });
+  res.end(html);
 }
 function securityHeaders(res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -2316,8 +2396,11 @@ const server = http.createServer((req, res) => {
     pathname === "/" ||
     pathname === "/index.html" ||
     wordrushRoutes.routeForPath(pathname)
-  )
+  ) {
+    if (wordrushRoutes.contentPages.has(pathname))
+      return sendContentDocument(res, pathname);
     return sendAppDocument(res, pathname === "/index.html" ? "/" : pathname);
+  }
   if (pathname === "/dictionary.json") {
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
