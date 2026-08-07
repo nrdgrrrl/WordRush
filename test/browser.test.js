@@ -240,6 +240,81 @@ test("public routes update the URL and browser Back stays inside the app", async
   await browser.close();
 });
 
+test("multiplayer game routes preselect their mode without starting and allow a manual override", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(baseUrl + "/games/room-heist");
+    await page.waitForSelector("#multiplayerDialog[open]");
+    assert.equal(new URL(page.url()).pathname, "/games/room-heist");
+    assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+    await page.locator("#sessionCreate").click();
+    await page.waitForSelector("#sessionLobby:not([hidden])");
+    assert.equal(await page.locator("#sessionType").inputValue(), "heist");
+    assert.equal(await page.locator("#sessionStart").isVisible(), true);
+    assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+
+    await page.locator("#sessionType").selectOption("classic");
+    assert.equal(
+      await page.evaluate(() => window.wordrushPendingMultiplayerMode),
+      "classic",
+    );
+    await page.reload();
+    await page.waitForSelector("#sessionLobby:not([hidden])");
+    assert.equal(await page.locator("#sessionType").inputValue(), "classic");
+
+    await page.goto(baseUrl + "/games/sudden-death-series");
+    await page.waitForSelector("#sessionLobby:not([hidden])");
+    assert.equal(await page.locator("#sessionType").inputValue(), "sudden_series");
+    assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+
+    await page.goto(baseUrl + "/multiplayer");
+    await page.waitForSelector("#sessionLobby:not([hidden])");
+    assert.equal(await page.locator("#sessionType").inputValue(), "classic");
+
+    await page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#sessionLeave").click();
+    await page.waitForFunction(() => document.querySelector("#multiplayerBanner").hidden);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Sudden Death Series multiplayer route preselects its lobby mode", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(baseUrl + "/games/sudden-death-series");
+    await page.waitForSelector("#multiplayerDialog[open]");
+    await page.locator("#sessionCreate").click();
+    await page.waitForSelector("#sessionLobby:not([hidden])");
+    assert.equal(await page.locator("#sessionType").inputValue(), "sudden_series");
+    assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+    await page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#sessionLeave").click();
+    await page.waitForFunction(() => document.querySelector("#multiplayerBanner").hidden);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("generic multiplayer keeps Classic as the new-room default", async () => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(baseUrl + "/multiplayer");
+    await page.waitForSelector("#multiplayerDialog[open]");
+    await page.locator("#sessionCreate").click();
+    await page.waitForSelector("#sessionLobby:not([hidden])");
+    assert.equal(await page.locator("#sessionType").inputValue(), "classic");
+    await page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#sessionLeave").click();
+    await page.waitForFunction(() => document.querySelector("#multiplayerBanner").hidden);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("mobile play board stays within its available space on short screens", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   for (const viewport of [

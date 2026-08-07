@@ -1672,6 +1672,7 @@ function launchAppRoute(route) {
   if (route.launcher === "party") return openParty();
   if (route.launcher === "custom") return openRushBuilder();
   if (route.launcher === "multiplayer") {
+    window.wordrushPendingMultiplayerMode = route.mode || null;
     window.wordrushOpenMultiplayerRoute = true;
     document.dispatchEvent(new CustomEvent("wordrush:open-multiplayer"));
     return;
@@ -1694,6 +1695,11 @@ function navigateAppRoute(route) {
   }
   abandonForRouteNavigation();
   show(route.screen, { routeMode: "none" });
+  if (route.open === "multiplayer") {
+    window.wordrushPendingMultiplayerMode = null;
+    window.wordrushOpenMultiplayerRoute = true;
+    document.dispatchEvent(new CustomEvent("wordrush:open-multiplayer"));
+  }
   document.dispatchEvent(new CustomEvent("wordrush:route-change", { detail: route }));
 }
 
@@ -2832,8 +2838,10 @@ function initializeAppRoute() {
     launchAppRoute(route);
   } else {
     show(route.screen, { routeMode: "none" });
-    if (route.open === "multiplayer")
+    if (route.open === "multiplayer") {
+      window.wordrushPendingMultiplayerMode = null;
       window.wordrushOpenMultiplayerRoute = true;
+    }
   }
 }
 initializeAppRoute();

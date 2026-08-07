@@ -29,6 +29,7 @@
   let scannerFrame = 0;
   let scannerRun = 0;
   let randomRushChoice = null;
+  const lobbyModeOverrideKey = (code) => "wordrush-multiplayer-mode:" + code;
   const $ = (selector) => document.querySelector(selector);
   const goHome = () =>
     document.querySelector('[data-screen="homeScreen"]')?.click();
@@ -188,6 +189,7 @@
     reconnectTimer = null;
     reconnectAttempts = 0;
     if (code) endedSessionCode = code;
+    if (code) sessionStorage.removeItem(lobbyModeOverrideKey(code));
     sessionCode = "";
     window.wordrushSessionCode = "";
     delete window.wordrushCanSetResultsSettings;
@@ -436,6 +438,31 @@
     $("#sessionLobby").hidden = false;
     sessionDialog();
   }
+  function applyPendingRouteMode() {
+    const select = $("#sessionType");
+    let savedOverride = null;
+    if (sessionCode) {
+      try {
+        const stored = JSON.parse(
+          sessionStorage.getItem(lobbyModeOverrideKey(sessionCode)) || "null",
+        );
+        if (stored?.path === location.pathname && typeof stored.mode === "string")
+          savedOverride = stored.mode;
+      } catch {
+        // Ignore an invalid preference and use the current route default.
+      }
+    }
+    const mode = savedOverride || window.wordrushPendingMultiplayerMode;
+    if (!select) return;
+    if (!mode) {
+      window.wordrushPendingMultiplayerMode = null;
+      select.value = "classic";
+      return;
+    }
+    if (!select.querySelector(`option[value="${mode}"]`)) return;
+    window.wordrushPendingMultiplayerMode = mode;
+    select.value = mode;
+  }
   function showLobby(code, isCreator) {
     pendingSession = false;
     sessionCode = code;
@@ -448,6 +475,7 @@
     $("#sessionCode").textContent = code;
     $("#sessionQr").src = "/qr.svg?join=" + encodeURIComponent(code);
     $("#sessionQr").alt = "QR code to join Wordrush room " + code;
+    applyPendingRouteMode();
     updateLobbyControls();
     window.dispatchEvent(new CustomEvent("wordrush:room-change"));
   }
@@ -593,6 +621,7 @@
           showLobby(message.code, message.creatorId === guestId);
         else
           window.dispatchEvent(new CustomEvent("wordrush:room-change"));
+        if (message.status === "lobby") applyPendingRouteMode();
         if (message.round && message.status === "playing") {
           const cfg = message.config ||
             (window.WordrushConfig?.configForPreset?.(message.mode)) || {
@@ -913,8 +942,14 @@
     if (detail?.key === "multiplayer") sessionDialog();
     else if (dialog.open) sessionDialog(false);
   });
-  document.addEventListener("wordrush:open-multiplayer", () => sessionDialog());
-  if (window.wordrushOpenMultiplayerRoute) sessionDialog();
+  document.addEventListener("wordrush:open-multiplayer", () => {
+    applyPendingRouteMode();
+    sessionDialog();
+  });
+  if (window.wordrushOpenMultiplayerRoute) {
+    applyPendingRouteMode();
+    sessionDialog();
+  }
   $("#multiplayerShare")?.addEventListener("click", () => {
     if (sessionCode) sessionDialog();
   });
@@ -944,6 +979,15 @@
     const mode = $("#sessionType").value;
     trackMultiplayer("start_requested", { mode });
     window.wordrushStartSessionGame({ mode, randomRush: mode === "random" });
+  });
+  $("#sessionType")?.addEventListener("change", (event) => {
+    const mode = event.target.value || null;
+    window.wordrushPendingMultiplayerMode = mode;
+    if (sessionCode && mode)
+      sessionStorage.setItem(
+        lobbyModeOverrideKey(sessionCode),
+        JSON.stringify({ mode, path: location.pathname }),
+      );
   });
   function requestLeave() {
     if (
