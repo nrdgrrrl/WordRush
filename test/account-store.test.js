@@ -56,6 +56,47 @@ test("guest migration and profile events are durable and idempotent", () => {
   assert.deepEqual(reloaded.get(account.id).stats.rounds, 2);
 });
 
+test("failed account creation leaves memory and disk unchanged", () => {
+  const accounts = store();
+  const originalSave = accounts.save;
+  accounts.save = () => { throw new Error("storage unavailable"); };
+
+  assert.throws(
+    () => accounts.ensureProviderAccount("google", "google-failed", { displayName: "Player" }),
+    /storage unavailable/,
+  );
+  assert.equal(accounts.getByProvider("google", "google-failed"), null);
+  assert.equal(fs.existsSync(accounts.file), false);
+
+  accounts.save = originalSave;
+  const recovered = accounts.ensureProviderAccount("google", "google-failed", { displayName: "Player" });
+  assert.equal(new AccountStore(accounts.file).get(recovered.id).id, recovered.id);
+});
+
+test("failed profile event remains retryable and is persisted exactly once", () => {
+  const accounts = store();
+  const account = accounts.ensureProviderAccount("google", "google-retry", { displayName: "Player" });
+  const beforeDisk = fs.readFileSync(accounts.file, "utf8");
+  const originalSave = accounts.save;
+  accounts.save = () => { throw new Error("storage unavailable"); };
+
+  assert.throws(
+    () => accounts.applyEvent(account.id, "event-retry", { score: 8, words: 2, rounds: 1 }),
+    /storage unavailable/,
+  );
+  assert.equal(accounts.get(account.id).stats.score, 0);
+  assert.equal(accounts.get(account.id).appliedEventIds["event-retry"], undefined);
+  assert.equal(fs.readFileSync(accounts.file, "utf8"), beforeDisk);
+
+  accounts.save = originalSave;
+  accounts.applyEvent(account.id, "event-retry", { score: 8, words: 2, rounds: 1 });
+  accounts.applyEvent(account.id, "event-retry", { score: 8, words: 2, rounds: 1 });
+  const recovered = new AccountStore(accounts.file).get(account.id);
+  assert.equal(recovered.stats.score, 8);
+  assert.equal(recovered.stats.words, 2);
+  assert.equal(Object.keys(recovered.appliedEventIds).filter((id) => id === "event-retry").length, 1);
+});
+
 test("profile deltas preserve max values and additive counters", () => {
   const base = { score: 10, words: 2, longest: 4, maxGridWin: 4, days: ["2026-08-05"] };
   const current = { score: 18, words: 3, longest: 6, maxGridWin: 5, days: ["2026-08-05", "2026-08-06"] };
