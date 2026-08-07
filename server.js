@@ -495,6 +495,17 @@ function rejectDetachedRoundParticipant(room, client, ws) {
   send(ws, { type: "error", code: ROUND_PARTICIPANT_RESERVED });
   return true;
 }
+function rejectHeistAdmission(room, client, ws) {
+  if (
+    room.status !== "playing" ||
+    room.mode !== "heist" ||
+    !room.round?.heist ||
+    room.round.participants.has(client.id)
+  )
+    return false;
+  send(ws, { type: "error", code: "HEIST_ROSTER_FROZEN" });
+  return true;
+}
 function createPlayer(room, client, ws) {
   return {
     ...client,
@@ -511,6 +522,7 @@ function createPlayer(room, client, ws) {
 }
 function admitPlayerToRoom(room, client, ws) {
   if (rejectDetachedRoundParticipant(room, client, ws)) return null;
+  if (rejectHeistAdmission(room, client, ws)) return null;
   const player = createPlayer(room, client, ws);
   room.players.set(client.id, player);
   if (room.status === "playing" && room.round)
@@ -1388,6 +1400,32 @@ async function startRound(
       });
     if (!validConsent) return;
   }
+  let heistState = null;
+  if (selected === "heist") {
+    const players = [...room.players.keys()];
+    const assignments = [
+      { id: "sun", playerIds: players.filter((_, index) => index % 2 === 0) },
+      { id: "moon", playerIds: players.filter((_, index) => index % 2 === 1) },
+    ];
+    const valid = validateTeamAssignments(players, assignments);
+    if (!valid.valid) {
+      send(room.players.get(room.creatorId)?.ws, {
+        type: "error",
+        code: "HEIST_INVALID_ROSTER",
+        reason: valid.reason,
+        minimumPlayers: 2,
+      });
+      return false;
+    }
+    heistState = {
+      teams: valid.teams,
+      teamByPlayer: Object.fromEntries(
+        valid.teams.flatMap((team) => team.playerIds.map((id) => [id, team.id])),
+      ),
+      teamScores: { sun: 0, moon: 0 },
+      claims: [],
+    };
+  }
   clearRoomTimer(room);
   const contract = boardGenerationContract(config, dictionaryId);
   const dictionary = contract.dictionary;
@@ -1506,22 +1544,7 @@ async function startRound(
     seriesParticipantIds: series
       ? seriesRoundPlayers.map(([id]) => id)
       : [],
-    ...(selected === "heist"
-      ? {
-          heist: (() => {
-            const players = [...room.players.keys()];
-            const teams = [
-              { id: "sun", playerIds: players.filter((_, index) => index % 2 === 0) },
-              { id: "moon", playerIds: players.filter((_, index) => index % 2 === 1) },
-            ];
-            const valid = validateTeamAssignments(players, teams);
-            const teamByPlayer = Object.fromEntries(
-              valid.teams.flatMap((team) => team.playerIds.map((id) => [id, team.id])),
-            );
-            return { teams: valid.teams, teamByPlayer, teamScores: { sun: 0, moon: 0 }, claims: [] };
-          })(),
-        }
-      : {}),
+    ...(heistState ? { heist: heistState } : {}),
     ...(selected === "bounty"
       ? {
           bounty: {
@@ -2056,8 +2079,9 @@ async function handle(ws, message) {
         code: seriesParticipant(room, client.id)?.status === "withdrawn"
           ? "SERIES_PARTICIPANT_WITHDRAWN"
           : "SERIES_ROSTER_FROZEN",
-      });
+        });
     }
+    if (rejectHeistAdmission(room, client, ws)) return;
     if (rejectDetachedRoundParticipant(room, client, ws)) return;
     if (room.players.size >= MAX_PLAYERS)
       return send(ws, { type: "error", code: "ROOM_FULL" });
@@ -2123,6 +2147,7 @@ async function handle(ws, message) {
           });
           return null;
         }
+        if (rejectHeistAdmission(targetRoom, challengeClient, ws)) return null;
         if (rejectDetachedRoundParticipant(targetRoom, challengeClient, ws)) return null;
         if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
         challengeClient.roomCode = targetRoom.code;
@@ -2176,6 +2201,7 @@ async function handle(ws, message) {
 
       function admitNormalJoin() {
         if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
+        if (rejectHeistAdmission(targetRoom, challengeClient, ws)) return null;
         if (rejectDetachedRoundParticipant(targetRoom, challengeClient, ws)) return null;
         if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
         challengeClient.roomCode = targetRoom.code;

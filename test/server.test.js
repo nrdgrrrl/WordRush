@@ -669,6 +669,71 @@ test("Bounty Tiles and Room Heist keep challenge scoring authoritative", async (
   guest.close();
 });
 
+test("Room Heist rejects invalid starts, freezes new admissions, and preserves assigned reconnects", async () => {
+  const host = await client("heist-roster-host");
+  const createdPromise = next(host, "room_created");
+  message(host, "create_room");
+  const created = await createdPromise;
+
+  const invalidStart = next(host, "error");
+  message(host, "start_game", { mode: "heist" });
+  assert.equal((await invalidStart).code, "HEIST_INVALID_ROSTER");
+  assert.equal(rooms.get(created.code).status, "lobby");
+
+  const guest = await client("heist-roster-guest");
+  const joined = next(guest, "joined_room");
+  message(guest, "join_room", { code: created.code, name: "heist-roster-guest" });
+  const joinedResult = await joined;
+  const guestToken = joinedResult.reconnectToken;
+
+  const started = next(host, "round_started");
+  message(host, "start_game", { mode: "heist" });
+  await started;
+  const room = rooms.get(created.code);
+  assert.deepEqual(Object.keys(room.round.heist.teamByPlayer).sort(), [
+    "heist-roster-guest",
+    "heist-roster-host",
+  ]);
+  assert.equal(room.round.heist.teamByPlayer["heist-roster-host"], "sun");
+  assert.equal(room.round.heist.teamByPlayer["heist-roster-guest"], "moon");
+
+  const late = await client("heist-roster-late");
+  const lateError = next(late, "error");
+  message(late, "join_room", { code: created.code, name: "heist-roster-late" });
+  assert.equal((await lateError).code, "HEIST_ROSTER_FROZEN");
+  assert.equal(room.players.has("heist-roster-late"), false);
+
+  const disconnected = nextMatching(host, "room_state", (state) =>
+    state.players.some((player) =>
+      player.id === "heist-roster-guest" && player.connected === false,
+    ),
+  );
+  guest.close();
+  await disconnected;
+
+  const reconnected = await client("heist-roster-guest");
+  const resumed = next(reconnected, "room_resumed");
+  const resumedState = next(reconnected, "room_state");
+  message(reconnected, "resume_room", {
+    code: created.code,
+    reconnectToken: guestToken,
+  });
+  await resumed;
+  await resumedState;
+  assert.equal(room.round.participants.has("heist-roster-guest"), true);
+  assert.equal(room.round.heist.teamByPlayer["heist-roster-guest"], "moon");
+
+  const finished = finishTestRound(host, [host, reconnected]);
+  const result = await finished;
+  assert.deepEqual(result.ranking.map((player) => player.id).sort(), [
+    "heist-roster-guest",
+    "heist-roster-host",
+  ]);
+  assert.equal(result.ranking.every((player) => player.words.length === 0), true);
+  await closeTestRoom(host, [host, reconnected]);
+  late.close();
+});
+
 test("solo and multiplayer rounds use the same server generator contract", async () => {
   const contracts = [];
   const results = [];
