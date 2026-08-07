@@ -42,6 +42,15 @@
       description:
         "Create or join a Wordrush multiplayer room and play fast word games with friends.",
     },
+    gameModes: {
+      kind: "page",
+      key: "gameModes",
+      path: "/game-modes",
+      screen: "gameModesScreen",
+      title: "WordRush Game Modes — Find Your Next Game",
+      description:
+        "Explore WordRush game modes, from solo word challenges to multiplayer games with friends.",
+    },
     howToPlay: {
       kind: "page",
       key: "howToPlay",
@@ -173,7 +182,7 @@
       path: "/games/dirty",
       title: "Dirty Mode — Wordrush After Dark",
       description:
-        "Opt in to Dirty Mode, Wordrush’s adult-dictionary word game.",
+        "Play Dirty Mode, Wordrush’s 18+ adult-dictionary word game.",
     },
     race: {
       kind: "game",
@@ -244,6 +253,7 @@
     PAGES.stats,
     PAGES.progress,
     PAGES.multiplayer,
+    PAGES.gameModes,
     PAGES.howToPlay,
     ...Object.values(GAMES),
   ]);

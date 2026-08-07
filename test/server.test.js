@@ -321,6 +321,7 @@ test("serves SEO app routes and redirects transient game screens", async () => {
     ["/stats", "Wordrush Stats"],
     ["/progress", "Wordrush Progress"],
     ["/multiplayer", "Wordrush Multiplayer"],
+    ["/game-modes", "WordRush Game Modes"],
     ["/how-to-play", "How to Play WordRush"],
     ["/games/classic", "Classic — Two Minutes"],
     ["/games/random-rush", "Random Rush"],
@@ -359,8 +360,20 @@ test("serves SEO app routes and redirects transient game screens", async () => {
   );
   assert.match(howToPlay, /<h1>How to Play WordRush<\/h1>/);
   assert.doesNotMatch(howToPlay, /<title>Wordrush — Fast Online Word Game<\/title>/);
+  const gameModes = await (await fetch(origin + "/game-modes")).text();
+  assert.match(
+    gameModes,
+    /<meta\s+name="description"\s+content="Explore WordRush game modes, from solo word challenges to multiplayer games with friends\."/,
+  );
+  assert.match(
+    gameModes,
+    /<meta property="og:title" content="WordRush Game Modes — Find Your Next Game"/,
+  );
+  assert.match(gameModes, /<h1>WordRush Game Modes<\/h1>/);
+  assert.doesNotMatch(gameModes, /<title>Wordrush — Fast Online Word Game<\/title>/);
   const sitemap = await (await fetch(origin + "/sitemap.xml")).text();
   assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/how-to-play<\/loc>/);
+  assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/game-modes<\/loc>/);
   const transient = await fetch(origin + "/results", { redirect: "manual" });
   assert.equal(transient.status, 302);
   assert.equal(transient.headers.get("location"), "/");
