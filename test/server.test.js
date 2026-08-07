@@ -382,6 +382,7 @@ test("serves standalone evergreen documents, gameplay SPA routes, and redirects 
     assert.match(body, new RegExp('<body class="content-document" data-page="' + contentRoute.page + '"'));
     assert.match(body, new RegExp("<h1>" + contentRoute.h1 + "<\\/h1>"));
     assert.match(body, /<footer class="site-footer">/);
+    assert.match(body, /<script src="\/theme-bootstrap\.js"><\/script>/);
     assert.match(body, /<script src="\/analytics\.js"><\/script>/);
     for (const excluded of [
       "homeScreen",
@@ -396,6 +397,9 @@ test("serves standalone evergreen documents, gameplay SPA routes, and redirects 
     }
     assert.doesNotMatch(body, /src="\/(?:app|multiplayer-client|results)\.js"/, contentRoute.path + " ships gameplay JavaScript");
   }
+  const themeBootstrap = await fetch(origin + "/theme-bootstrap.js");
+  assert.equal(themeBootstrap.status, 200);
+  assert.match(await themeBootstrap.text(), /localStorage\.getItem\("wordrush-theme"\)/);
   const root = await (await fetch(origin + "/")).text();
   assert.match(root, /id="homeScreen"/);
   assert.match(root, /<script src="\/app\.js"><\/script>/);

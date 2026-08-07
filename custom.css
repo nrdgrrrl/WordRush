@@ -1071,6 +1071,9 @@ body:has(#achievementsScreen.active) .site-footer,
 .content-page {
   padding-bottom: 10px;
 }
+.content-page {
+  padding-top: 35px;
+}
 .content-screen .game-head,
 .content-page .game-head {
   align-items: center;

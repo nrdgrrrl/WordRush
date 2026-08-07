@@ -148,3 +148,15 @@ test("standalone content identity is available to shared analytics", () => {
     /document\.querySelector\("\.screen\.active"\)\?\.id \|\| document\.body\.dataset\.page/,
   );
 });
+
+test("standalone content shell preserves spacing and explicit theme preference", () => {
+  const shell = fs.readFileSync(path.join(__dirname, "..", "content-document.html"), "utf8");
+  const contentStyles = fs.readFileSync(path.join(__dirname, "..", "custom.css"), "utf8");
+  const themeBootstrap = fs.readFileSync(path.join(__dirname, "..", "theme-bootstrap.js"), "utf8");
+
+  assert.match(shell, /<script src="\/theme-bootstrap\.js"><\/script>/);
+  assert.ok(shell.indexOf('/theme-bootstrap.js') < shell.indexOf('/styles.css'));
+  assert.match(contentStyles, /\.content-page\s*\{\s*padding-top: 35px;/);
+  assert.match(themeBootstrap, /localStorage\.getItem\("wordrush-theme"\)/);
+  assert.match(themeBootstrap, /document\.documentElement\.dataset\.theme = themePreference/);
+});
