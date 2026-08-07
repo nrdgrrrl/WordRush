@@ -100,3 +100,14 @@ test("approved public names align without changing their route paths", () => {
   assert.match(routes.GAMES.minimum.title, /Word Stretch/);
   assert.match(routes.GAMES.race.title, /Race to 500/);
 });
+
+test("Sudden Death Series copy preserves the duplicate exception", () => {
+  const index = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+
+  assert.equal(
+    MODE_CONFIG.sudden_series.rule,
+    "10 rounds · invalid word gives a strike",
+  );
+  assert.match(index, /An invalid non-duplicate word gives a strike/);
+  assert.doesNotMatch(index, /A rejected word gives a strike/);
+});

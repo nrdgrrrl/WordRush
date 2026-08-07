@@ -93,7 +93,7 @@
       min: 3,
       size: 4,
       seconds: 30,
-      rule: "10 rounds · first rejected word gives a strike",
+      rule: "10 rounds · invalid word gives a strike",
       target: null,
       sudden: true,
       chain: false,
