@@ -180,18 +180,18 @@
       key: "race",
       mode: "race",
       path: "/games/race",
-      title: "Race Mode — First to 500 Points | Wordrush",
+      title: "Race to 500 — First to 500 Points | Wordrush",
       description:
-        "Race to 500 points in this fast Wordrush competitive word game.",
+        "Play Race to 500 and be the first to reach 500 points in Wordrush.",
     },
     minimum: {
       kind: "game",
       key: "minimum",
       mode: "minimum",
       path: "/games/minimum-word",
-      title: "Minimum Word — Big-Word Wordrush Challenge",
+      title: "Word Stretch — Big-Word Wordrush Challenge",
       description:
-        "Find five-letter words and longer on a bigger board in Wordrush Minimum Word.",
+        "Find five-letter words and longer on a bigger board in Wordrush Word Stretch.",
     },
     blitz: {
       kind: "game",

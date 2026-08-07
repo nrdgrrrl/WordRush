@@ -65,7 +65,7 @@
       party: false,
     },
     minimum: {
-      label: "MINIMUM WORD",
+      label: "WORD STRETCH",
       min: 5,
       size: 6,
       seconds: 180,
@@ -102,7 +102,7 @@
       series: true,
     },
     race: {
-      label: "RACE MODE",
+      label: "RACE TO 500",
       min: 3,
       size: 4,
       seconds: 240,
