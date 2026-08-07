@@ -1100,6 +1100,218 @@ test("restored profile outbox events retry and acknowledge after reload without 
   );
 });
 
+test("successful replay restores queued profile progress after sign-out and re-login", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const accountId = "acct_browser-replay-after-logout";
+  const account = {
+    id: accountId,
+    username: "ReplayPlayer",
+    displayName: "Replay Player",
+    avatar: "🐈",
+    stats: { score: 0, words: 0, rounds: 0 },
+    needsUsername: false,
+    provider: "google",
+    providers: ["google"],
+  };
+  const event = {
+    accountId,
+    eventId: "replay-after-logout-1",
+    delta: { score: 9, words: 1, rounds: 1 },
+    snapshot: { score: 9, words: 1, rounds: 1 },
+  };
+  let eventAttempts = 0;
+  await page.addInitScript((seed) => {
+    localStorage.setItem("wordrush-profile", JSON.stringify({
+      accountId: seed.accountId,
+      score: 9,
+      words: 1,
+      rounds: 1,
+      name: "ReplayPlayer",
+      avatar: "🐈",
+    }));
+    localStorage.setItem("wordrush-profile-outbox", JSON.stringify({
+      version: 1,
+      events: [seed.event],
+    }));
+  }, { accountId, event });
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/migrate", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account }),
+  }));
+  await page.route("**/api/profile/event", (route) => {
+    eventAttempts++;
+    if (eventAttempts === 1) return route.abort("failed");
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        authenticated: true,
+        account: { ...account, stats: { score: 9, words: 1, rounds: 1 } },
+      }),
+    });
+  });
+  await page.goto(baseUrl);
+  await page.waitForFunction(() => document.querySelector("#profileAuthStatus")?.textContent.includes("not synced"));
+  await page.locator("#profileButton").click();
+  await page.locator("#profileLogout").click();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("wordrush-profile")).accountId === "");
+  await page.reload();
+  await page.waitForFunction(() => localStorage.getItem("wordrush-profile-outbox") === null);
+  assert.equal(await page.locator("#homeScore").textContent(), "9");
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).score), 9);
+  assert.equal(eventAttempts, 2);
+});
+
+test("a stale replay response cannot restore progress after switching accounts", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const accountA = {
+    id: "acct_browser-stale-a",
+    username: "PlayerA",
+    displayName: "Player A",
+    avatar: "🐈",
+    stats: { score: 0 },
+    needsUsername: false,
+    provider: "google",
+    providers: ["google"],
+  };
+  const accountB = {
+    ...accountA,
+    id: "acct_browser-stale-b",
+    username: "PlayerB",
+    displayName: "Player B",
+    stats: { score: 2 },
+  };
+  const event = {
+    accountId: accountA.id,
+    eventId: "stale-replay-1",
+    delta: { score: 9 },
+    snapshot: { score: 9 },
+  };
+  let currentAccount = accountA;
+  let releaseStaleResponse;
+  await page.addInitScript((seed) => {
+    localStorage.setItem("wordrush-profile", JSON.stringify({
+      accountId: seed.accountId,
+      score: 9,
+      name: "PlayerA",
+      avatar: "🐈",
+    }));
+    localStorage.setItem("wordrush-profile-outbox", JSON.stringify({
+      version: 1,
+      events: [seed.event],
+    }));
+  }, { accountId: accountA.id, event });
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account: currentAccount, providers: currentAccount.providers }),
+  }));
+  await page.route("**/api/profile/event", (route) => new Promise((resolve) => {
+    releaseStaleResponse = async () => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ authenticated: true, account: { ...accountA, stats: { score: 9 } } }),
+      });
+      resolve();
+    };
+  }));
+  await page.route("**/api/profile/migrate", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account: currentAccount }),
+  }));
+  await page.goto(baseUrl);
+  await page.waitForRequest("**/api/profile/event");
+  await page.locator("#profileButton").click();
+  await page.locator("#profileLogout").click();
+  currentAccount = accountB;
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector("#profileLogout")?.hidden === false);
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).accountId), accountB.id);
+  assert.equal(await page.locator("#homeScore").textContent(), "2");
+  await releaseStaleResponse();
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).accountId), accountB.id);
+  assert.equal(await page.locator("#homeScore").textContent(), "2");
+});
+
+test("newer queued profile progress stays visible when an earlier replay succeeds", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const account = {
+    id: "acct_browser-replay-order",
+    username: "ReplayOrder",
+    displayName: "Replay Order",
+    avatar: "🐈",
+    stats: { score: 0, words: 0 },
+    needsUsername: false,
+    provider: "google",
+    providers: ["google"],
+  };
+  const firstEvent = {
+    accountId: account.id,
+    eventId: "replay-order-a",
+    delta: { score: 9, words: 1 },
+    snapshot: { score: 9, words: 1 },
+  };
+  const secondEvent = {
+    accountId: account.id,
+    eventId: "replay-order-b",
+    delta: { score: 5, words: 1 },
+    snapshot: { score: 14, words: 2 },
+  };
+  await page.addInitScript((seed) => {
+    localStorage.setItem("wordrush-profile", JSON.stringify({
+      accountId: seed.account.id,
+      score: 14,
+      words: 2,
+      name: seed.account.username,
+      avatar: "🐈",
+    }));
+    localStorage.setItem("wordrush-profile-outbox", JSON.stringify({
+      version: 1,
+      events: [seed.firstEvent, seed.secondEvent],
+    }));
+  }, { account, firstEvent, secondEvent });
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ authenticated: true, account, providers: account.providers }),
+  }));
+  await page.route("**/api/profile/event", (route) => {
+    const request = JSON.parse(route.request().postData() || "{}");
+    if (request.eventId === firstEvent.eventId)
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ authenticated: true, account: { ...account, stats: firstEvent.snapshot } }),
+      });
+    return route.abort("failed");
+  });
+  await page.goto(baseUrl);
+  await page.waitForFunction(() => document.querySelector("#profileAuthStatus")?.textContent.includes("not synced"));
+  await page.waitForFunction(() => {
+    const profile = JSON.parse(localStorage.getItem("wordrush-profile"));
+    const outbox = JSON.parse(localStorage.getItem("wordrush-profile-outbox"));
+    return profile.score === 14 && outbox?.events?.length === 1 &&
+      outbox.events[0].eventId === "replay-order-b";
+  });
+  assert.equal(await page.locator("#homeScore").textContent(), "14");
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("wordrush-profile")).score), 14);
+});
+
 test("profile cancel discards drafts and required username setup cannot be dismissed", async (t) => {
   const browser = await chromium.launch({ headless: true, executablePath });
   t.after(() => browser.close());

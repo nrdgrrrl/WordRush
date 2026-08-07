@@ -691,6 +691,107 @@ function persistProfileSyncEvents() {
     );
   }
 }
+function mergeProfileSyncStats(...sources) {
+  const validSources = sources.filter((source) =>
+    source && typeof source === "object" && !Array.isArray(source),
+  );
+  const merged = Object.assign({}, ...validSources);
+  for (const key of [
+    "score", "words", "streak", "longest", "rounds", "correct", "incorrect",
+    "totalWordLength", "totalGameSeconds", "gamesWon", "gamesLost",
+    "multiplayerWins", "multiplayerLosses", "maxGridWin",
+  ]) {
+    const values = validSources
+      .map((source) => Number(source[key]))
+      .filter((value) => Number.isFinite(value));
+    if (values.length) merged[key] = Math.max(...values);
+  }
+  if (validSources.some((source) => source.speedAchievement === true))
+    merged.speedAchievement = true;
+  for (const key of ["days", "completedMultiplayerRounds"]) {
+    merged[key] = [...new Set(validSources.flatMap((source) =>
+      Array.isArray(source[key]) ? source[key] : [],
+    ))];
+  }
+  const wordRounds = new Map();
+  for (const source of validSources) {
+    for (const round of Array.isArray(source.multiplayerWordRounds)
+      ? source.multiplayerWordRounds
+      : []) {
+      if (!round || typeof round.roundId !== "string") continue;
+      const current = wordRounds.get(round.roundId) || { roundId: round.roundId, words: [] };
+      current.words = [...new Set([
+        ...current.words,
+        ...(Array.isArray(round.words) ? round.words : []),
+      ])];
+      wordRounds.set(round.roundId, current);
+    }
+  }
+  if (wordRounds.size) merged.multiplayerWordRounds = [...wordRounds.values()];
+  return merged;
+}
+function profileStatsAtLeast(current, target) {
+  if (!target || typeof target !== "object" || Array.isArray(target)) return true;
+  for (const key of [
+    "score", "words", "streak", "longest", "rounds", "correct", "incorrect",
+    "totalWordLength", "totalGameSeconds", "gamesWon", "gamesLost",
+    "multiplayerWins", "multiplayerLosses", "maxGridWin",
+  ]) {
+    if ((Number(current?.[key]) || 0) < (Number(target[key]) || 0)) return false;
+  }
+  if (target.speedAchievement === true && current?.speedAchievement !== true) return false;
+  for (const key of ["days", "completedMultiplayerRounds"]) {
+    const currentValues = new Set(Array.isArray(current?.[key]) ? current[key] : []);
+    if ((Array.isArray(target[key]) ? target[key] : []).some((value) => !currentValues.has(value)))
+      return false;
+  }
+  const currentRounds = new Map((current?.multiplayerWordRounds || []).map((round) => [
+    round.roundId,
+    new Set(round.words || []),
+  ]));
+  for (const round of target.multiplayerWordRounds || []) {
+    const currentWords = currentRounds.get(round.roundId);
+    if (!currentWords || (round.words || []).some((word) => !currentWords.has(word)))
+      return false;
+  }
+  return true;
+}
+function reconcileProfileSyncSuccess(accountId, account, fallbackSnapshot) {
+  const responseStats = account?.id === accountId && account.stats &&
+    typeof account.stats === "object" && !Array.isArray(account.stats)
+    ? account.stats
+    : null;
+  const fallbackStats = fallbackSnapshot && typeof fallbackSnapshot === "object" &&
+    !Array.isArray(fallbackSnapshot)
+    ? fallbackSnapshot
+    : {};
+  const syncSnapshot = profileStatsSnapshot(
+    mergeProfileSyncStats(fallbackStats, responseStats),
+  );
+  if (!profileStatsAtLeast(profileStatsSnapshot(), fallbackStats)) {
+    const restored = profileStatsSnapshot(
+      mergeProfileSyncStats(profileStatsSnapshot(), syncSnapshot),
+    );
+    Object.assign(profile, restored);
+    if (account?.id === accountId) {
+      authState.account = { ...account, stats: syncSnapshot };
+      if (account.username) profile.name = account.username;
+      else if (account.displayName) profile.name = String(account.displayName).slice(0, 20);
+      if (isProfileAvatar(account.avatar)) profile.avatar = account.avatar;
+    }
+    profile.days = playStreak.normalizePlayDates(profile.days);
+    profile.completedMultiplayerRounds = Array.isArray(profile.completedMultiplayerRounds)
+      ? profile.completedMultiplayerRounds.filter((id) => typeof id === "string").slice(-50)
+      : [];
+    profile.multiplayerWordRounds = multiplayerWordReconciliation.normalizeRoundRecords(
+      profile.multiplayerWordRounds,
+    );
+    updateIdentity();
+    updateProfile({ sync: false });
+    window.wordrushIdentityChanged?.();
+  }
+  return syncSnapshot;
+}
 async function flushProfileEvents() {
   if (
     profileSyncInFlight || !authState.account || profile.accountId !== authState.account.id ||
@@ -714,9 +815,15 @@ async function flushProfileEvents() {
       authState.account?.id !== accountId ||
       profile.accountId !== accountId
     ) return;
+    const payload = await response.json().catch(() => null);
+    const restoredSnapshot = reconcileProfileSyncSuccess(
+      accountId,
+      payload?.account,
+      event.snapshot,
+    );
     profileSyncEvents.shift();
     persistProfileSyncEvents();
-    profileSyncBase = event.snapshot;
+    profileSyncBase = restoredSnapshot || event.snapshot;
     profileSyncQueuedBase = profileSyncEvents.at(-1)?.snapshot || profileSyncBase;
     profileSyncStatus = profileSyncEvents.length ? "pending" : "synced";
     updateAuthUI();
