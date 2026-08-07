@@ -520,6 +520,9 @@ function createPlayer(room, client, ws) {
     sessionPoints: 0,
   };
 }
+function leaderboardOwnerId(player) {
+  return player?.accountId || player?.id;
+}
 function admitPlayerToRoom(room, client, ws) {
   if (rejectDetachedRoundParticipant(room, client, ws)) return null;
   if (rejectHeistAdmission(room, client, ws)) return null;
@@ -927,6 +930,7 @@ function connectedSeriesRoster(room) {
     .filter((player) => player.ws?.readyState === 1)
     .map((player) => ({
       id: player.id,
+      accountId: player.accountId || null,
       name: player.name,
       avatar: player.avatar || "🐈",
       session: {
@@ -1081,7 +1085,7 @@ function recordSuddenDeathSeriesAccounting(room, series) {
     player.sessionLosses += deltas.multiplayerLosses;
     const words = participant.acceptedWords || [];
     entries.push({
-      id: participant.id,
+      id: participant.accountId || participant.id,
       name: participant.name,
       avatar: participant.avatar,
       score: participant.aggregateScore,
@@ -1728,13 +1732,13 @@ function finishRound(room, reason = "complete", suddenDeath = null) {
   room.lastResult = result;
   if (recorded) {
     recordLeaderboardScores(
-      () => result.ranking.map((rankedPlayer) => {
+      () => rankedPlayers.map((rankedPlayer) => {
         const words = rankedPlayer.words || [];
         return {
-          id: rankedPlayer.id,
+          id: leaderboardOwnerId(rankedPlayer),
           name: rankedPlayer.name,
           avatar: rankedPlayer.avatar,
-          score: rankedPlayer.score,
+          score: playerScore(room, rankedPlayer),
           words: words.length,
           correct: words.length,
           longest: Math.max(0, ...words.map((item) => item.word.length)),
@@ -1917,6 +1921,7 @@ async function handle(ws, message) {
     const id = cleanText(message.guestId, crypto.randomUUID(), 80);
     clients.set(ws, {
       id,
+      accountId: ws.authenticatedAccountId,
       name: cleanText(message.name, "Guest"),
       avatar: cleanAvatar(message.avatar),
       roomCode: null,
@@ -2399,6 +2404,9 @@ async function handle(ws, message) {
         id: seriesId,
         accountingId: seriesId,
       });
+      const accountIds = new Map(roster.map((player) => [player.id, player.accountId]));
+      for (const participant of room.suddenDeathSeries.participants)
+        participant.accountId = accountIds.get(participant.id) || null;
       const started = await startRound(
         room,
         SUDDEN_SERIES_MODE,
@@ -2840,6 +2848,7 @@ wss.on("connection", (ws, req) => {
       : "player";
   ws.missedHeartbeats = 0;
   ws.connectedAt = Date.now();
+  ws.authenticatedAccountId = accountFromRequest(req)?.id || null;
   ws.messageWindow = { startedAt: Date.now(), count: 0 };
   ws.on("pong", () => {
     ws.missedHeartbeats = 0;

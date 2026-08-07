@@ -106,9 +106,11 @@ function nextMatching(ws, wanted, predicate) {
     ws.on("message", handler);
   });
 }
-function client(name) {
+function client(name, { cookie } = {}) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port, cookie
+      ? { headers: { Cookie: cookie } }
+      : undefined);
     ws.once("error", reject);
     ws.once("open", () => {
       message(ws, "hello", { name, guestId: name });
@@ -371,6 +373,81 @@ test("signed-in profile endpoints preserve usernames and idempotent stats", asyn
   const mePayload = await me.json();
   assert.equal(mePayload.account.username, "ServerTester");
   assert.equal(mePayload.account.stats.score, 15);
+});
+
+test("signed account owns multiplayer leaderboard entries across guest IDs", async () => {
+  const account = accountStore.ensureProviderAccount("google", "leaderboard-owner-test", {
+    displayName: "Leaderboard Owner",
+  });
+  const cookie = "wordrush_session=" + createSessionToken(account.id);
+  async function playRound(deviceId, score) {
+    const player = await client(deviceId, { cookie });
+    const createdPromise = next(player, "room_created");
+    message(player, "create_room", { name: deviceId });
+    const created = await createdPromise;
+    const startedPromise = next(player, "round_started");
+    message(player, "start_game", { mode: "classic" });
+    await startedPromise;
+    rooms.get(created.code).players.get(deviceId).score = score;
+    await finishTestRound(player, [player]);
+    await closeTestRoom(player, []);
+    return player;
+  }
+
+  const first = await playRound("leaderboard-device-a", 7);
+  const afterFirst = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE).profile(account.id);
+  assert.equal(afterFirst.rounds, 1);
+  assert.equal(afterFirst.totalScore, 7);
+  assert.equal(
+    new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE).profile("leaderboard-device-a"),
+    null,
+  );
+  first.close();
+
+  const second = await playRound("leaderboard-device-b", 11);
+  const afterSecond = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE).profile(account.id);
+  assert.equal(afterSecond.rounds, 2);
+  assert.equal(afterSecond.totalScore, 18);
+  assert.equal(
+    new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE).profile("leaderboard-device-b"),
+    null,
+  );
+  second.close();
+});
+
+test("signed account owns a disconnected participant's multiplayer result", async () => {
+  const account = accountStore.ensureProviderAccount("google", "leaderboard-disconnect-owner-test", {
+    displayName: "Disconnected Leaderboard Owner",
+  });
+  const cookie = "wordrush_session=" + createSessionToken(account.id);
+  const host = await client("leaderboard-disconnect-host");
+  const createdPromise = next(host, "room_created");
+  message(host, "create_room", { name: "leaderboard-disconnect-host" });
+  const created = await createdPromise;
+  const signedPlayer = await client("leaderboard-disconnect-device", { cookie });
+  const joinedPromise = next(signedPlayer, "joined_room");
+  message(signedPlayer, "join_room", {
+    code: created.code,
+    name: "leaderboard-disconnect-device",
+  });
+  await joinedPromise;
+  const startedPromise = next(host, "round_started");
+  message(host, "start_game", { mode: "classic" });
+  await startedPromise;
+  const room = rooms.get(created.code);
+  room.players.get("leaderboard-disconnect-device").score = 13;
+  signedPlayer.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await finishTestRound(host, [host]);
+  const profile = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE).profile(account.id);
+  assert.equal(profile.rounds, 1);
+  assert.equal(profile.totalScore, 13);
+  assert.equal(
+    new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE).profile("leaderboard-disconnect-device"),
+    null,
+  );
+  await closeTestRoom(host, []);
+  host.close();
 });
 
 test("a stale cached-client request still receives the current mutable script", async () => {
@@ -4404,6 +4481,10 @@ test("Sudden Death Series preserves withdrawn pre-series session totals and live
     "series-session-active",
   ]);
   const room = rooms.get(code);
+  const account = accountStore.ensureProviderAccount("google", "series-leaderboard-owner-test", {
+    displayName: "Series Leaderboard Owner",
+  });
+  room.players.get("series-session-host").accountId = account.id;
   const before = {
     "series-session-host": { wins: 2, losses: 1, points: 31 },
     "series-session-withdrawn": { wins: 7, losses: 3, points: 88 },
@@ -4450,6 +4531,13 @@ test("Sudden Death Series preserves withdrawn pre-series session totals and live
   assert.deepEqual(activeRunnerUp.session, { wins: 4, losses: 3, points: 52 });
   assert.equal(finished.series.winnerIds.includes("series-session-withdrawn"), false);
   assert.equal(new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE).profile("series-session-withdrawn"), null);
+  const leaderboardProfile = new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE).profile(account.id);
+  assert.equal(leaderboardProfile.rounds, 1);
+  assert.equal(leaderboardProfile.totalScore, 6);
+  assert.equal(
+    new Leaderboard(process.env.WORDRUSH_LEADERBOARD_FILE).profile("series-session-host"),
+    null,
+  );
 
   await closeTestRoom(host, [host, guests[1]]);
   guests[0].close();
