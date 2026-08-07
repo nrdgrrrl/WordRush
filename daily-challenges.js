@@ -6,6 +6,7 @@ const SCHEMA_VERSION = 1;
 const SHARE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_DAILY_RECORDS = 90;
 const MAX_SHARE_RECORDS = 5_000;
+const STORE_UNAVAILABLE = "DAILY_CHALLENGE_STORE_UNAVAILABLE";
 const DEFAULT_DIRECTORY =
   process.env.STATE_DIRECTORY ||
   (process.env.NODE_ENV === "production"
@@ -153,20 +154,35 @@ function randomReference() {
 class DailyChallengeStore {
   constructor(file = process.env.WORDRUSH_DAILY_CHALLENGES_FILE || DEFAULT_FILE) {
     this.file = file;
+    this.trusted = false;
     this.data = this.load();
   }
 
   load() {
     try {
       const data = JSON.parse(fs.readFileSync(this.file, "utf8"));
-      return validData(data) ? data : emptyData();
+      if (!validData(data)) {
+        this.trusted = false;
+        return emptyData();
+      }
+      this.trusted = true;
+      return data;
     } catch (error) {
-      if (error.code === "ENOENT") return emptyData();
+      if (error.code === "ENOENT") {
+        this.trusted = true;
+        return emptyData();
+      }
+      this.trusted = false;
       return emptyData();
     }
   }
 
+  ensureAvailable() {
+    if (!this.trusted) throw new Error(STORE_UNAVAILABLE);
+  }
+
   save() {
+    this.ensureAvailable();
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const temporary = this.file + ".tmp";
     try {
@@ -183,6 +199,7 @@ class DailyChallengeStore {
   }
 
   prune(now = new Date()) {
+    this.ensureAvailable();
     const nowMs = now.valueOf();
     const dailyEntries = Object.entries(this.data.dailies).sort(
       ([, a], [, b]) => b.date.localeCompare(a.date),
@@ -196,6 +213,7 @@ class DailyChallengeStore {
   }
 
   async getOrCreateDaily(date, create) {
+    this.ensureAvailable();
     if (!validDateKey(date) || typeof create !== "function")
       throw new Error("DAILY_CHALLENGE_INVALID");
     const id = "daily-" + date;
@@ -210,6 +228,7 @@ class DailyChallengeStore {
   }
 
   createShare(input, now = new Date()) {
+    this.ensureAvailable();
     if (!input || typeof input !== "object" || Array.isArray(input))
       throw new Error("CHALLENGE_SHARE_INVALID");
     const allowed = new Set(["challengeId", "score", "wordCount", "longestLength"]);
@@ -241,6 +260,7 @@ class DailyChallengeStore {
   }
 
   getShare(ref, now = new Date()) {
+    this.ensureAvailable();
     if (typeof ref !== "string" || !/^[A-Za-z0-9_-]{20,40}$/.test(ref)) return null;
     const share = this.data.shares[ref];
     if (!share) return null;
@@ -270,6 +290,7 @@ module.exports = {
   MAX_SHARE_RECORDS,
   SCHEMA_VERSION,
   SHARE_TTL_MS,
+  STORE_UNAVAILABLE,
   emptyData,
   publicChallenge,
   utcDateKey,

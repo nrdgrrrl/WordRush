@@ -62,7 +62,7 @@ const {
   DailyChallengeStore,
   utcDateKey,
 } = require("./daily-challenges");
-const { RelayChallengeStore } = require("./relay-challenges");
+const { RelayChallengeStore, STORE_UNAVAILABLE: RELAY_STORE_UNAVAILABLE } = require("./relay-challenges");
 const { applyWordClaim, validateTeamAssignments } = require("./heist-rules");
 const { bountyClaimEffect, selectBountyIndexes } = require("./challenge-rules");
 const PORT = Number(process.env.PORT || 8000),
@@ -3287,7 +3287,13 @@ async function leaderboardRequest(req, res) {
     }
   }
   if (url.pathname.startsWith("/api/relay-challenges/") && req.method === "GET") {
-    const challenge = relayChallenges.get(url.pathname.slice("/api/relay-challenges/".length));
+    let challenge;
+    try {
+      challenge = relayChallenges.get(url.pathname.slice("/api/relay-challenges/".length));
+    } catch (error) {
+      if (error.message === RELAY_STORE_UNAVAILABLE) return deny(res, 503, "RELAY_UNAVAILABLE");
+      throw error;
+    }
     if (!challenge) return deny(res, 404, "RELAY_NOT_FOUND");
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
     return res.end(JSON.stringify(challenge));
@@ -3308,8 +3314,8 @@ async function leaderboardRequest(req, res) {
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       return res.end(JSON.stringify(challenge));
     } catch (error) {
-      const code = error.message === "RELAY_CHALLENGE_STALE_REVISION" ? "RELAY_STALE_REVISION" : error.message === "RELAY_CHALLENGE_NOT_FOUND" ? "RELAY_NOT_FOUND" : error.message === "RELAY_WORD_REJECTED" ? error.code || "RELAY_WORD_REJECTED" : "RELAY_REQUEST_INVALID";
-      return deny(res, code === "RELAY_NOT_FOUND" ? 404 : 409, code);
+      const code = error.message === RELAY_STORE_UNAVAILABLE ? "RELAY_UNAVAILABLE" : error.message === "RELAY_CHALLENGE_STALE_REVISION" ? "RELAY_STALE_REVISION" : error.message === "RELAY_CHALLENGE_NOT_FOUND" ? "RELAY_NOT_FOUND" : error.message === "RELAY_WORD_REJECTED" ? error.code || "RELAY_WORD_REJECTED" : "RELAY_REQUEST_INVALID";
+      return deny(res, code === "RELAY_NOT_FOUND" ? 404 : code === "RELAY_UNAVAILABLE" ? 503 : 409, code);
     }
   }
   if (url.pathname === "/api/daily-challenge" && req.method === "GET") {
@@ -3337,7 +3343,9 @@ async function leaderboardRequest(req, res) {
     let share;
     try {
       share = dailyChallenges.createShare(body);
-    } catch {
+    } catch (error) {
+      if (error.message === "DAILY_CHALLENGE_STORE_UNAVAILABLE")
+        return deny(res, 503, "DAILY_CHALLENGE_UNAVAILABLE");
       return deny(res, 400, "CHALLENGE_SHARE_INVALID");
     }
     res.writeHead(201, {
@@ -3350,7 +3358,14 @@ async function leaderboardRequest(req, res) {
     if (!rateLimit("challenge-share:" + clientIp(req), 60))
       return deny(res, 429, "RATE_LIMITED");
     const ref = url.pathname.slice("/api/challenges/".length);
-    const shared = dailyChallenges.getShare(ref);
+    let shared;
+    try {
+      shared = dailyChallenges.getShare(ref);
+    } catch (error) {
+      if (error.message === "DAILY_CHALLENGE_STORE_UNAVAILABLE")
+        return deny(res, 503, "DAILY_CHALLENGE_UNAVAILABLE");
+      throw error;
+    }
     if (!shared) return deny(res, 404, "CHALLENGE_NOT_FOUND");
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",

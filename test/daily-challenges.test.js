@@ -5,6 +5,7 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   DailyChallengeStore,
+  STORE_UNAVAILABLE,
   utcDateKey,
   validDateKey,
 } = require("../daily-challenges");
@@ -87,4 +88,37 @@ test("Daily Challenge date keys use valid UTC calendar dates only", () => {
   assert.equal(validDateKey("2026-02-29"), false);
   assert.equal(validDateKey("2028-02-29"), true);
   assert.equal(validDateKey("2026-8-05"), false);
+});
+
+test("Daily Challenge store initializes an absent file as an available empty store", async () => {
+  const store = temporaryStore();
+  const challenge = await store.getOrCreateDaily("2026-08-05", async () => fixtureRecord());
+  assert.equal(challenge.id, "daily-2026-08-05");
+  assert.equal(store.trusted, true);
+});
+
+test("Daily Challenge store stays unavailable and preserves failed-load bytes", async () => {
+  const invalidData = [
+    ["malformed JSON", "{\"schemaVersion\":1"],
+    ["wrong schema", JSON.stringify({ schemaVersion: 99, dailies: {}, shares: {} })],
+    [
+      "invalid record",
+      JSON.stringify({ schemaVersion: 1, dailies: { "daily-2026-08-05": {} }, shares: {} }),
+    ],
+  ];
+  for (const [label, bytes] of invalidData) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "wordrush-daily-invalid-"));
+    const file = path.join(directory, "daily-challenges.json");
+    fs.writeFileSync(file, bytes);
+    const store = new DailyChallengeStore(file);
+    assert.equal(store.trusted, false, label);
+    await assert.rejects(
+      store.getOrCreateDaily("2026-08-05", async () => fixtureRecord()),
+      new RegExp(STORE_UNAVAILABLE),
+      label,
+    );
+    assert.throws(() => store.createShare({}), new RegExp(STORE_UNAVAILABLE), label);
+    assert.throws(() => store.getShare("a".repeat(20)), new RegExp(STORE_UNAVAILABLE), label);
+    assert.equal(fs.readFileSync(file, "utf8"), bytes, label);
+  }
 });
