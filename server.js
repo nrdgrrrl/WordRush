@@ -186,6 +186,19 @@ function staticCacheControl(requested) {
   return "public, max-age=3600, stale-while-revalidate=86400";
 }
 const appDocument = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+const contentDocument = fs.readFileSync(
+  path.join(__dirname, "content-document.html"),
+  "utf8",
+);
+const siteFooter = fs.readFileSync(path.join(__dirname, "site-footer.html"), "utf8");
+const contentBodies = Object.fromEntries(
+  wordrushRoutes.all
+    .filter((route) => route.content)
+    .map((route) => [
+      route.content,
+      fs.readFileSync(path.join(__dirname, "content-pages", route.content + ".html"), "utf8"),
+    ]),
+);
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -225,6 +238,27 @@ function sendAppDocument(res, pathname) {
     "Cache-Control": "no-cache",
   });
   res.end(renderAppDocument(pathname));
+}
+function renderContentDocument(pathname) {
+  const route = wordrushRoutes.routeForPath(pathname);
+  const title = escapeHtml(route.title);
+  const description = escapeHtml(route.description);
+  const canonical = escapeHtml("https://wordrush.party" + route.path);
+  return contentDocument
+    .replaceAll("{{title}}", title)
+    .replaceAll("{{description}}", description)
+    .replaceAll("{{canonical}}", canonical)
+    .replaceAll("{{page}}", escapeHtml(route.key))
+    .replace("{{body}}", contentBodies[route.content])
+    .replace("{{footer}}", siteFooter);
+}
+function sendContentDocument(res, pathname) {
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-cache",
+  });
+  res.end(renderContentDocument(pathname));
 }
 function securityHeaders(res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -2312,11 +2346,9 @@ const server = http.createServer((req, res) => {
     res.writeHead(302, { Location: "/" });
     return res.end();
   }
-  if (
-    pathname === "/" ||
-    pathname === "/index.html" ||
-    wordrushRoutes.routeForPath(pathname)
-  )
+  const route = wordrushRoutes.routeForPath(pathname);
+  if (route?.content) return sendContentDocument(res, pathname);
+  if (pathname === "/" || pathname === "/index.html" || route)
     return sendAppDocument(res, pathname === "/index.html" ? "/" : pathname);
   if (pathname === "/dictionary.json") {
     res.writeHead(200, {
