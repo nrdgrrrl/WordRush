@@ -53,6 +53,8 @@ const {
   completeSuddenDeathSeries,
   randomRushModes,
   prunePreAdmissionChallenges,
+  dailyChallenges,
+  relayChallenges,
   accountStore,
   createSessionToken,
 } = require("../server");
@@ -695,6 +697,62 @@ test("Daily Rush freezes a server-owned board and shares only a score target", a
   });
   assert.equal(invalidShare.status, 400);
   assert.deepEqual(await invalidShare.json(), { error: "CHALLENGE_SHARE_INVALID" });
+});
+
+test("persisted challenge records reject unavailable dictionary artifact versions", async () => {
+  const origin = "http://127.0.0.1:" + server.address().port;
+  const dailyResponse = await fetch(origin + "/api/daily-challenge");
+  assert.equal(dailyResponse.status, 200);
+  const daily = await dailyResponse.json();
+  const shareResponse = await fetch(origin + "/api/daily-challenge/shares", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ challengeId: daily.challenge.id, score: 1, wordCount: 1, longestLength: 3 }),
+  });
+  assert.equal(shareResponse.status, 201);
+  const share = await shareResponse.json();
+  const relayResponse = await fetch(origin + "/api/relay-challenges", { method: "POST" });
+  assert.equal(relayResponse.status, 201);
+  const relay = await relayResponse.json();
+  const dailyRecord = dailyChallenges.data.dailies[daily.challenge.id];
+  const relayRecord = relayChallenges.data.challenges[relay.id];
+  const dailyDictionary = { ...dailyRecord.dictionary };
+  const relayDictionary = { ...relayRecord.dictionary };
+  try {
+    dailyRecord.dictionary.artifactSha256 = "0".repeat(64);
+    relayRecord.dictionary.artifactSha256 = "0".repeat(64);
+
+    const cases = [
+      ["daily", fetch(origin + "/api/daily-challenge")],
+      ["share", fetch(origin + "/api/challenges/" + share.ref)],
+      ["relay", fetch(origin + "/api/relay-challenges/" + relay.id)],
+      [
+        "share creation",
+        fetch(origin + "/api/daily-challenge/shares", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ challengeId: daily.challenge.id, score: 2, wordCount: 1, longestLength: 3 }),
+        }),
+      ],
+      [
+        "relay transition",
+        fetch(origin + "/api/relay-challenges/" + relay.id, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ revision: 0, word: "CAT", path: [] }),
+        }),
+      ],
+    ];
+    for (const [label, pending] of cases) {
+      const response = await pending;
+      assert.equal(response.status, 409, label);
+      assert.deepEqual(await response.json(), { error: "DICTIONARY_VERSION_UNAVAILABLE" }, label);
+    }
+    assert.equal(relayRecord.revision, 0);
+  } finally {
+    dailyRecord.dictionary = dailyDictionary;
+    relayRecord.dictionary = relayDictionary;
+  }
 });
 
 test("Word Relay uses one frozen board and rejects stale or invalid turns", async () => {

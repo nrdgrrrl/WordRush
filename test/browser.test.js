@@ -617,6 +617,47 @@ test("challenge lifecycle ignores stale launches and Relay submissions", async (
   assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem("wordrush-profile"))).words, 0);
 });
 
+test("browser explains a challenge dictionary version mismatch", async (t) => {
+  const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.route("**/api/dictionary**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      dictionary: {
+        dictionaryId: "wordrush-ca-standard-v1",
+        artifactSha256: DICTIONARY_ARTIFACT_SHA256,
+      },
+    }),
+  }));
+  await page.route("**/api/daily-challenge", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      challenge: {
+        id: "daily-2026-08-06",
+        date: "2026-08-06",
+        mode: "daily",
+        config: { size: 4, seconds: 60 },
+        board: Array(16).fill("A"),
+        dictionary: {
+          dictionaryId: "wordrush-ca-standard-v1",
+          artifactSha256: "0".repeat(64),
+        },
+      },
+    }),
+  }));
+  await page.goto(baseUrl);
+  await openDailyChallenges(page);
+  await page.locator("#dailyRush").click();
+  await page.waitForFunction(() => /unavailable dictionary version/i.test(
+    document.querySelector("#toast")?.textContent || "",
+  ));
+  assert.equal(await page.locator("#roundIntroScreen.active").count(), 0);
+  assert.equal(await page.locator("#gameScreen.active").count(), 0);
+});
+
 test("browser can start, play, persist stats, and use the tile-banner profile button", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });

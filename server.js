@@ -115,6 +115,7 @@ const dailyChallenges = new DailyChallengeStore();
 const relayChallenges = new RelayChallengeStore();
 const accountStore = new AccountStore();
 const pendingDailyChallenges = new Map();
+const DICTIONARY_VERSION_UNAVAILABLE = "DICTIONARY_VERSION_UNAVAILABLE";
 const oauthStates = new Map();
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_COOKIE = "wordrush_session";
@@ -451,10 +452,30 @@ async function getTodayDailyChallenge() {
   });
   pendingDailyChallenges.set(key, pending);
   try {
-    return await pending;
+    const challenge = await pending;
+    assertCurrentChallengeDictionary(challenge.dictionary);
+    return challenge;
   } finally {
     pendingDailyChallenges.delete(key);
   }
+}
+function assertCurrentChallengeDictionary(dictionary) {
+  let current;
+  try {
+    current = getDictionaryMetadata(dictionary?.dictionaryId);
+  } catch {
+    throw Object.assign(new Error(DICTIONARY_VERSION_UNAVAILABLE), {
+      code: DICTIONARY_VERSION_UNAVAILABLE,
+    });
+  }
+  if (
+    typeof dictionary?.artifactSha256 !== "string" ||
+    dictionary.artifactSha256.toLowerCase() !== current.artifactSha256.toLowerCase()
+  )
+    throw Object.assign(new Error(DICTIONARY_VERSION_UNAVAILABLE), {
+      code: DICTIONARY_VERSION_UNAVAILABLE,
+    });
+  return current;
 }
 async function createRelayChallenge() {
   const daily = await getTodayDailyChallenge();
@@ -2929,6 +2950,7 @@ module.exports = {
   validateSoloBoardRequest,
   getTodayDailyChallenge,
   dailyChallenges,
+  relayChallenges,
   generationTestHooks,
   MAX_PLAYERS,
   displayTokens,
@@ -3350,6 +3372,13 @@ async function leaderboardRequest(req, res) {
       throw error;
     }
     if (!challenge) return deny(res, 404, "RELAY_NOT_FOUND");
+    try {
+      assertCurrentChallengeDictionary(challenge.dictionary);
+    } catch (error) {
+      if (error.code === DICTIONARY_VERSION_UNAVAILABLE)
+        return deny(res, 409, DICTIONARY_VERSION_UNAVAILABLE);
+      throw error;
+    }
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
     return res.end(JSON.stringify(challenge));
   }
@@ -3360,6 +3389,7 @@ async function leaderboardRequest(req, res) {
       return deny(res, 400, "RELAY_REQUEST_INVALID");
     try {
       const challenge = await relayChallenges.transition(id, body.revision, (state, record) => {
+        assertCurrentChallengeDictionary(record.dictionary);
         const result = validateSubmission({ board: record.board, size: record.config.size, word: body.word, path: body.path, mode: "classic", dictionaryId: record.dictionary.dictionaryId, minimum: record.config.min, found: new Set(state.found) });
         if (!result.valid) throw Object.assign(new Error("RELAY_WORD_REJECTED"), { code: result.reason });
         if (state.requiredLetter && !chainWordMatches(state.requiredLetter, result.word))
@@ -3369,7 +3399,7 @@ async function leaderboardRequest(req, res) {
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       return res.end(JSON.stringify(challenge));
     } catch (error) {
-      const code = error.message === RELAY_STORE_UNAVAILABLE ? "RELAY_UNAVAILABLE" : error.message === "RELAY_CHALLENGE_STALE_REVISION" ? "RELAY_STALE_REVISION" : error.message === "RELAY_CHALLENGE_NOT_FOUND" ? "RELAY_NOT_FOUND" : error.message === "RELAY_WORD_REJECTED" ? error.code || "RELAY_WORD_REJECTED" : "RELAY_REQUEST_INVALID";
+      const code = error.code === DICTIONARY_VERSION_UNAVAILABLE ? DICTIONARY_VERSION_UNAVAILABLE : error.message === RELAY_STORE_UNAVAILABLE ? "RELAY_UNAVAILABLE" : error.message === "RELAY_CHALLENGE_STALE_REVISION" ? "RELAY_STALE_REVISION" : error.message === "RELAY_CHALLENGE_NOT_FOUND" ? "RELAY_NOT_FOUND" : error.message === "RELAY_WORD_REJECTED" ? error.code || "RELAY_WORD_REJECTED" : "RELAY_REQUEST_INVALID";
       return deny(res, code === "RELAY_NOT_FOUND" ? 404 : code === "RELAY_UNAVAILABLE" ? 503 : 409, code);
     }
   }
@@ -3388,7 +3418,7 @@ async function leaderboardRequest(req, res) {
         failureCode: error.code || "GENERATION_FAILED",
         diagnostics: error.diagnostics || null,
       }));
-      return deny(res, 503, "DAILY_CHALLENGE_UNAVAILABLE");
+      return deny(res, error.code === DICTIONARY_VERSION_UNAVAILABLE ? 409 : 503, error.code === DICTIONARY_VERSION_UNAVAILABLE ? DICTIONARY_VERSION_UNAVAILABLE : "DAILY_CHALLENGE_UNAVAILABLE");
     }
   }
   if (url.pathname === "/api/daily-challenge/shares" && req.method === "POST") {
@@ -3397,8 +3427,12 @@ async function leaderboardRequest(req, res) {
     const body = await readJson(req);
     let share;
     try {
+      const daily = dailyChallenges.data.dailies[body?.challengeId];
+      if (daily) assertCurrentChallengeDictionary(daily.dictionary);
       share = dailyChallenges.createShare(body);
     } catch (error) {
+      if (error.code === DICTIONARY_VERSION_UNAVAILABLE)
+        return deny(res, 409, DICTIONARY_VERSION_UNAVAILABLE);
       if (error.message === "DAILY_CHALLENGE_STORE_UNAVAILABLE")
         return deny(res, 503, "DAILY_CHALLENGE_UNAVAILABLE");
       return deny(res, 400, "CHALLENGE_SHARE_INVALID");
@@ -3422,6 +3456,13 @@ async function leaderboardRequest(req, res) {
       throw error;
     }
     if (!shared) return deny(res, 404, "CHALLENGE_NOT_FOUND");
+    try {
+      assertCurrentChallengeDictionary(shared.challenge.dictionary);
+    } catch (error) {
+      if (error.code === DICTIONARY_VERSION_UNAVAILABLE)
+        return deny(res, 409, DICTIONARY_VERSION_UNAVAILABLE);
+      throw error;
+    }
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",

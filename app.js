@@ -2118,6 +2118,8 @@ async function startDailyRush(shared = null, raceEcho = false, sharedRef = null)
     if (!isCurrentChallengeOperation(challengeOperation)) return;
     toast(error.code === "CHALLENGE_NOT_FOUND"
       ? "That Daily Rush link has expired."
+      : error.code === "DICTIONARY_VERSION_UNAVAILABLE"
+        ? "This challenge uses an unavailable dictionary version. Start a fresh Daily Rush."
       : "Daily Rush is not ready yet. Please try again.");
     return;
   }
@@ -2164,6 +2166,8 @@ async function startWordRelay(id = null) {
     if (!isCurrentChallengeOperation(challengeOperation)) return;
     toast(error.code === "RELAY_NOT_FOUND"
       ? "That Word Relay link has expired."
+      : error.code === "DICTIONARY_VERSION_UNAVAILABLE"
+        ? "This relay uses an unavailable dictionary version. Start a new relay."
       : "Word Relay is not ready yet. Please try again.");
   }
 }
