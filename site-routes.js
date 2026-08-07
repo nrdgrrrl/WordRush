@@ -42,6 +42,15 @@
       description:
         "Create or join a Wordrush multiplayer room and play fast word games with friends.",
     },
+    howToPlay: {
+      kind: "page",
+      key: "howToPlay",
+      path: "/how-to-play",
+      screen: "howToPlayScreen",
+      title: "How to Play WordRush — Rules and Scoring",
+      description:
+        "Learn how to trace words, score points, and play solo or multiplayer in WordRush.",
+    },
   };
   const GAMES = {
     random: {
@@ -235,6 +244,7 @@
     PAGES.stats,
     PAGES.progress,
     PAGES.multiplayer,
+    PAGES.howToPlay,
     ...Object.values(GAMES),
   ]);
   const byPath = new Map(all.map((route) => [route.path, route]));
