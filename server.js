@@ -3500,7 +3500,7 @@ async function leaderboardRequest(req, res) {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "public, max-age=86400",
     });
-    return res.end(JSON.stringify({ dictionary: dictionary.metadata, words: dictionary.words }));
+    return res.end(JSON.stringify({ dictionary: dictionary.metadata }));
   }
   if (url.pathname === "/api/word-check" && req.method === "GET") {
     const word = String(url.searchParams.get("word") || "")

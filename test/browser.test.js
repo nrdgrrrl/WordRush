@@ -30,6 +30,9 @@ const executablePath =
   process.env.PLAYWRIGHT_CHROMIUM ||
   "/home/victoria/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome";
 let baseUrl;
+const DICTIONARY_ARTIFACT_SHA256 = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "..", "dictionaries/artifacts/wordrush-ca-standard-v1.manifest.json"), "utf8"),
+).artifactSha256;
 async function startClassic(page) {
   await openGamesPanel(page);
   await page.locator('button[data-mode="classic"]').click();
@@ -84,23 +87,32 @@ async function startSoloMode(page, mode) {
 }
 function wordRequestWaiter(pending, waiters, word) {
   if (pending.has(word)) return Promise.resolve();
-  return new Promise((resolve) => waiters.set(word, resolve));
+  return new Promise((resolve) => {
+    const resolvers = waiters.get(word) || [];
+    resolvers.push(resolve);
+    waiters.set(word, resolvers);
+  });
 }
 async function resolveWord(pending, word, valid) {
-  const route = pending.get(word);
+  const routes = pending.get(word) || [];
+  const route = routes.shift();
   assert.ok(route, "deferred word-check request for " + word);
-  pending.delete(word);
+  if (!routes.length) pending.delete(word);
   await route.fulfill({
     status: 200,
     contentType: "application/json",
     body: JSON.stringify({ valid }),
   });
 }
-async function failWord(pending, word) {
-  const route = pending.get(word);
-  assert.ok(route, "deferred word-check request for " + word);
-  pending.delete(word);
-  await route.abort("failed");
+async function failWord(pending, waiters, word) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!pending.has(word)) await wordRequestWaiter(pending, waiters, word);
+    const routes = pending.get(word) || [];
+    const route = routes.shift();
+    assert.ok(route, "deferred word-check request for " + word);
+    if (!routes.length) pending.delete(word);
+    await route.abort("failed");
+  }
 }
 async function installBoardFixtureHook(page) {
   await page.addInitScript(() => {
@@ -507,7 +519,10 @@ test("challenge lifecycle ignores stale launches and Relay submissions", async (
       date: "2026-08-06",
       mode: "daily",
       config: { size: 4, min: 3, seconds: 60, rule: "One shared board" },
-      dictionary: { dictionaryId: "wordrush-ca-standard-v1" },
+      dictionary: {
+        dictionaryId: "wordrush-ca-standard-v1",
+        artifactSha256: DICTIONARY_ARTIFACT_SHA256,
+      },
       board: Array(16).fill("A"),
     },
   };
@@ -540,7 +555,10 @@ test("challenge lifecycle ignores stale launches and Relay submissions", async (
     id: "relay-browser-test-20260806",
     revision: 0,
     config: { size: 4, min: 3, seconds: 120, chain: true, rule: "Pass the chain" },
-    dictionary: { dictionaryId: "wordrush-ca-standard-v1", version: "browser-test" },
+    dictionary: {
+      dictionaryId: "wordrush-ca-standard-v1",
+      artifactSha256: DICTIONARY_ARTIFACT_SHA256,
+    },
     board: ["C", "A", "T", "X", "D", "O", "G", "X", ...Array(8).fill("X")],
     playableWordStarts: { C: 1, D: 1 },
     state: { found: [], requiredLetter: "", turns: 0 },
@@ -551,7 +569,6 @@ test("challenge lifecycle ignores stale launches and Relay submissions", async (
     contentType: "application/json",
     body: JSON.stringify({
       dictionary: relayResponse.dictionary,
-      words: ["CAT", "DOG"],
     }),
   }));
   await page.route("**/api/relay-challenges**", async (route) => {
@@ -1278,8 +1295,9 @@ test("random rush owns results continuation and stops on navigation", async (t) 
   assert.equal(await page.locator("#stopRush").isHidden(), true);
 });
 
-test("solo submission commits stay ordered across deferred dictionary responses", async () => {
+test("solo submission commits stay ordered across deferred dictionary responses", async (t) => {
   const browser = await chromium.launch({ headless: true, executablePath });
+  t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const pending = new Map();
   const waiters = new Map();
@@ -1292,15 +1310,19 @@ test("solo submission commits stay ordered across deferred dictionary responses"
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        dictionary: { dictionaryId: "wordrush-ca-standard-v1", version: "browser-test" },
-        words: ["BAD", "CAT", "DOG", "FOX", "MAP", "NOD", "OWL", "PIG", "RAT", "SUN"],
+        dictionary: {
+          dictionaryId: "wordrush-ca-standard-v1",
+          artifactSha256: DICTIONARY_ARTIFACT_SHA256,
+        },
       }),
     }),
   );
   await page.route("**/api/word-check**", (route) => {
     const word = new URL(route.request().url()).searchParams.get("word");
-    pending.set(word, route);
-    waiters.get(word)?.();
+    const routes = pending.get(word) || [];
+    routes.push(route);
+    pending.set(word, routes);
+    for (const resolve of waiters.get(word) || []) resolve();
     waiters.delete(word);
   });
   await installBoardFixtureHook(page);
@@ -1320,16 +1342,16 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   await traceWord(page, [4, 5, 6]);
   await Promise.all(generalRequests);
   assert.deepEqual([...pending.keys()].sort(), ["CAT", "DOG"]);
-  await resolveWord(pending, "DOG", false);
+  await resolveWord(pending, "DOG", true);
   assert.equal(await page.locator("#gameScore").textContent(), "0");
-  await failWord(pending, "CAT");
-  await page.waitForFunction(() => window.__soloEvents.length === 2);
+  await failWord(pending, waiters, "CAT");
+  await page.waitForFunction(() => window.__soloEvents.length === 1);
   assert.deepEqual(
     await page.evaluate(() => window.__soloEvents.map((event) => event.type)),
-    ["word-accepted", "word-rejected"],
+    ["word-accepted"],
   );
   assert.equal(await page.locator("#gameScore").textContent(), "9");
-  assert.match(await page.locator("#toast").textContent(), /Wrong word/);
+  assert.match(await page.locator("#toast").textContent(), /unavailable/);
 
   const chainFixture = {
     size: 5,

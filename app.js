@@ -55,9 +55,32 @@ function consumeNextRushMode() {
   s.nextRushMode = null;
   return mode;
 }
-const adult = sharedConfig.ADULT_WORDS;
 const wordCheckCache = new Map();
 const dictionaryRequestCache = new Map();
+const WORD_CHECK_ATTEMPTS = 2;
+const DICTIONARY_METADATA_PATTERN = /^[a-f0-9]{64}$/i;
+function validDictionaryMetadata(value) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      typeof value.dictionaryId === "string" &&
+      value.dictionaryId.length > 0 &&
+      DICTIONARY_METADATA_PATTERN.test(value.artifactSha256),
+  );
+}
+function sameDictionaryIdentity(left, right) {
+  return Boolean(
+    validDictionaryMetadata(left) &&
+      validDictionaryMetadata(right) &&
+      left.dictionaryId === right.dictionaryId &&
+      left.artifactSha256.toLowerCase() === right.artifactSha256.toLowerCase(),
+  );
+}
+function dictionaryVersionUnavailable() {
+  const error = new Error("Dictionary version unavailable");
+  error.code = "DICTIONARY_VERSION_UNAVAILABLE";
+  return error;
+}
 async function fetchDictionary(dictionaryId = DEFAULT_DICTIONARY_ID) {
   if (dictionaryRequestCache.has(dictionaryId))
     return dictionaryRequestCache.get(dictionaryId);
@@ -71,9 +94,9 @@ async function fetchDictionary(dictionaryId = DEFAULT_DICTIONARY_ID) {
     .then((payload) => {
       if (
         payload?.dictionary?.dictionaryId !== dictionaryId ||
-        !Array.isArray(payload.words)
+        !validDictionaryMetadata(payload.dictionary)
       )
-        throw new Error("Dictionary response was invalid");
+        throw dictionaryVersionUnavailable();
       return payload;
     });
   dictionaryRequestCache.set(dictionaryId, request);
@@ -104,6 +127,7 @@ async function requestSoloBoard({ mode, config, adultMode, dictionaryId }) {
   if (
     payload?.mode !== mode ||
     payload?.dictionary?.dictionaryId !== dictionaryId ||
+    !validDictionaryMetadata(payload.dictionary) ||
     !payload.config ||
     !Number.isInteger(payload.seed) ||
     !Array.isArray(payload.board) ||
@@ -125,7 +149,7 @@ function validDailyChallenge(challenge) {
       challenge.config &&
       Number.isInteger(challenge.config.size) &&
       Number.isInteger(challenge.config.seconds) &&
-      typeof challenge.dictionary?.dictionaryId === "string" &&
+      validDictionaryMetadata(challenge.dictionary) &&
       Array.isArray(challenge.board) &&
       challenge.board.length === challenge.config.size * challenge.config.size &&
       challenge.board.every((letter) => /^[A-Z]$/.test(letter)),
@@ -139,6 +163,9 @@ async function requestDailyChallenge() {
     error.code = payload?.error;
     throw error;
   }
+  const dictionary = await fetchDictionary(payload.challenge.dictionary.dictionaryId);
+  if (!sameDictionaryIdentity(payload.challenge.dictionary, dictionary.dictionary))
+    throw dictionaryVersionUnavailable();
   return { challenge: payload.challenge, target: null, shareRef: null };
 }
 async function requestSharedChallenge(ref) {
@@ -149,6 +176,9 @@ async function requestSharedChallenge(ref) {
     error.code = payload?.error;
     throw error;
   }
+  const dictionary = await fetchDictionary(payload.challenge.dictionary.dictionaryId);
+  if (!sameDictionaryIdentity(payload.challenge.dictionary, dictionary.dictionary))
+    throw dictionaryVersionUnavailable();
   return { challenge: payload.challenge, target: payload.target || null, shareRef: ref };
 }
 async function requestRelayChallenge(id = null) {
@@ -169,7 +199,7 @@ async function requestRelayChallenge(id = null) {
     !Array.isArray(challenge.board) ||
     challenge.board.length !== challenge.config.size * challenge.config.size ||
     !challenge.board.every((letter) => /^[A-Z]$/.test(letter)) ||
-    !challenge.dictionary?.dictionaryId ||
+    !validDictionaryMetadata(challenge.dictionary) ||
     !Number.isSafeInteger(challenge.revision) ||
     !challenge.state ||
     !Array.isArray(challenge.state.found) ||
@@ -179,6 +209,9 @@ async function requestRelayChallenge(id = null) {
     error.code = payload?.error;
     throw error;
   }
+  const dictionary = await fetchDictionary(challenge.dictionary.dictionaryId);
+  if (!sameDictionaryIdentity(challenge.dictionary, dictionary.dictionary))
+    throw dictionaryVersionUnavailable();
   return { challenge };
 }
 async function applySoloBoardTestFixture(generated) {
@@ -203,26 +236,39 @@ async function applySoloBoardTestFixture(generated) {
     : generated;
 }
 async function isServerDictionaryWord(word, dictionaryId, adultMode) {
-  const key = `${dictionaryId}:${adultMode ? "dirty" : "classic"}:${word}`;
+  const artifactSha256 = s.dictionaryMetadata?.dictionaryId === dictionaryId
+    ? s.dictionaryMetadata.artifactSha256
+    : "unknown";
+  const key = `${dictionaryId}:${artifactSha256}:${adultMode ? "dirty" : "classic"}:${word}`;
   if (wordCheckCache.has(key)) return wordCheckCache.get(key);
-  const check = fetch(
-      "/api/word-check?word=" +
-      encodeURIComponent(word) +
-      "&dictionaryId=" +
-      encodeURIComponent(dictionaryId) +
-      "&adult=" +
-      (adultMode ? "1" : "0"),
-  )
-    .then((response) => {
-      if (!response.ok) throw new Error("Word check failed");
-      return response.json();
-    })
-    .then((result) => result.valid === true)
-    .catch(() => {
-      wordCheckCache.delete(key);
-      return lex().has(String(word || "").toUpperCase());
+  const check = (async () => {
+    let lastError;
+    for (let attempt = 0; attempt < WORD_CHECK_ATTEMPTS; attempt++) {
+      try {
+        const response = await fetch(
+          "/api/word-check?word=" +
+          encodeURIComponent(word) +
+          "&dictionaryId=" +
+          encodeURIComponent(dictionaryId) +
+          "&adult=" +
+          (adultMode ? "1" : "0"),
+        );
+        if (!response.ok) throw new Error("Word check failed");
+        const result = await response.json();
+        if (typeof result?.valid !== "boolean")
+          throw new Error("Word check response was invalid");
+        return result.valid;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw Object.assign(new Error("Word check unavailable"), {
+      code: "WORD_CHECK_UNAVAILABLE",
+      cause: lastError,
     });
+  })();
   wordCheckCache.set(key, check);
+  check.catch(() => wordCheckCache.delete(key));
   return check;
 }
 const s = {
@@ -269,7 +315,6 @@ const s = {
   config: null,
   dictionaryId: DEFAULT_DICTIONARY_ID,
   dictionaryMetadata: null,
-  dictionaryWords: [],
   dailyChallenge: null,
   echo: null,
   relayChallenge: null,
@@ -878,18 +923,6 @@ function formatTimer(seconds) {
 }
 updateIdentity();
 updateProfile();
-let lexiconCache = null;
-let lexiconCacheKey = "";
-function lex() {
-  const key = s.dictionaryId + ":" + s.mode + ":" + customAdult;
-  if (lexiconCache && lexiconCacheKey === key) return lexiconCache;
-  lexiconCacheKey = key;
-  lexiconCache = new Set([
-    ...s.dictionaryWords,
-    ...(s.mode === "dirty" || customAdult ? adult : []),
-  ]);
-  return lexiconCache;
-}
 function near(i) {
   return sharedBoardCore.neighbors(i, s.n);
 }
@@ -1891,6 +1924,8 @@ async function start(
       generated = await applySoloBoardTestFixture(generated);
       if (!isCurrentChallengeOperation(challengeOperation)) return;
     }
+    if (!sameDictionaryIdentity(generated.dictionary, dictionary.dictionary))
+      throw dictionaryVersionUnavailable();
   } catch (error) {
     if (
       generationRequest !== soloGenerationRequest ||
@@ -1898,7 +1933,9 @@ async function start(
     )
       return;
     const failureMessage =
-      error.code === "BOARD_GENERATION_FAILED" &&
+      error.code === "DICTIONARY_VERSION_UNAVAILABLE"
+        ? "This challenge uses an unavailable dictionary version. Please start a fresh challenge."
+        : error.code === "BOARD_GENERATION_FAILED" &&
       error.failureCode === "QUALITY_PROFILE_UNAVAILABLE"
         ? "This configuration is not currently supported."
         : error.code === "BOARD_GENERATION_FAILED" &&
@@ -1921,7 +1958,6 @@ async function start(
   s.config = config;
   s.dictionaryId = dictionary.dictionary.dictionaryId;
   s.dictionaryMetadata = dictionary.dictionary;
-  s.dictionaryWords = dictionary.words;
   customAdult = generationInputs.adultMode;
   s.mode = generationInputs.mode;
   s.rush = generationInputs.rush;
@@ -2292,7 +2328,14 @@ async function submit() {
       ? isServerDictionaryWord(w, dictionaryId, adultMode)
       : Promise.resolve(false);
   void enqueueSoloSubmission(async () => {
-    const inDictionary = await dictionaryRequest;
+    let inDictionary;
+    try {
+      inDictionary = await dictionaryRequest;
+    } catch (error) {
+      if (isCurrentSoloSubmission(roundEpoch, roundId, roundStartedAt, roundEndsAt))
+        toast("Word check unavailable — try again", "wrong");
+      return;
+    }
     if (!isCurrentSoloSubmission(roundEpoch, roundId, roundStartedAt, roundEndsAt)) return;
     if (roundEndsAt && Date.now() >= roundEndsAt) {
       end("timeout");
@@ -2953,7 +2996,6 @@ window.wordrushOnlineRound = (
   s.mode = mode || "classic";
   s.dictionaryId = round.dictionary?.dictionaryId || dictionaryMetadata?.dictionaryId || DEFAULT_DICTIONARY_ID;
   s.dictionaryMetadata = round.dictionary || dictionaryMetadata;
-  s.dictionaryWords = [];
   s.onlineRandomRush = Boolean(randomRush);
   s.onlineResultRoundId = null;
   s.onlineNextRound = null;

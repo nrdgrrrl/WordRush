@@ -304,6 +304,24 @@ test("revalidates mutable browser resources while retaining static asset caching
   }
 });
 
+test("ordinary dictionary validation returns metadata and bounded responses without the bulk artifact", async () => {
+  const origin = "http://127.0.0.1:" + server.address().port;
+  const metadataResponse = await fetch(origin + "/api/dictionary?dictionaryId=" + encodeURIComponent(DEFAULT_DICTIONARY_ID));
+  assert.equal(metadataResponse.status, 200);
+  const metadataBytes = await metadataResponse.text();
+  assert.ok(metadataBytes.length < 4_096);
+  const metadata = JSON.parse(metadataBytes);
+  assert.equal(metadata.dictionary.dictionaryId, DEFAULT_DICTIONARY_ID);
+  assert.match(metadata.dictionary.artifactSha256, /^[a-f0-9]{64}$/i);
+  assert.equal(Object.hasOwn(metadata, "words"), false);
+
+  const wordCheckResponse = await fetch(origin + "/api/word-check?word=TEA&dictionaryId=" + encodeURIComponent(DEFAULT_DICTIONARY_ID));
+  assert.equal(wordCheckResponse.status, 200);
+  const wordCheckBytes = await wordCheckResponse.text();
+  assert.ok(wordCheckBytes.length < 512);
+  assert.deepEqual(JSON.parse(wordCheckBytes), { valid: true });
+});
+
 test("serves SEO app routes and redirects transient game screens", async () => {
   const origin = "http://127.0.0.1:" + server.address().port;
   const routes = [

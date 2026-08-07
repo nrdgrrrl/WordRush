@@ -86,6 +86,8 @@ inputs: requiring revalidation prevents a browser from combining a newly
 deployed HTML or server release with a stale protocol-bearing client resource.
 The versioned `/api/dictionary?dictionaryId=...` endpoint remains normally
 cacheable because its selected dictionary ID is part of the request contract.
+It returns metadata only; ordinary gameplay validates words through the small
+`/api/word-check` response and never downloads the dictionary artifact.
 
 Images and other static files beneath `/assets/`, along with `robots.txt` and
 `sitemap.xml`, retain their normal cacheable policies. Deployment and rollback
