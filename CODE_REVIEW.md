@@ -228,9 +228,9 @@ server trust boundaries, test tooling, and the production deployment path.
 
 ### 31. Multiplayer Random Rush mixed incompatible modes
 
-- Problem: its server queue included adult Dirty Mode and cooperative play.
-- Risk: players could enter adult content without choosing it, and cooperative
-  scoring broke the competitive sequence promised by Random Rush.
+- Problem: its server queue included cooperative play alongside the competitive
+  modes promised by Random Rush.
+- Risk: cooperative scoring broke that competitive sequence.
 - Fix: both modes are excluded from multiplayer Random Rush; the server test now
   enforces the safe competitive set.
 
@@ -355,4 +355,4 @@ The release gate now covers 31 unit/integration tests, 35 browser tests, and 2 t
 - Rooms and active rounds are intentionally in-memory for this LAN application; a process restart ends them.
 - Solo leaderboard submissions remain client-reported because solo rounds run entirely in the browser. Numeric caps prevent data corruption, but tamper-resistant public rankings would require authenticated accounts and server-hosted solo rounds.
 - The standard dictionary is a checked-in, versioned, licensed artifact compiled from pinned ESDB data; runtime does not depend on a host OS dictionary or external download.
-- Native prompt/confirm dialogs remain for room joining, personal dictionary entry, and adult-mode consent. Dedicated dialogs would improve polish but do not block the current workflows.
+- Native prompt/confirm dialogs remain for room joining and personal dictionary entry. Dedicated dialogs would improve polish but do not block the current workflows.

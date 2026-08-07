@@ -2,8 +2,6 @@ const { runtimeConfig } = require("./runtime-config");
 const {
   PORT,
   RANDOM_RUSH_DELAY,
-  WORDRUSH_CONSENT_TIMEOUT_MS: CONSENT_TIMEOUT_MS,
-  WORDRUSH_CHALLENGE_TIMEOUT_MS: CHALLENGE_TIMEOUT_MS,
   WORDRUSH_DISPLAY_TOKEN_TTL_MS: DISPLAY_TOKEN_TTL_MS,
   WORDRUSH_DISPLAY_RECONNECT_TTL_MS: DISPLAY_RECONNECT_TTL_MS,
   WORDRUSH_ROOM_RECONNECT_GRACE_MS: ROOM_RECONNECT_GRACE_MS,
@@ -94,7 +92,6 @@ const RATE_WINDOW_MS = 60_000;
 const displayTokens = new Map();
 const displayCredentials = new Map();
 const rateLimits = new Map();
-const preAdmissionChallenges = new Map();
 const configuredOrigins = (process.env.WORDRUSH_ALLOWED_ORIGINS || "")
   .split(",")
   .map((value) => value.trim())
@@ -304,22 +301,6 @@ function boundedNumber(value, fallback, minimum, maximum) {
   return Number.isFinite(parsed)
     ? Math.max(minimum, Math.min(maximum, parsed))
     : fallback;
-}
-function isAdultRequest(mode, config) {
-  if (mode === "dirty") return true;
-  return usesAdultLexicon(config);
-}
-function requiresAdultConsent(mode, config) {
-  return mode !== "dirty" && usesAdultLexicon(config);
-}
-function isAdultRoom(room) {
-  return requiresAdultConsent(room.mode, roomConfig(room));
-}
-function isAdultLastResult(room) {
-  return room.status === "finished" && room.lastResult && isAdultRoom(room);
-}
-function roomExposesAdultContent(room) {
-  return Boolean(room.pendingConsent) || isAdultRoom(room) || isAdultLastResult(room);
 }
 function requestedConfig(mode, raw) {
   if (mode === "custom") {
@@ -557,172 +538,6 @@ function admitPlayerToRoom(room, client, ws) {
     room.round.participants.set(client.id, player);
   return player;
 }
-function createPendingConsent(
-  room,
-  mode,
-  config,
-  dictionaryId = room.dictionaryId || DEFAULT_DICTIONARY_ID,
-  options = {},
-) {
-  if (!config) return null;
-  const adultConfig = { ...config, adult: true };
-  const requestId = crypto.randomUUID();
-  const expiresAt = Date.now() + CONSENT_TIMEOUT_MS;
-  const connectedIds = [...room.players.values()]
-    .filter((p) => p.ws?.readyState === 1)
-    .map((p) => p.id);
-  if (!connectedIds.length) return null;
-  room.pendingConsent = {
-    requestId,
-    mode,
-    config: adultConfig,
-    dictionaryId,
-    randomRush: options.randomRush === true,
-    randomRushIncludeDirty: options.randomRushIncludeDirty === true,
-    randomRushEpoch: options.randomRushEpoch ?? room.randomRushEpoch,
-    sourceRoundId: options.sourceRoundId || null,
-    requiredPlayerIds: connectedIds,
-    acceptedPlayerIds: [],
-    expiresAt,
-    timer: setTimeout(() => {
-      if (room.pendingConsent?.requestId === requestId)
-        cancelPendingConsent(room, "timeout");
-    }, CONSENT_TIMEOUT_MS),
-  };
-  room.pendingConsent.timer.unref?.();
-  broadcast(room, {
-    type: "adult_consent_request",
-    requestId,
-    mode,
-    config: { adult: true, min: config.min, size: config.size, seconds: config.seconds },
-    requiredPlayerIds: connectedIds,
-    acceptedPlayerIds: [],
-    expiresAt,
-  });
-  return room.pendingConsent;
-}
-function pendingConsentContextIsCurrent(room, pending) {
-  if (!pending) return false;
-  if (!pending.randomRush)
-    return room.status === "lobby" && room.round === null;
-  if (
-    !room.randomRush ||
-    room.randomRushEpoch !== pending.randomRushEpoch
-  )
-    return false;
-  if (!pending.sourceRoundId)
-    return room.status === "lobby" && room.round === null;
-  return Boolean(
-    room.status === "finished" &&
-      room.round?.id === pending.sourceRoundId &&
-      room.lastResult?.roundId === pending.sourceRoundId &&
-      !room.nextRound
-  );
-}
-function cancelPendingConsent(room, reason) {
-  const pending = room.pendingConsent;
-  if (!pending) return;
-  if (
-    pending.generating &&
-    room.generation?.consentRequestId === pending.requestId
-  )
-    room.generation.cancelled = true;
-  clearTimeout(pending.timer);
-  room.pendingConsent = null;
-  if (pending.randomRush) resetRandomRush(room);
-  broadcast(room, {
-    type: "adult_consent_cancelled",
-    requestId: pending.requestId,
-    reason,
-  });
-  if (pending.randomRush) broadcast(room, state(room));
-}
-async function completeAdultConsent(room, requestId) {
-  const pending = room.pendingConsent;
-  if (
-    !pending ||
-    pending.requestId !== requestId ||
-    !pendingConsentContextIsCurrent(room, pending) ||
-    pending.generating
-  )
-    return false;
-  if (pending.acceptedPlayerIds.length !== pending.requiredPlayerIds.length)
-    return false;
-  for (const id of pending.requiredPlayerIds) {
-    if (!pending.acceptedPlayerIds.includes(id)) return false;
-    if (room.pendingConsent !== pending || pending.generating) return false;
-    const player = room.players.get(id);
-    if (!player || player.ws?.readyState !== 1) return false;
-  }
-  const acceptedIds = [...pending.acceptedPlayerIds];
-  const storedRequestId = pending.requestId;
-  pending.generating = true;
-  clearTimeout(pending.timer);
-  const started = await startRound(
-    room,
-    pending.mode,
-    pending.config,
-    acceptedIds,
-    storedRequestId,
-    pending.dictionaryId,
-  );
-  if (!started && room.pendingConsent === pending)
-    cancelPendingConsent(room, "generation_failed");
-  return started;
-}
-function createPreAdmissionChallenge(room, client, ws, options = {}) {
-  const challengeId = crypto.randomUUID();
-  const challenge = {
-    challengeId,
-    roomCode: room.code,
-    clientId: client.id,
-    ws,
-    targetRequestId: options.targetRequestId || (room.pendingConsent ? room.pendingConsent.requestId : null),
-    roundId: options.roundId || (room.round ? room.round.id : null),
-    resultRoundId: options.resultRoundId || null,
-    expiresAt: Date.now() + CHALLENGE_TIMEOUT_MS,
-  };
-  preAdmissionChallenges.set(challengeId, challenge);
-  const sourceConfig = room.pendingConsent ? room.pendingConsent.config : roomConfig(room);
-  const safeMeta = {
-    adult: true,
-    min: sourceConfig.min,
-    size: sourceConfig.size,
-    seconds: sourceConfig.seconds,
-  };
-  const mode = room.pendingConsent?.mode || room.mode;
-  const payload = {
-    type: "adult_pre_admission_challenge",
-    challengeId,
-    roomCode: room.code,
-    expiresAt: challenge.expiresAt,
-    mode,
-    config: safeMeta,
-  };
-  if (room.round) payload.roundId = room.round.id;
-  if (room.lastResult && isAdultLastResult(room)) payload.resultRoundId = room.lastResult.roundId;
-  if (room.pendingConsent) payload.targetRequestId = room.pendingConsent.requestId;
-  send(ws, payload);
-  return challenge;
-}
-function findPreAdmissionBySocket(ws) {
-  for (const challenge of preAdmissionChallenges.values())
-    if (challenge.ws === ws) return challenge;
-  return null;
-}
-function cleanupPreAdmission(ws) {
-  const challenge = findPreAdmissionBySocket(ws);
-  if (challenge) preAdmissionChallenges.delete(challenge.challengeId);
-}
-function prunePreAdmissionChallenges(now = Date.now()) {
-  for (const [id, challenge] of preAdmissionChallenges) {
-    if (challenge.expiresAt <= now) {
-      preAdmissionChallenges.delete(id);
-      if (challenge.ws?.readyState === 1)
-        send(challenge.ws, { type: "adult_pre_admission_timeout", challengeId: id });
-    }
-  }
-}
 function playerScore(room, player) {
   return room.mode === "coop"
     ? room.teamScore
@@ -874,20 +689,8 @@ function closeRoom(room, reason) {
     releaseSeriesGenerationWait(room.generation);
   }
   room.generation = null;
-  if (room.pendingConsent) cancelPendingConsent(room, "room_closed");
   resetRandomRush(room);
   room.suddenDeathSeries = null;
-  for (const [id, challenge] of preAdmissionChallenges) {
-    if (challenge.roomCode === room.code) {
-      preAdmissionChallenges.delete(id);
-      if (challenge.ws?.readyState === 1)
-        send(challenge.ws, {
-          type: "session_closed",
-          code: room.code,
-          reason,
-        });
-    }
-  }
   rooms.delete(room.code);
   for (const member of room.players.values()) {
     clearTimeout(member.disconnectTimer);
@@ -1243,8 +1046,6 @@ function settleSuddenDeathSeriesRound(
     room,
     SUDDEN_SERIES_MODE,
     configForPreset(SUDDEN_SERIES_MODE),
-    null,
-    null,
     room.dictionaryId,
   );
   return true;
@@ -1252,8 +1053,7 @@ function settleSuddenDeathSeriesRound(
 function retireFinishedRoundForReplacement(room) {
   if (room.status !== "finished") return false;
   clearRoomTimer(room);
-  if (room.pendingConsent) cancelPendingConsent(room, "configuration_changed");
-  else resetRandomRush(room);
+  resetRandomRush(room);
   room.round = null;
   room.lastResult = null;
   room.suddenDeathSeries = null;
@@ -1275,7 +1075,6 @@ function generationFailure(room, generation, result) {
   releaseSeriesGenerationWait(generation);
   if (
     room.randomRush &&
-    !generation.consentRequestId &&
     generation.randomRushEpoch === room.randomRushEpoch
   )
     resetRandomRush(room);
@@ -1284,7 +1083,7 @@ function generationFailure(room, generation, result) {
   const diagnostics = result?.diagnostics
     ? { ...result.diagnostics, dictionary: generation.dictionary }
     : null;
-  if (failureCode !== "QUALITY_SELECTION_CANCELLED" && failureCode !== "CONSENT_INVALIDATED")
+  if (failureCode !== "QUALITY_SELECTION_CANCELLED")
     console.warn("Wordrush quality board generation failed", JSON.stringify({
       failureCode,
       diagnostics,
@@ -1393,8 +1192,6 @@ async function startRound(
   room,
   selected = room.mode,
   configArg = null,
-  roundConsentedPlayerIds = null,
-  consentRequestId = null,
   dictionaryId = room.dictionaryId || DEFAULT_DICTIONARY_ID,
 ) {
   if (room.generation) return false;
@@ -1406,28 +1203,11 @@ async function startRound(
     seriesTransitionId,
   }))
     return false;
-  const pendingConsent = consentRequestId
-    ? room.pendingConsent?.requestId === consentRequestId
-      ? room.pendingConsent
-      : null
-    : null;
-  if (consentRequestId && !pendingConsentContextIsCurrent(room, pendingConsent))
-    return false;
   let config = configArg;
   if (!config) {
     const preset = configForPreset(selected);
     if (!preset) return;
     config = preset;
-  }
-  if (requiresAdultConsent(selected, config)) {
-    const validConsent =
-      Array.isArray(roundConsentedPlayerIds) &&
-      roundConsentedPlayerIds.length > 0 &&
-      roundConsentedPlayerIds.every(id => {
-        const player = room.players.get(id);
-        return player && player.ws?.readyState === 1;
-      });
-    if (!validConsent) return;
   }
   let heistState = null;
   if (selected === "heist") {
@@ -1461,7 +1241,6 @@ async function startRound(
   const validationMode = contract.validationMode;
   const generation = {
     token: crypto.randomUUID(),
-    consentRequestId,
     randomRushEpoch: room.randomRushEpoch,
     seriesId: series?.id || null,
     seriesTransitionId,
@@ -1483,32 +1262,6 @@ async function startRound(
     generation.cancelled = true;
     return false;
   }
-  if (
-    consentRequestId &&
-    (!pendingConsentContextIsCurrent(room, room.pendingConsent) ||
-      room.pendingConsent?.requestId !== consentRequestId)
-  )
-    return generationFailure(room, generation, {
-      ok: false,
-      error: { code: "CONSENT_INVALIDATED" },
-      diagnostics: result?.diagnostics,
-    });
-  const consentedPlayerIds =
-    consentRequestId && room.pendingConsent?.requestId === consentRequestId
-      ? [...room.pendingConsent.acceptedPlayerIds]
-      : roundConsentedPlayerIds
-        ? [...roundConsentedPlayerIds]
-        : [...room.players.keys()];
-  if (
-    requiresAdultConsent(selected, config) &&
-    (!consentedPlayerIds.length ||
-      !consentedPlayerIds.every((id) => room.players.get(id)?.ws?.readyState === 1))
-  )
-    return generationFailure(room, generation, {
-      ok: false,
-      error: { code: "CONSENT_INVALIDATED" },
-      diagnostics: result?.diagnostics,
-    });
   if (!result.ok) return generationFailure(room, generation, result);
   if (generation.seriesId && generation.seriesTransitionId) {
     await waitForSeriesDeadline(room, generation);
@@ -1522,10 +1275,6 @@ async function startRound(
     }
   }
   room.generation = null;
-  if (consentRequestId && room.pendingConsent?.requestId === consentRequestId) {
-    clearTimeout(room.pendingConsent.timer);
-    room.pendingConsent = null;
-  }
   room.mode = selected;
   room.config = config;
   room.dictionaryId = dictionary.id;
@@ -1565,8 +1314,6 @@ async function startRound(
     dictionary: dictionary.metadata,
     validationMode,
     quality: result.compactDiagnostics || null,
-    adultConsentRequestId: consentRequestId,
-    consentedPlayerIds,
     participants: series ? new Map(seriesRoundPlayers) : new Map(room.players),
     seriesId: series?.id || null,
     seriesRoundNumber,
@@ -1876,7 +1623,6 @@ function expireDisconnectedPlayer(room, player, ws) {
   broadcast(room, state(room));
 }
 function leave(ws) {
-  cleanupPreAdmission(ws);
   const info = clients.get(ws);
   if (!info) return leaveDisplay(ws);
   clients.delete(ws);
@@ -1884,11 +1630,6 @@ function leave(ws) {
   if (!room) return;
   const player = room.players.get(info.id);
   if (!player || player.ws !== ws) return;
-  if (
-    room.pendingConsent &&
-    room.pendingConsent.requiredPlayerIds.includes(info.id)
-  )
-    cancelPendingConsent(room, "player_disconnected");
   clearTimeout(player.disconnectTimer);
   player.disconnectTimer = null;
   // Preserve the seat during the bounded reconnect grace period for both host
@@ -1980,11 +1721,6 @@ async function handle(ws, message) {
           ? "SERIES_ROSTER_FROZEN"
           : "RESUME_FAILED",
       });
-    if (
-      roomExposesAdultContent(room) &&
-      !room.round?.consentedPlayerIds?.includes(client.id)
-    )
-      return send(ws, { type: "error", code: "RESUME_FAILED" });
     const oldSocket = player.ws;
     clearTimeout(player.disconnectTimer);
     player.disconnectTimer = null;
@@ -2071,12 +1807,6 @@ async function handle(ws, message) {
         return send(ws, { type: "error", code: "ALREADY_JOINED" });
       if (existingPlayer.reconnectToken !== message.reconnectToken)
         return send(ws, { type: "error", code: "RECONNECT_TOKEN_REQUIRED" });
-      if (
-        roomExposesAdultContent(room) &&
-        !room.round?.consentedPlayerIds?.includes(client.id) &&
-        !room.lastResult?.consentedPlayerIds?.includes(client.id)
-      )
-        return send(ws, { type: "error", code: "RESUME_FAILED" });
       const oldSocket = existingPlayer.ws;
       clearTimeout(existingPlayer.disconnectTimer);
       existingPlayer.disconnectTimer = null;
@@ -2115,12 +1845,6 @@ async function handle(ws, message) {
     if (rejectDetachedRoundParticipant(room, client, ws)) return;
     if (room.players.size >= MAX_PLAYERS)
       return send(ws, { type: "error", code: "ROOM_FULL" });
-    if (roomExposesAdultContent(room)) {
-      const existingChallenge = findPreAdmissionBySocket(ws);
-      if (existingChallenge) preAdmissionChallenges.delete(existingChallenge.challengeId);
-      createPreAdmissionChallenge(room, client, ws);
-      return;
-    }
     client.roomCode = room.code;
     client.name = cleanText(message.name, client.name);
     client.avatar = cleanAvatar(message.avatar, client.avatar || "🐈");
@@ -2131,166 +1855,6 @@ async function handle(ws, message) {
       reconnectToken: player.reconnectToken,
     });
     broadcast(room, state(room));
-    return;
-  }
-  if (type === "adult_consent_response") {
-    const hasRequestId = typeof message.requestId === "string";
-    const hasChallengeId = typeof message.challengeId === "string";
-    if (hasRequestId && hasChallengeId)
-      return send(ws, { type: "error", code: "CONSENT_AMBIGUOUS" });
-    if (!hasRequestId && !hasChallengeId)
-      return send(ws, { type: "error", code: "CONSENT_MISSING_TARGET" });
-    if (message.accepted !== true && message.accepted !== false)
-      return send(ws, { type: "error", code: "CONSENT_INVALID_VALUE" });
-    if (hasChallengeId) {
-      const challenge = preAdmissionChallenges.get(message.challengeId);
-      if (!challenge || challenge.ws !== ws) return;
-      const challengeClient = clients.get(ws);
-      if (!challengeClient || challengeClient.id !== challenge.clientId) return;
-      const targetRoom = rooms.get(challenge.roomCode);
-      if (!targetRoom || targetRoom.status === "closed") {
-        preAdmissionChallenges.delete(challenge.challengeId);
-        return send(ws, { type: "adult_pre_admission_declined", challengeId: message.challengeId });
-      }
-      if (challenge.expiresAt <= Date.now()) {
-        preAdmissionChallenges.delete(challenge.challengeId);
-        return send(ws, { type: "adult_pre_admission_timeout", challengeId: message.challengeId });
-      }
-      if (!message.accepted) {
-        preAdmissionChallenges.delete(challenge.challengeId);
-        return send(ws, { type: "adult_pre_admission_declined", challengeId: message.challengeId });
-      }
-      preAdmissionChallenges.delete(challenge.challengeId);
-
-      function admitPlayer() {
-        if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
-        if (
-          targetRoom.suddenDeathSeries &&
-          ["playing", "interstitial"].includes(targetRoom.suddenDeathSeries.phase)
-        ) {
-          const frozenIdentity = seriesParticipant(targetRoom, challengeClient.id);
-          send(ws, {
-            type: "error",
-            code: frozenIdentity?.status === "withdrawn"
-              ? "SERIES_PARTICIPANT_WITHDRAWN"
-              : "SERIES_ROSTER_FROZEN",
-          });
-          return null;
-        }
-        if (rejectHeistAdmission(targetRoom, challengeClient, ws)) return null;
-        if (rejectDetachedRoundParticipant(targetRoom, challengeClient, ws)) return null;
-        if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
-        challengeClient.roomCode = targetRoom.code;
-        const player = admitPlayerToRoom(targetRoom, challengeClient, ws);
-        send(ws, {
-          type: "adult_pre_admission_accepted",
-          challengeId: challenge.challengeId,
-          code: targetRoom.code,
-          reconnectToken: player.reconnectToken,
-        });
-        send(ws, {
-          type: "joined_room",
-          code: targetRoom.code,
-          reconnectToken: player.reconnectToken,
-        });
-        broadcast(targetRoom, state(targetRoom));
-        return player;
-      }
-
-      const samePending = challenge.targetRequestId && targetRoom.pendingConsent?.requestId === challenge.targetRequestId;
-      const sameActiveRound = challenge.targetRequestId && targetRoom.round?.adultConsentRequestId === challenge.targetRequestId;
-      const sameActiveRoundById = !challenge.targetRequestId && challenge.roundId && targetRoom.round?.id === challenge.roundId;
-      const sameFinishedResult = challenge.resultRoundId && targetRoom.lastResult?.roundId === challenge.resultRoundId;
-
-      if (samePending) {
-        const admitted = admitPlayer();
-        if (!admitted) return;
-        if (!targetRoom.pendingConsent.requiredPlayerIds.includes(challengeClient.id))
-          targetRoom.pendingConsent.requiredPlayerIds.push(challengeClient.id);
-        if (!targetRoom.pendingConsent.acceptedPlayerIds.includes(challengeClient.id))
-          targetRoom.pendingConsent.acceptedPlayerIds.push(challengeClient.id);
-        if (!targetRoom.pendingConsent.generating)
-          await completeAdultConsent(targetRoom, challenge.targetRequestId);
-        return;
-      }
-      if (sameActiveRound || sameActiveRoundById) {
-        if (!isAdultRoom(targetRoom)) return admitNormalJoin();
-        const admitted = admitPlayer();
-        if (!admitted) return;
-        targetRoom.round.consentedPlayerIds.push(challengeClient.id);
-        return;
-      }
-      if (sameFinishedResult) {
-        if (!isAdultLastResult(targetRoom)) return admitNormalJoin();
-        const admitted = admitPlayer();
-        if (!admitted) return;
-        targetRoom.lastResult.consentedPlayerIds = targetRoom.lastResult.consentedPlayerIds || [];
-        targetRoom.lastResult.consentedPlayerIds.push(challengeClient.id);
-        return;
-      }
-
-      function admitNormalJoin() {
-        if (challengeClient.roomCode) { send(ws, { type: "error", code: "ALREADY_IN_ROOM" }); return null; }
-        if (rejectHeistAdmission(targetRoom, challengeClient, ws)) return null;
-        if (rejectDetachedRoundParticipant(targetRoom, challengeClient, ws)) return null;
-        if (targetRoom.players.size >= MAX_PLAYERS) { send(ws, { type: "error", code: "ROOM_FULL" }); return null; }
-        challengeClient.roomCode = targetRoom.code;
-        const player = admitPlayerToRoom(targetRoom, challengeClient, ws);
-        send(ws, {
-          type: "joined_room",
-          code: targetRoom.code,
-          reconnectToken: player.reconnectToken,
-        });
-        broadcast(targetRoom, state(targetRoom));
-        return player;
-      }
-
-      if (!targetRoom.pendingConsent && !isAdultRoom(targetRoom) && !isAdultLastResult(targetRoom)) {
-        admitNormalJoin();
-        return;
-      }
-
-      if (challenge.targetRequestId && challenge.targetRequestId !== targetRoom.pendingConsent?.requestId && challenge.targetRequestId !== targetRoom.round?.adultConsentRequestId) {
-        createPreAdmissionChallenge(targetRoom, challengeClient, ws);
-        return;
-      }
-      createPreAdmissionChallenge(targetRoom, challengeClient, ws);
-      return;
-    }
-    const responseClient = clients.get(ws);
-    if (!responseClient) return send(ws, { type: "error", code: "HELLO_REQUIRED" });
-    const responseRoom = rooms.get(responseClient.roomCode);
-    if (!responseRoom) return send(ws, { type: "error", code: "NOT_IN_ROOM" });
-    const pending = responseRoom.pendingConsent;
-    if (!pending || pending.requestId !== message.requestId)
-      return send(ws, { type: "error", code: "CONSENT_MISMATCH" });
-    if (!pending.requiredPlayerIds.includes(responseClient.id))
-      return send(ws, { type: "error", code: "CONSENT_NOT_REQUIRED" });
-    if (!message.accepted) {
-      cancelPendingConsent(responseRoom, "player_declined");
-      return;
-    }
-    if (!pending.acceptedPlayerIds.includes(responseClient.id))
-      pending.acceptedPlayerIds.push(responseClient.id);
-    broadcast(responseRoom, {
-      type: "adult_consent_player_accepted",
-      requestId: pending.requestId,
-      playerId: responseClient.id,
-      acceptedPlayerIds: pending.acceptedPlayerIds,
-      requiredPlayerIds: pending.requiredPlayerIds,
-    });
-    await completeAdultConsent(responseRoom, pending.requestId);
-    return;
-  }
-  if (type === "adult_consent_cancel") {
-    const cancelClient = clients.get(ws);
-    if (!cancelClient) return send(ws, { type: "error", code: "HELLO_REQUIRED" });
-    const cancelRoom = rooms.get(cancelClient.roomCode);
-    if (!cancelRoom) return send(ws, { type: "error", code: "NOT_IN_ROOM" });
-    if (cancelClient.id !== cancelRoom.creatorId)
-      return send(ws, { type: "error", code: "CREATOR_ONLY" });
-    if (cancelRoom.pendingConsent && cancelRoom.pendingConsent.requestId === message.requestId)
-      cancelPendingConsent(cancelRoom, "host_cancelled");
     return;
   }
   const room = rooms.get(client.roomCode);
@@ -2332,11 +1896,6 @@ async function handle(ws, message) {
       send(ws, { type: "session_left" });
       return;
     }
-    if (
-      leavingRoom.pendingConsent &&
-      leavingRoom.pendingConsent.requiredPlayerIds.includes(client.id)
-    )
-      cancelPendingConsent(leavingRoom, "player_left");
     clearTimeout(leavingRoom.players.get(client.id)?.disconnectTimer);
     leavingRoom.players.delete(client.id);
     client.roomCode = null;
@@ -2418,7 +1977,6 @@ async function handle(ws, message) {
         broadcast(room, state(room));
       }
       removeExcludedSeriesSeats(room, roster);
-      if (room.pendingConsent) cancelPendingConsent(room, "configuration_changed");
       clearQueuedNextRound(room);
       room.randomRush = false;
       room.randomRushIncludeDirty = false;
@@ -2436,8 +1994,6 @@ async function handle(ws, message) {
         room,
         SUDDEN_SERIES_MODE,
         configForPreset(SUDDEN_SERIES_MODE),
-        null,
-        null,
         requestedDictionaryId,
       );
       if (!started && room.suddenDeathSeries?.id === seriesId)
@@ -2450,22 +2006,13 @@ async function handle(ws, message) {
       if (room.status === "finished") {
         retireFinishedRoundForReplacement(room);
         broadcast(room, state(room));
-      } else {
-        if (
-          room.pendingConsent?.randomRush &&
-          room.pendingConsent.randomRushIncludeDirty === includeDirty
-        )
-          return send(ws, { type: "error", code: "CONSENT_PENDING" });
-        if (room.pendingConsent)
-          cancelPendingConsent(room, "configuration_changed");
-        clearQueuedNextRound(room);
-      }
+      } else clearQueuedNextRound(room);
       room.randomRush = true;
       room.randomRushIncludeDirty = includeDirty;
       room.randomRushEpoch += 1;
       room.randomModeQueue = [];
       const selected = randomMode(room, previousMode);
-      return startRound(room, selected, null, null, null, requestedDictionaryId);
+      return startRound(room, selected, null, requestedDictionaryId);
     }
     if (room.status === "finished" && room.suddenDeathSeries) {
       retireFinishedRoundForReplacement(room);
@@ -2483,25 +2030,12 @@ async function handle(ws, message) {
         return send(ws, { type: "error", code: "UNKNOWN_MODE" });
       config = preset;
     }
-    if (requiresAdultConsent(requested, config)) {
-      if (room.pendingConsent)
-        cancelPendingConsent(room, "configuration_changed");
-      clearQueuedNextRound(room);
-      room.randomRush = false;
-      room.randomRushIncludeDirty = false;
-      room.randomRushEpoch += 1;
-      room.randomModeQueue = [];
-      createPendingConsent(room, requested, config, requestedDictionaryId);
-      return;
-    }
-    if (room.pendingConsent)
-      cancelPendingConsent(room, "configuration_changed");
     clearQueuedNextRound(room);
     room.randomRush = false;
     room.randomRushIncludeDirty = false;
     room.randomRushEpoch += 1;
     room.randomModeQueue = [];
-    return startRound(room, requested, config, null, null, requestedDictionaryId);
+    return startRound(room, requested, config, requestedDictionaryId);
   }
   if (type === "start_next_round") {
     if (client.id !== room.creatorId)
@@ -2937,7 +2471,6 @@ const heartbeat = setInterval(() => {
         credential.expiresAt = now + DISPLAY_RECONNECT_TTL_MS;
       else displayCredentials.delete(token);
     }
-  prunePreAdmissionChallenges(now);
   pruneOAuthStates(now);
   for (const ws of wss.clients) {
     heartbeatSocket(ws);
@@ -2966,26 +2499,12 @@ module.exports = {
   displayTokens,
   displayCredentials,
   rateLimits,
-  preAdmissionChallenges,
   clientIp,
   pruneExpiredRateLimits,
   heartbeatSocket,
   WS_HEARTBEAT_MISSES,
-  isAdultRequest,
-  requiresAdultConsent,
-  isAdultRoom,
-  isAdultLastResult,
-  roomExposesAdultContent,
-  createPendingConsent,
-  cancelPendingConsent,
-  completeAdultConsent,
   randomRushModes,
   startQueuedNextRound,
-  createPreAdmissionChallenge,
-  cleanupPreAdmission,
-  prunePreAdmissionChallenges,
-  CONSENT_TIMEOUT_MS,
-  CHALLENGE_TIMEOUT_MS,
   ROUND_PARTICIPANT_RESERVED,
   SUDDEN_SERIES_MODE,
   cancelSuddenDeathSeries,

@@ -1532,7 +1532,7 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   await browser.close();
 });
 
-test("multiplayer Dirty Mode starts directly without consent", async () => {
+test("multiplayer Dirty Mode starts directly", async () => {
   const browser = await chromium.launch({ headless: true, executablePath });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(baseUrl);
@@ -1572,19 +1572,18 @@ test("multiplayer Dirty Mode starts directly without consent", async () => {
   await startedPromise;
   const dirtyMessages = await page.evaluate(() => ({
     starts: window.__sentMessages.filter((msg) => msg.type === "start_game"),
-    consentVisible: !document.querySelector("#consentPanel").hidden,
-    actionsVisible: !document.querySelector("#consentActions").hidden,
+    adultDecisionButtons: [...document.querySelectorAll("#sessionLobby button")]
+      .filter((button) => /accept|decline|consent/i.test(button.textContent || "")).length,
   }));
   assert.equal(dirtyMessages.starts.length, 1);
   assert.equal(dirtyMessages.starts[0].mode, "dirty");
-  assert.equal(dirtyMessages.consentVisible, false);
-  assert.equal(dirtyMessages.actionsVisible, false);
+  assert.equal(dirtyMessages.adultDecisionButtons, 0);
   await startIntro(page);
   assert.equal(await page.locator("#gameMode").textContent(), "DIRTY MODE · 18+");
   await browser.close();
 });
 
-test("late join to a Dirty round is admitted without consent", async () => {
+test("late join to a Dirty round uses normal admission", async () => {
   const host = await chromium.launch({ headless: true, executablePath });
   const guest = await chromium.launch({ headless: true, executablePath });
   const hostPage = await host.newPage({ viewport: { width: 390, height: 844 } });
@@ -1605,21 +1604,18 @@ test("late join to a Dirty round is admitted without consent", async () => {
   guestPage.once("dialog", (dialog) => dialog.accept(code));
   await guestPage.locator("#sessionJoin").click();
   await guestPage.waitForFunction((expectedCode) => window.wordrushSessionCode === expectedCode, code);
-  const preAdmissionState = await guestPage.evaluate(() => ({
+  const admissionState = await guestPage.evaluate(() => ({
     dialogOpen: document.querySelector("#multiplayerDialog").open,
     lobbyVisible: !document.querySelector("#sessionLobby").hidden,
-    prePanelVisible: !document.querySelector("#preAdmissionPanel").hidden,
-    actionsVisible: !document.querySelector("#consentActions").hidden,
-    consentHidden: document.querySelector("#consentPanel").hidden,
+    adultDecisionButtons: [...document.querySelectorAll("#sessionLobby button")]
+      .filter((button) => /accept|decline|consent/i.test(button.textContent || "")).length,
     sessionCode: window.wordrushSessionCode || "",
     savedRoom: localStorage.getItem("wordrush-room"),
   }));
-  assert.deepEqual(preAdmissionState, {
+  assert.deepEqual(admissionState, {
     dialogOpen: false,
     lobbyVisible: true,
-    prePanelVisible: false,
-    actionsVisible: false,
-    consentHidden: true,
+    adultDecisionButtons: 0,
     sessionCode: code,
     savedRoom: code,
   });

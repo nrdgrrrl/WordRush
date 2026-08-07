@@ -11,8 +11,6 @@ test("runtime configuration keeps the existing defaults", () => {
   assert.deepEqual(readRuntimeConfig({}), {
     PORT: 8000,
     RANDOM_RUSH_DELAY: 20_000,
-    WORDRUSH_CONSENT_TIMEOUT_MS: 60_000,
-    WORDRUSH_CHALLENGE_TIMEOUT_MS: 30_000,
     WORDRUSH_DISPLAY_TOKEN_TTL_MS: 5 * 60 * 1000,
     WORDRUSH_DISPLAY_RECONNECT_TTL_MS: 8 * 60 * 60 * 1000,
     WORDRUSH_ROOM_RECONNECT_GRACE_MS: 15 * 60 * 1000,
@@ -48,8 +46,6 @@ test("invalid runtime configuration names the setting and reason", () => {
   const invalidValues = {
     PORT: "0",
     RANDOM_RUSH_DELAY: "1.5",
-    WORDRUSH_CONSENT_TIMEOUT_MS: "-1",
-    WORDRUSH_CHALLENGE_TIMEOUT_MS: "3e4",
     WORDRUSH_DISPLAY_TOKEN_TTL_MS: "86400001",
     WORDRUSH_DISPLAY_RECONNECT_TTL_MS: "604800001",
     WORDRUSH_ROOM_RECONNECT_GRACE_MS: "0",
@@ -74,8 +70,6 @@ test("invalid runtime configuration fails before server startup", () => {
   const invalidValues = {
     PORT: "0",
     RANDOM_RUSH_DELAY: "0",
-    WORDRUSH_CONSENT_TIMEOUT_MS: "0",
-    WORDRUSH_CHALLENGE_TIMEOUT_MS: "0",
     WORDRUSH_DISPLAY_TOKEN_TTL_MS: "0",
     WORDRUSH_DISPLAY_RECONNECT_TTL_MS: "0",
     WORDRUSH_ROOM_RECONNECT_GRACE_MS: "0",

@@ -28,26 +28,10 @@
   let scannerStream = null;
   let scannerFrame = 0;
   let scannerRun = 0;
-  let pendingConsentRequestId = "";
-  let pendingChallengeId = "";
   let randomRushChoice = null;
   const $ = (selector) => document.querySelector(selector);
   const goHome = () =>
     document.querySelector('[data-screen="homeScreen"]')?.click();
-  function clearConsentUi() {
-    pendingConsentRequestId = "";
-    pendingChallengeId = "";
-    const consentPanel = $("#consentPanel");
-    const prePanel = $("#preAdmissionPanel");
-    const actions = $("#consentActions");
-    const cancel = $("#consentCancel");
-    const players = $("#consentPlayers");
-    if (consentPanel) consentPanel.hidden = true;
-    if (prePanel) prePanel.hidden = true;
-    if (actions) actions.hidden = true;
-    if (cancel) cancel.hidden = true;
-    players?.replaceChildren();
-  }
   function clearRandomRushChoice() {
     randomRushChoice = null;
     const dialog = $("#randomRushChoiceDialog");
@@ -217,7 +201,6 @@
     clearRandomRushChoice();
     localStorage.removeItem("wordrush-room");
     localStorage.removeItem("wordrush-room-token");
-    clearConsentUi();
     $("#multiplayerBanner").hidden = true;
     $("#multiplayerBannerText").textContent = "No active session";
     $("#sessionLobby").hidden = true;
@@ -431,7 +414,7 @@
       "aria-label",
       creator ? "End session" : "Leave party",
     );
-    $("#sessionLeave").hidden = !inSession || Boolean(pendingChallengeId);
+    $("#sessionLeave").hidden = !inSession;
     $("#sessionLeave").textContent = creator ? "End session" : "Leave party";
     $("#resumeMultiplayer").hidden = roomStatus !== "playing";
   }
@@ -576,107 +559,8 @@
         trackMultiplayer("room_resumed");
         reconnectAttempts = 0;
         rememberSession(message);
-        clearConsentUi();
         if (!sessionCode) showLobby(message.code, false);
         toast("Session reconnected");
-      }
-      if (message.type === "adult_consent_request") {
-        pendingConsentRequestId = message.requestId;
-        showLobbyView();
-        const consentPanel = $("#consentPanel");
-        const prePanel = $("#preAdmissionPanel");
-        const actions = $("#consentActions");
-        if (consentPanel) consentPanel.hidden = false;
-        if (prePanel) prePanel.hidden = true;
-        if (actions) actions.hidden = false;
-        const modeLabel = message.mode === "dirty" ? "Dirty Mode" : "Adult Custom";
-        $("#consentMode").textContent = modeLabel;
-        $("#consentDescription").textContent =
-          message.mode === "dirty"
-            ? "This round contains adult language. Everyone in the room must accept before it starts."
-            : "This custom round contains adult language. Everyone in the room must accept before it starts.";
-        $("#consentConfig").textContent =
-          message.config.size + "×" + message.config.size +
-          " · min " + message.config.min +
-          " · " + formatTimer(message.config.seconds);
-        renderConsentPlayers(message.requiredPlayerIds, message.acceptedPlayerIds);
-        if (creator) $("#consentCancel").hidden = false;
-        else $("#consentCancel").hidden = true;
-        toast("Adult content requires your consent");
-      }
-      if (message.type === "adult_consent_player_accepted") {
-        if (pendingConsentRequestId === message.requestId) {
-          showLobbyView();
-          renderConsentPlayers(message.requiredPlayerIds, message.acceptedPlayerIds);
-        }
-      }
-      if (message.type === "adult_consent_cancelled") {
-        clearConsentUi();
-        const reasonLabels = {
-          host_cancelled: "The host cancelled the adult round",
-          timeout: "Adult consent request timed out",
-          player_declined: "A player declined the adult round",
-          player_disconnected: "A player disconnected — adult consent cancelled",
-          player_left: "A player left — adult consent cancelled",
-          configuration_changed: "The host changed the game mode",
-          room_closed: "The room was closed",
-        };
-        toast(reasonLabels[message.reason] || "Adult consent cancelled");
-        updateLobbyControls();
-      }
-      if (message.type === "adult_consent_declined") {
-        clearConsentUi();
-        toast("A player declined the adult round");
-        updateLobbyControls();
-      }
-      if (message.type === "adult_pre_admission_challenge") {
-        pendingConsentRequestId = "";
-        pendingChallengeId = message.challengeId;
-        showLobbyView();
-        $("#endGame").hidden = true;
-        $("#sessionLeave").hidden = true;
-        const prePanel = $("#preAdmissionPanel");
-        const consentPanel = $("#consentPanel");
-        const actions = $("#consentActions");
-        if (prePanel) prePanel.hidden = false;
-        if (consentPanel) consentPanel.hidden = true;
-        if (actions) actions.hidden = false;
-        $("#consentCancel").hidden = true;
-        const modeLabel = message.mode === "dirty" ? "Dirty Mode" : "Adult Custom";
-        $("#preAdmissionMode").textContent = modeLabel;
-        $("#preAdmissionDescription").textContent =
-          "This room has adult content. You must accept to join.";
-        $("#preAdmissionConfig").textContent =
-          (message.config.size || "?") + "×" + (message.config.size || "?") +
-          " · min " + (message.config.min || "?") +
-          " · " + formatTimer(message.config.seconds || 0);
-      }
-      if (message.type === "adult_pre_admission_accepted") {
-        pendingChallengeId = "";
-        const prePanel = $("#preAdmissionPanel");
-        const actions = $("#consentActions");
-        if (prePanel) prePanel.hidden = true;
-        if (actions) actions.hidden = true;
-        rememberSession(message);
-        toast("Join accepted — entering room");
-      }
-      if (message.type === "adult_pre_admission_declined") {
-        pendingChallengeId = "";
-        const prePanel = $("#preAdmissionPanel");
-        const actions = $("#consentActions");
-        if (prePanel) prePanel.hidden = true;
-        if (actions) actions.hidden = true;
-        toast("You declined to join the adult room");
-      }
-      if (message.type === "adult_pre_admission_timeout") {
-        if (pendingChallengeId === message.challengeId) {
-          pendingChallengeId = "";
-          const prePanel = $("#preAdmissionPanel");
-          const actions = $("#consentActions");
-          if (prePanel) prePanel.hidden = true;
-          if (actions) actions.hidden = true;
-          toast("Join request timed out");
-        }
       }
       if (message.type === "room_state" && message.code !== endedSessionCode) {
         roomStatus = message.status;
@@ -754,7 +638,6 @@
           player_count: message.players.length,
           random_rush: message.randomRush,
         });
-        clearConsentUi();
         roomStatus = "playing";
         creatorId = message.creatorId || creatorId;
         roomSeries = message.series || null;
@@ -1096,14 +979,6 @@
       sessionDialog(false);
     }
   }
-  function formatTimer(seconds) {
-    const safe = Math.max(0, Math.ceil(Number(seconds) || 0));
-    return (
-      String(Math.floor(safe / 60)).padStart(2, "0") +
-      ":" +
-      String(safe % 60).padStart(2, "0")
-    );
-  }
   $("#randomRushKeepClean")?.addEventListener("click", () =>
     submitRandomRushChoice(false),
   );
@@ -1113,69 +988,4 @@
   $("#randomRushChoiceDialog")?.addEventListener("close", () => {
     randomRushChoice = null;
   });
-  function renderConsentPlayers(requiredIds, acceptedIds) {
-    const target = $("#consentPlayers");
-    if (!target) return;
-    target.replaceChildren();
-    const allPlayers = [...document.querySelectorAll("#lobbyPlayers .live-player")];
-    requiredIds.forEach((id) => {
-      const row = document.createElement("div");
-      row.className = "live-player consent-player";
-      const statusEl = document.createElement("span");
-      statusEl.className = "consent-status";
-      if (acceptedIds.includes(id)) {
-        statusEl.textContent = "✓ Accepted";
-        statusEl.style.color = "#2e7d32";
-      } else {
-        statusEl.textContent = "⋯ Deciding";
-        statusEl.style.color = "#b8860b";
-      }
-      const nameSpan = document.createElement("span");
-      nameSpan.className = "player-name";
-      if (id === guestId) nameSpan.textContent = "You";
-      else {
-        const player = allPlayers.find((p) =>
-          p.querySelector(".player-name")?.textContent === id ||
-          p.dataset?.playerId === id
-        );
-        nameSpan.textContent = player
-          ? player.querySelector(".player-name")?.textContent || id
-          : id;
-      }
-      row.append(statusEl, nameSpan);
-      target.append(row);
-    });
-  }
-  $("#consentAccept")?.addEventListener("click", () => {
-    if (pendingChallengeId) {
-      sendWhenReady({ type: "adult_consent_response", challengeId: pendingChallengeId, accepted: true });
-    } else if (pendingConsentRequestId) {
-      sendWhenReady({ type: "adult_consent_response", requestId: pendingConsentRequestId, accepted: true });
-    }
-  });
-  $("#consentDecline")?.addEventListener("click", () => {
-    if (pendingChallengeId) {
-      sendWhenReady({ type: "adult_consent_response", challengeId: pendingChallengeId, accepted: false });
-      pendingChallengeId = "";
-      $("#preAdmissionPanel").hidden = true;
-    } else if (pendingConsentRequestId) {
-      sendWhenReady({ type: "adult_consent_response", requestId: pendingConsentRequestId, accepted: false });
-    }
-  });
-  $("#consentCancel")?.addEventListener("click", () => {
-    if (pendingConsentRequestId) {
-      sendWhenReady({ type: "adult_consent_cancel", requestId: pendingConsentRequestId });
-      pendingConsentRequestId = "";
-      $("#consentPanel").hidden = true;
-    }
-  });
-  const originalUpdateLobbyControls = updateLobbyControls;
-  updateLobbyControls = function () {
-    originalUpdateLobbyControls();
-    const pending = Boolean(pendingConsentRequestId);
-    if (creator) {
-      $("#sessionType").disabled = pending;
-      $("#sessionStart").disabled = pending;
-    }
-  };
 })();

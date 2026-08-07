@@ -67,8 +67,6 @@ before opening its HTTP/WebSocket listener or starting its heartbeat timer.
 | --- | ---: | --- |
 | `PORT` | `8000` | `1`–`65535` (port number) |
 | `RANDOM_RUSH_DELAY` | `20000` | `1`–`86400000` ms |
-| `WORDRUSH_CONSENT_TIMEOUT_MS` | `60000` | `1`–`3600000` ms |
-| `WORDRUSH_CHALLENGE_TIMEOUT_MS` | `30000` | `1`–`3600000` ms |
 | `WORDRUSH_DISPLAY_TOKEN_TTL_MS` | `300000` | `1`–`86400000` ms |
 | `WORDRUSH_DISPLAY_RECONNECT_TTL_MS` | `28800000` | `1`–`604800000` ms |
 | `WORDRUSH_ROOM_RECONNECT_GRACE_MS` | `900000` | `1`–`86400000` ms |

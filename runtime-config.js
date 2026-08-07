@@ -6,18 +6,6 @@ const RUNTIME_CONFIG_SPECS = Object.freeze({
     maximum: 86_400_000,
     unit: "milliseconds",
   },
-  WORDRUSH_CONSENT_TIMEOUT_MS: {
-    defaultValue: 60_000,
-    minimum: 1,
-    maximum: 3_600_000,
-    unit: "milliseconds",
-  },
-  WORDRUSH_CHALLENGE_TIMEOUT_MS: {
-    defaultValue: 30_000,
-    minimum: 1,
-    maximum: 3_600_000,
-    unit: "milliseconds",
-  },
   WORDRUSH_DISPLAY_TOKEN_TTL_MS: {
     defaultValue: 5 * 60 * 1000,
     minimum: 1,
