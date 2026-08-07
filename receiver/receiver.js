@@ -195,7 +195,7 @@
     const playerCards = ranking.map((player, index) => {
       const words = player.words || [];
       const wordChips = words.length
-        ? words.map((item) => `<div class="tv-word length-${wordLengthClass(item.word)}"><b>${escape(item.word)}</b><span>${Number(item.points || 0).toLocaleString()} pts</span></div>`).join("")
+        ? words.map((item) => `<div class="tv-word length-${wordLengthClass(item.word)}"><b>${escape(item.word)}</b><span>${Number(item.points || 0).toLocaleString()} pts${Number(item.bonusPoints || 0) > 0 ? ` · +${Number(item.bonusPoints).toLocaleString()} bounty` : ""}</span></div>`).join("")
         : `<p class="no-words">No words this round</p>`;
       const density = words.length > 18 ? " ultra-dense" : words.length > 10 ? " dense" : "";
       const sessionRecord = player.session

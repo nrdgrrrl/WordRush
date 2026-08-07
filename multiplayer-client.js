@@ -802,7 +802,7 @@
           window.wordrushRecordOnlineWord?.(message.word, message.points, message.chain, {
             heist: message.heist,
             bounty: message.bounty,
-          });
+          }, message.wordRecord);
         else
           window.wordrushUpdateOnlineChain?.(message.chain, true);
         window.wordrushUpdateOnlineChallenge?.({ heist: message.heist, bounty: message.bounty });

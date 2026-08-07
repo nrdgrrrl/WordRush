@@ -107,7 +107,10 @@
     const word = document.createElement("span");
     word.textContent = item.word;
     const points = document.createElement("b");
-    points.textContent = "+" + item.points;
+    points.textContent = "+" + item.points +
+      (Number(item.bonusPoints) > 0
+        ? " · +" + Number(item.bonusPoints) + " bounty"
+        : "");
     line.append(word, points);
     card.querySelector(".reveal-word-list").append(line);
   }
@@ -369,10 +372,12 @@
   });
   document.addEventListener("wordrush:word-accepted", ({ detail }) => {
     if (!localWords.some((item) => item.word === detail.word))
-      localWords.push({
-        word: detail.word,
-        points: Number(detail.points) || 0,
-      });
+      localWords.push(detail.wordRecord
+        ? { ...detail.wordRecord }
+        : {
+            word: detail.word,
+            points: Number(detail.points) || 0,
+          });
   });
   document.addEventListener("wordrush:round-complete", ({ detail }) => {
     const presentation = cooperativeResults.normalizeResultPresentation({

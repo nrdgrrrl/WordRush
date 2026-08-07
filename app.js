@@ -277,6 +277,7 @@ const s = {
   b: [],
   pick: [],
   found: new Set(),
+  acceptedWords: [],
   score: 0,
   time: 120,
   timer: 0,
@@ -1030,7 +1031,9 @@ function renderResults(
         name: profile.name,
         avatar: profile.avatar,
         score: s.score,
-        words: [...s.found].map((word) => ({ word, points: word.length ** 2 })),
+        words: s.bounty && s.acceptedWords.length
+          ? s.acceptedWords.map((word) => ({ ...word }))
+          : [...s.found].map((word) => ({ word, points: word.length ** 2 })),
       }];
   const rows = series
     ? suddenDeathSeries.rankParticipants(sourceRows)
@@ -1498,10 +1501,12 @@ function end(completionReason) {
         name: profile.name,
         avatar: profile.avatar,
         score: s.score,
-        words: [...s.found].map((word) => ({
-          word,
-          points: word.length * word.length,
-        })),
+        words: s.bounty && s.acceptedWords.length
+          ? s.acceptedWords.map((word) => ({ ...word }))
+          : [...s.found].map((word) => ({
+              word,
+              points: word.length * word.length,
+            })),
       },
     ],
     multiplayer: false,
@@ -2002,6 +2007,7 @@ async function start(
   s.time = config.seconds;
   s.score = 0;
   s.found.clear();
+  s.acceptedWords = [];
   s.lastAcceptedWord = "";
   s.requiredLetter = "";
   s.chainResetLetter = "";
@@ -2354,7 +2360,9 @@ async function submit() {
     else if (requiresChain(config) &&
       !chainWordMatches(s.requiredLetter, w)) rejectReason = "chain";
     if (!rejectReason) {
-      let points = w.length * w.length;
+      const basePoints = w.length * w.length;
+      let points = basePoints;
+      let wordRecord = { word: w, points };
       s.found.add(w);
       s.lastAcceptedWord = w;
       if (requiresChain(config)) advanceChainFields(s, w);
@@ -2371,7 +2379,13 @@ async function submit() {
           claimedIndexes: [...effect.claimedIndexes],
         };
         const bountyBonus = effect.newlyClaimedIndexes.length * 25;
-        points += bountyBonus;
+        wordRecord = challengeRules.bountyWordRecord(
+          w,
+          basePoints,
+          effect.newlyClaimedIndexes,
+        );
+        points = wordRecord.points;
+        s.acceptedWords.push({ ...wordRecord });
         if (bountyBonus) render();
       }
       s.score += points;
@@ -2391,6 +2405,7 @@ async function submit() {
       emit("word-accepted", {
         word: w,
         points,
+        wordRecord,
         mode: config.mode,
         multiplayer: false,
         randomRush: config.randomRush,
@@ -2875,7 +2890,7 @@ window.wordrushUpdateOnlineChallenge = ({ heist = null, bounty = null } = {}) =>
   }
   if (changed) render();
 };
-window.wordrushRecordOnlineWord = (word, points, chain, challengeState) => {
+window.wordrushRecordOnlineWord = (word, points, chain, challengeState, wordRecord = null) => {
   if (s.pendingOnlineTrace?.word === word) {
     pulseAcceptedWord(s.pendingOnlineTrace.trace);
   }
@@ -2890,12 +2905,15 @@ window.wordrushRecordOnlineWord = (word, points, chain, challengeState) => {
   );
   profile.multiplayerWordRounds = recorded.records;
   if (recorded.recorded) {
+    if (wordRecord?.basePoints !== undefined || wordRecord?.bonusPoints !== undefined)
+      s.acceptedWords.push({ ...wordRecord });
     recordAcceptedWord(word);
     updateProfile();
   }
   emit("word-accepted", {
     word,
     points: Number(points) || word.length * word.length,
+    wordRecord: wordRecord || { word, points: Number(points) || word.length * word.length },
     mode: s.mode,
     multiplayer: true,
     randomRush: s.onlineRandomRush,
@@ -3142,10 +3160,18 @@ window.wordrushOnlineFinish = (
     ...player,
     score: Number(player.score) || 0,
     words: Array.isArray(player.words)
-      ? player.words.map((item) => ({
-          word: String(item.word || ""),
-          points: Number(item.points) || 0,
-        }))
+      ? player.words.map((item) => {
+          const word = String(item.word || "");
+          const record = {
+            word,
+            points: Number(item.points) || 0,
+          };
+          if (item && ("basePoints" in item || "bonusPoints" in item)) {
+            record.basePoints = Number(item.basePoints) || 0;
+            record.bonusPoints = Number(item.bonusPoints) || 0;
+          }
+          return record;
+        })
       : [],
     series: player.series
       ? {

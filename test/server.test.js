@@ -787,8 +787,8 @@ test("Bounty Tiles and Room Heist keep challenge scoring authoritative", async (
   message(host, "start_game", { mode: "bounty" });
   await bountyStarted;
   const bountyRoom = rooms.get(created.code);
-  bountyRoom.round.board = ["C", "A", "T", ...Array(13).fill("X")];
-  bountyRoom.round.bounty = { bountyIndexes: [0], claimedIndexes: [] };
+  bountyRoom.round.board = ["C", "A", "T", "X", "X", "R", "T", ...Array(9).fill("X")];
+  bountyRoom.round.bounty = { bountyIndexes: [0, 1, 2, 5, 6], claimedIndexes: [] };
   const bountyStartNow = next(host, "round_start_now");
   message(host, "start_round_now");
   await bountyStartNow;
@@ -797,11 +797,37 @@ test("Bounty Tiles and Room Heist keep challenge scoring authoritative", async (
   message(host, "submit_word", { word: "CAT", path: [0, 1, 2] });
   const bountyResult = await Promise.race([bountyAccepted, bountyRejected]);
   assert.equal(bountyResult.type, "word_accepted", JSON.stringify(bountyResult));
-  assert.equal(bountyResult.points, 34);
-  assert.deepEqual(bountyResult.bounty.claimedIndexes, [0]);
+  assert.equal(bountyResult.points, 84);
+  assert.deepEqual(bountyResult.wordRecord, {
+    word: "CAT",
+    basePoints: 9,
+    bonusPoints: 75,
+    points: 84,
+  });
+  assert.deepEqual(bountyResult.bounty.claimedIndexes, [0, 1, 2]);
+  const bountySecondAccepted = next(host, "word_accepted");
+  message(host, "submit_word", { word: "CART", path: [0, 1, 5, 6] });
+  const bountySecondResult = await bountySecondAccepted;
+  assert.equal(bountySecondResult.points, 66);
+  assert.deepEqual(bountySecondResult.wordRecord, {
+    word: "CART",
+    basePoints: 16,
+    bonusPoints: 50,
+    points: 66,
+  });
+  assert.deepEqual(bountySecondResult.bounty.claimedIndexes, [0, 1, 2, 5, 6]);
   const bountyFinished = next(host, "round_finished");
   message(host, "end_round");
-  await bountyFinished;
+  const bountyFinal = await bountyFinished;
+  const bountyPlayer = bountyFinal.ranking.find((player) => player.id === "challenge-host");
+  assert.deepEqual(bountyPlayer.words, [
+    { word: "CAT", basePoints: 9, bonusPoints: 75, points: 84 },
+    { word: "CART", basePoints: 16, bonusPoints: 50, points: 66 },
+  ]);
+  assert.equal(
+    bountyPlayer.words.reduce((total, word) => total + word.points, 0),
+    bountyPlayer.score,
+  );
 
   const heistStarted = next(host, "round_started");
   message(host, "start_game", { mode: "heist" });

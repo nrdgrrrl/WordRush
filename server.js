@@ -75,7 +75,11 @@ const {
 } = require("./daily-challenges");
 const { RelayChallengeStore, STORE_UNAVAILABLE: RELAY_STORE_UNAVAILABLE } = require("./relay-challenges");
 const { applyWordClaim, validateTeamAssignments } = require("./heist-rules");
-const { bountyClaimEffect, selectBountyIndexes } = require("./challenge-rules");
+const {
+  bountyClaimEffect,
+  bountyWordRecord,
+  selectBountyIndexes,
+} = require("./challenge-rules");
 const HOST = process.env.HOST || "127.0.0.1",
   MAX_PLAYERS = 10,
   CONSENT_COUNT_FILE =
@@ -2674,13 +2678,19 @@ async function handle(ws, message) {
         result.points,
       );
     let awardedPoints = result.points;
+    let wordRecord = { word: result.word, points: result.points };
     if (room.mode === "bounty") {
       const effect = bountyClaimEffect(room.round.bounty, message.path);
       room.round.bounty = {
         bountyIndexes: [...room.round.bounty.bountyIndexes],
         claimedIndexes: [...effect.claimedIndexes],
       };
-      awardedPoints += effect.newlyClaimedIndexes.length * 25;
+      wordRecord = bountyWordRecord(
+        result.word,
+        result.points,
+        effect.newlyClaimedIndexes,
+      );
+      awardedPoints = wordRecord.points;
     }
     if (room.mode === "heist") {
       room.round.heist = {
@@ -2697,8 +2707,7 @@ async function handle(ws, message) {
     } else player.score += awardedPoints;
     player.words = player.words || [];
     player.words.push({
-      word: result.word,
-      points: awardedPoints,
+      ...wordRecord,
       ...(heistClaim ? { status: heistClaim.status } : {}),
     });
     player.score = playerScore(room, player);
@@ -2707,6 +2716,7 @@ async function handle(ws, message) {
       playerId: client.id,
       word: result.word,
       points: awardedPoints,
+      ...(room.mode === "bounty" ? { wordRecord: { ...wordRecord } } : {}),
       ...(heistClaim
         ? {
             status: heistClaim.status,
