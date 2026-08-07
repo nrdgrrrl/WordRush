@@ -1063,8 +1063,130 @@ body:has(#homeScreen.active) .site-footer {
 }
 body:has(#homeScreen.active) .site-footer,
 body:has(#statsScreen.active) .site-footer,
-body:has(#achievementsScreen.active) .site-footer {
+body:has(#achievementsScreen.active) .site-footer,
+body:has(#howToPlayScreen.active) .site-footer {
   display: block;
+}
+.how-to-play-screen {
+  padding-bottom: 10px;
+}
+.how-to-play-screen .game-head {
+  align-items: center;
+  margin-bottom: 22px;
+}
+.how-to-play-screen .game-head h1 {
+  margin: 0;
+  font-size: clamp(2rem, 8vw, 2.65rem);
+  line-height: .95;
+  letter-spacing: -.065em;
+}
+.how-to-play-lede {
+  margin: 0 0 18px;
+  color: #5e5266;
+  font-size: 1rem;
+  line-height: 1.55;
+}
+.how-to-play-cta {
+  text-decoration: none;
+  margin-bottom: 30px;
+}
+.how-to-play-section {
+  margin: 30px 0 0;
+  padding-top: 24px;
+  border-top: 2px solid rgba(91, 45, 127, .18);
+}
+.how-to-play-section h2 {
+  margin: 0 0 12px;
+  color: #2c1c37;
+  font-size: 1.35rem;
+  letter-spacing: -.035em;
+}
+.how-to-play-section p,
+.how-to-play-section li {
+  color: #5e5266;
+  font-size: .92rem;
+  line-height: 1.55;
+}
+.how-to-play-section p { margin: 0 0 12px; }
+.how-to-play-section a {
+  color: #5b2d7f;
+  font-weight: 800;
+}
+.how-to-play-steps,
+.how-to-play-rule-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 1.35rem;
+}
+.how-to-play-steps strong,
+.how-to-play-rule-list strong { color: #2c1c37; }
+.how-to-play-example {
+  margin-top: 16px;
+  padding: 14px;
+  border: 2px solid #2c1c37;
+  border-radius: 14px;
+  background: linear-gradient(120deg, #eaf9d2, #b7f5ff);
+  box-shadow: 0 4px 0 #2c1c37;
+}
+.how-to-play-example strong {
+  display: block;
+  color: #2c1c37;
+  font-size: .78rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.how-to-play-example p { margin: 6px 0 0; color: #2c1c37; }
+.how-to-play-example b { white-space: nowrap; }
+.how-to-play-note {
+  color: #6e6374 !important;
+  font-size: .8rem !important;
+}
+.how-to-play-mode-list {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+.how-to-play-mode-list article {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid #d1c1d8;
+  border-radius: 10px;
+  background: #fff9f0;
+}
+.how-to-play-mode-list strong {
+  color: #2c1c37;
+  font-size: .88rem;
+}
+.how-to-play-mode-list span {
+  color: #6e6374;
+  font-size: .76rem;
+  line-height: 1.4;
+}
+html[data-theme="dark"] .how-to-play-lede,
+html[data-theme="dark"] .how-to-play-section p,
+html[data-theme="dark"] .how-to-play-section li { color: #d1c1d8; }
+html[data-theme="dark"] .how-to-play-section h2,
+html[data-theme="dark"] .how-to-play-steps strong,
+html[data-theme="dark"] .how-to-play-rule-list strong,
+html[data-theme="dark"] .how-to-play-mode-list strong { color: #fff9f0; }
+html[data-theme="dark"] .how-to-play-mode-list article { background: #242823; border-color: #555b53; }
+html[data-theme="dark"] .how-to-play-mode-list span,
+html[data-theme="dark"] .how-to-play-note { color: #aaa99f !important; }
+html[data-theme="dark"] .how-to-play-section a { color: #f6c85f; }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .how-to-play-lede,
+  html:not([data-theme="light"]) .how-to-play-section p,
+  html:not([data-theme="light"]) .how-to-play-section li { color: #d1c1d8; }
+  html:not([data-theme="light"]) .how-to-play-section h2,
+  html:not([data-theme="light"]) .how-to-play-steps strong,
+  html:not([data-theme="light"]) .how-to-play-rule-list strong,
+  html:not([data-theme="light"]) .how-to-play-mode-list strong { color: #fff9f0; }
+  html:not([data-theme="light"]) .how-to-play-mode-list article { background: #242823; border-color: #555b53; }
+  html:not([data-theme="light"]) .how-to-play-mode-list span,
+  html:not([data-theme="light"]) .how-to-play-note { color: #aaa99f !important; }
+  html:not([data-theme="light"]) .how-to-play-section a { color: #f6c85f; }
 }
 .progress {
   margin: 30px 0 25px;
