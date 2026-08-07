@@ -1,6 +1,17 @@
-const RANDOM_RUSH_DELAY = Number(process.env.RANDOM_RUSH_DELAY || 20000);
-const CONSENT_TIMEOUT_MS = Number(process.env.WORDRUSH_CONSENT_TIMEOUT_MS || 60_000);
-const CHALLENGE_TIMEOUT_MS = Number(process.env.WORDRUSH_CHALLENGE_TIMEOUT_MS || 30_000);
+const { runtimeConfig } = require("./runtime-config");
+const {
+  PORT,
+  RANDOM_RUSH_DELAY,
+  WORDRUSH_CONSENT_TIMEOUT_MS: CONSENT_TIMEOUT_MS,
+  WORDRUSH_CHALLENGE_TIMEOUT_MS: CHALLENGE_TIMEOUT_MS,
+  WORDRUSH_DISPLAY_TOKEN_TTL_MS: DISPLAY_TOKEN_TTL_MS,
+  WORDRUSH_DISPLAY_RECONNECT_TTL_MS: DISPLAY_RECONNECT_TTL_MS,
+  WORDRUSH_ROOM_RECONNECT_GRACE_MS: ROOM_RECONNECT_GRACE_MS,
+  WORDRUSH_MAX_WS_PER_IP: MAX_WS_CONNECTIONS_PER_IP,
+  WORDRUSH_MAX_WS_MESSAGES_PER_WINDOW: MAX_WS_MESSAGES_PER_WINDOW,
+  WORDRUSH_WS_HEARTBEAT_INTERVAL_MS: WS_HEARTBEAT_INTERVAL_MS,
+  WORDRUSH_WS_HEARTBEAT_MISSES: WS_HEARTBEAT_MISSES,
+} = runtimeConfig;
 const http = require("node:http"),
   fs = require("node:fs"),
   path = require("node:path"),
@@ -65,8 +76,7 @@ const {
 const { RelayChallengeStore, STORE_UNAVAILABLE: RELAY_STORE_UNAVAILABLE } = require("./relay-challenges");
 const { applyWordClaim, validateTeamAssignments } = require("./heist-rules");
 const { bountyClaimEffect, selectBountyIndexes } = require("./challenge-rules");
-const PORT = Number(process.env.PORT || 8000),
-  HOST = process.env.HOST || "127.0.0.1",
+const HOST = process.env.HOST || "127.0.0.1",
   MAX_PLAYERS = 10,
   CONSENT_COUNT_FILE =
     process.env.WORDRUSH_ANALYTICS_CONSENT_FILE ||
@@ -76,25 +86,6 @@ const PORT = Number(process.env.PORT || 8000),
   displays = new Map();
 const IS_LOOPBACK = ["127.0.0.1", "::1", "localhost"].includes(HOST);
 const LAN_MODE = process.env.WORDRUSH_LAN_MODE === "1";
-const DISPLAY_TOKEN_TTL_MS = Number(
-  process.env.WORDRUSH_DISPLAY_TOKEN_TTL_MS || 5 * 60 * 1000,
-);
-const DISPLAY_RECONNECT_TTL_MS = Number(
-  process.env.WORDRUSH_DISPLAY_RECONNECT_TTL_MS || 8 * 60 * 60 * 1000,
-);
-const ROOM_RECONNECT_GRACE_MS = Number(
-  process.env.WORDRUSH_ROOM_RECONNECT_GRACE_MS || 15 * 60 * 1000,
-);
-const MAX_WS_CONNECTIONS_PER_IP = Number(process.env.WORDRUSH_MAX_WS_PER_IP || 60);
-const MAX_WS_MESSAGES_PER_WINDOW = Number(
-  process.env.WORDRUSH_MAX_WS_MESSAGES_PER_WINDOW || 60,
-);
-const WS_HEARTBEAT_INTERVAL_MS = Number(
-  process.env.WORDRUSH_WS_HEARTBEAT_INTERVAL_MS || 30_000,
-);
-const WS_HEARTBEAT_MISSES = Number(
-  process.env.WORDRUSH_WS_HEARTBEAT_MISSES || 2,
-);
 const RATE_WINDOW_MS = 60_000;
 const displayTokens = new Map();
 const displayCredentials = new Map();

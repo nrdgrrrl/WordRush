@@ -56,6 +56,27 @@ player then chooses a unique, moderated username. Account stats are stored in
 `accounts.json` and the browser's existing guest profile is migrated once per
 device.
 
+## Numeric runtime configuration
+
+Numeric overrides belong in `/etc/wordrush/rush.env`. Values must be whole
+integers in the ranges below; duration values are milliseconds. A missing or
+empty variable keeps the default shown here. The service rejects invalid values
+before opening its HTTP/WebSocket listener or starting its heartbeat timer.
+
+| Variable | Default | Accepted range |
+| --- | ---: | --- |
+| `PORT` | `8000` | `1`–`65535` (port number) |
+| `RANDOM_RUSH_DELAY` | `20000` | `1`–`86400000` ms |
+| `WORDRUSH_CONSENT_TIMEOUT_MS` | `60000` | `1`–`3600000` ms |
+| `WORDRUSH_CHALLENGE_TIMEOUT_MS` | `30000` | `1`–`3600000` ms |
+| `WORDRUSH_DISPLAY_TOKEN_TTL_MS` | `300000` | `1`–`86400000` ms |
+| `WORDRUSH_DISPLAY_RECONNECT_TTL_MS` | `28800000` | `1`–`604800000` ms |
+| `WORDRUSH_ROOM_RECONNECT_GRACE_MS` | `900000` | `1`–`86400000` ms |
+| `WORDRUSH_MAX_WS_PER_IP` | `60` | `1`–`10000` connections |
+| `WORDRUSH_MAX_WS_MESSAGES_PER_WINDOW` | `60` | `1`–`100000` messages |
+| `WORDRUSH_WS_HEARTBEAT_INTERVAL_MS` | `30000` | `1000`–`3600000` ms |
+| `WORDRUSH_WS_HEARTBEAT_MISSES` | `2` | `1`–`10` misses |
+
 ## Browser cache policy
 
 HTML entry points, root JavaScript and CSS, `manifest.webmanifest`, receiver
