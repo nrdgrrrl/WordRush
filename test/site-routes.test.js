@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const routes = require("../site-routes");
 const { MODE_CONFIG } = require("../game-config");
+const contentPages = path.join(__dirname, "..", "content-pages");
 
 test("how-to-play is a distinct public route with its own SEO metadata", () => {
   const route = routes.routeForPath("/how-to-play");
@@ -11,7 +12,7 @@ test("how-to-play is a distinct public route with its own SEO metadata", () => {
   assert.ok(route);
   assert.equal(route.kind, "page");
   assert.equal(route.key, "howToPlay");
-  assert.equal(route.screen, "howToPlayScreen");
+  assert.equal(route.content, "how-to-play");
   assert.equal(route.title, "How to Play WordRush — Rules and Scoring");
   assert.equal(
     route.description,
@@ -32,7 +33,7 @@ test("game-modes is a distinct public route with its own SEO metadata", () => {
   assert.ok(route);
   assert.equal(route.kind, "page");
   assert.equal(route.key, "gameModes");
-  assert.equal(route.screen, "gameModesScreen");
+  assert.equal(route.content, "game-modes");
   assert.equal(route.title, "WordRush Game Modes — Find Your Next Game");
   assert.equal(
     route.description,
@@ -44,20 +45,21 @@ test("game-modes is a distinct public route with its own SEO metadata", () => {
 
 test("game-modes is in the sitemap and cross-linked with how-to-play", () => {
   const sitemap = fs.readFileSync(path.join(__dirname, "..", "sitemap.xml"), "utf8");
-  const index = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const howToPlay = fs.readFileSync(path.join(contentPages, "how-to-play.html"), "utf8");
+  const gameModes = fs.readFileSync(path.join(contentPages, "game-modes.html"), "utf8");
   const footer = fs.readFileSync(path.join(__dirname, "..", "site-footer.html"), "utf8");
 
   assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/game-modes<\/loc>/);
-  assert.match(index, /<h1>WordRush Game Modes<\/h1>/);
-  assert.match(index, /href="\/how-to-play">How to Play<\/a>/);
-  assert.match(index, /href="\/game-modes">WordRush Game Modes<\/a>/);
+  assert.match(gameModes, /<h1>WordRush Game Modes<\/h1>/);
+  assert.match(gameModes, /href="\/how-to-play">How to Play<\/a>/);
+  assert.match(howToPlay, /href="\/game-modes">WordRush Game Modes<\/a>/);
   assert.match(footer, /href="\/how-to-play">How to play<\/a>/);
   assert.match(footer, /href="\/game-modes">Game modes<\/a>/);
 });
 
 test("every direct Game Modes play link is a known game route", () => {
-  const index = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
-  const directPaths = [...index.matchAll(
+  const gameModes = fs.readFileSync(path.join(contentPages, "game-modes.html"), "utf8");
+  const directPaths = [...gameModes.matchAll(
     /class="mode-overview-play" href="([^"]+)"/g,
   )].map((match) => match[1]);
 
@@ -89,7 +91,33 @@ test("every direct Game Modes play link is a known game route", () => {
     assert.equal(route.kind, "game", directPath);
     assert.notEqual(routes.seoForPath(directPath), routes.HOME, directPath);
   }
-  assert.doesNotMatch(index, /<h3>Co-op<\/h3>[\s\S]*?mode-overview-play/);
+  assert.doesNotMatch(gameModes, /<h3>Co-op<\/h3>[\s\S]*?mode-overview-play/);
+});
+
+test("How to Play game links resolve to their intended gameplay routes", () => {
+  const howToPlay = fs.readFileSync(path.join(contentPages, "how-to-play.html"), "utf8");
+  const links = Object.fromEntries(
+    [...howToPlay.matchAll(/href="(\/games\/[^"]+)">([^<]+)<\/a>/g)]
+      .map(([, href, label]) => [label, href]),
+  );
+
+  assert.deepEqual(links, {
+    Classic: "/games/classic",
+    "Daily Rush": "/games/daily-rush",
+    "Word Stretch": "/games/minimum-word",
+    "Long Haul": "/games/long-haul",
+    "Sudden Death": "/games/sudden-death",
+    "Word Chain": "/games/word-chain",
+    "The Curse": "/games/the-curse",
+    "Bounty Tiles": "/games/bounty-tiles",
+    "Race to 500": "/games/race",
+    "Score Attack": "/games/score-attack",
+    "Dirty Mode": "/games/dirty",
+  });
+  for (const routePath of Object.values(links)) {
+    const route = routes.routeForPath(routePath);
+    assert.equal(route?.kind, "game", routePath);
+  }
 });
 
 test("approved public names align without changing their route paths", () => {
@@ -102,12 +130,21 @@ test("approved public names align without changing their route paths", () => {
 });
 
 test("Sudden Death Series copy preserves the duplicate exception", () => {
-  const index = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const gameModes = fs.readFileSync(path.join(contentPages, "game-modes.html"), "utf8");
 
   assert.equal(
     MODE_CONFIG.sudden_series.rule,
     "10 rounds · invalid word gives a strike",
   );
-  assert.match(index, /An invalid non-duplicate word gives a strike/);
-  assert.doesNotMatch(index, /A rejected word gives a strike/);
+  assert.match(gameModes, /An invalid non-duplicate word gives a strike/);
+  assert.doesNotMatch(gameModes, /A rejected word gives a strike/);
+});
+
+test("standalone content identity is available to shared analytics", () => {
+  const analytics = fs.readFileSync(path.join(__dirname, "..", "analytics.js"), "utf8");
+
+  assert.match(
+    analytics,
+    /document\.querySelector\("\.screen\.active"\)\?\.id \|\| document\.body\.dataset\.page/,
+  );
 });

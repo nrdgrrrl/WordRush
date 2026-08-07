@@ -1064,22 +1064,30 @@ body:has(#homeScreen.active) .site-footer {
 body:has(#homeScreen.active) .site-footer,
 body:has(#statsScreen.active) .site-footer,
 body:has(#achievementsScreen.active) .site-footer,
-body:has(#howToPlayScreen.active) .site-footer,
-body:has(#gameModesScreen.active) .site-footer {
+.content-document .site-footer {
   display: block;
 }
-.content-screen {
+.content-screen,
+.content-page {
   padding-bottom: 10px;
 }
-.content-screen .game-head {
+.content-screen .game-head,
+.content-page .game-head {
   align-items: center;
   margin-bottom: 22px;
 }
-.content-screen .game-head h1 {
+.content-screen .game-head h1,
+.content-page .game-head h1 {
   margin: 0;
   font-size: clamp(2rem, 8vw, 2.65rem);
   line-height: .95;
   letter-spacing: -.065em;
+}
+.content-back {
+  color: var(--muted);
+  font-size: 24px;
+  line-height: 1;
+  text-decoration: none;
 }
 .content-lede {
   margin: 0 0 18px;
