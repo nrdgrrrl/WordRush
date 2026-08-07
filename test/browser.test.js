@@ -74,6 +74,13 @@ async function traceWord(page, path) {
   await page.mouse.up();
   await page.evaluate(() => Promise.resolve());
 }
+async function waitForTraceReset(page) {
+  await page.waitForFunction(
+    () => !document.querySelector("#tracePath")?.hasAttribute("d"),
+    undefined,
+    { timeout: 5000 },
+  );
+}
 async function startSoloMode(page, mode) {
   await openGamesPanel(page);
   await page.locator(`[data-mode="${mode}"]`).click();
@@ -85,12 +92,23 @@ async function startSoloMode(page, mode) {
   await page.locator("#introStart").click();
   await page.waitForSelector("#gameScreen.active");
 }
-function wordRequestWaiter(pending, waiters, word) {
+function wordRequestWaiter(pending, waiters, word, description = "request") {
   if (pending.has(word)) return Promise.resolve();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let timer;
+    const onRequest = () => {
+      clearTimeout(timer);
+      resolve();
+    };
     const resolvers = waiters.get(word) || [];
-    resolvers.push(resolve);
+    resolvers.push(onRequest);
     waiters.set(word, resolvers);
+    timer = setTimeout(() => {
+      const remaining = (waiters.get(word) || []).filter((resolver) => resolver !== onRequest);
+      if (remaining.length) waiters.set(word, remaining);
+      else waiters.delete(word);
+      reject(new Error("Timed out waiting for deferred word-check " + description + " for " + word));
+    }, 5000);
   });
 }
 async function resolveWord(pending, word, valid) {
@@ -111,7 +129,11 @@ async function failWord(pending, waiters, word) {
     const route = routes.shift();
     assert.ok(route, "deferred word-check request for " + word);
     if (!routes.length) pending.delete(word);
+    const retry = attempt === 0
+      ? wordRequestWaiter(pending, waiters, word, "retry")
+      : null;
     await route.abort("failed");
+    if (retry) await retry;
   }
 }
 async function installBoardFixtureHook(page) {
@@ -1662,13 +1684,13 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   };
   await resetSoloBrowserPage(page, generalFixture);
   await startSoloMode(page, "classic");
-  const generalRequests = [
-    wordRequestWaiter(pending, waiters, "CAT"),
-    wordRequestWaiter(pending, waiters, "DOG"),
-  ];
+  const catRequest = wordRequestWaiter(pending, waiters, "CAT");
   await traceWord(page, [0, 1, 2]);
+  await catRequest;
+  await waitForTraceReset(page);
+  const dogRequest = wordRequestWaiter(pending, waiters, "DOG");
   await traceWord(page, [4, 5, 6]);
-  await Promise.all(generalRequests);
+  await dogRequest;
   assert.deepEqual([...pending.keys()].sort(), ["CAT", "DOG"]);
   await resolveWord(pending, "DOG", true);
   assert.equal(await page.locator("#gameScore").textContent(), "0");
@@ -1688,13 +1710,13 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   pending.clear();
   await resetSoloBrowserPage(page, chainFixture);
   await startSoloMode(page, "chain");
-  const chainRequests = [
-    wordRequestWaiter(pending, waiters, "SUN"),
-    wordRequestWaiter(pending, waiters, "NOD"),
-  ];
+  const sunRequest = wordRequestWaiter(pending, waiters, "SUN");
   await traceWord(page, [0, 1, 2]);
+  await sunRequest;
+  await waitForTraceReset(page);
+  const nodRequest = wordRequestWaiter(pending, waiters, "NOD");
   await traceWord(page, [5, 6, 7]);
-  await Promise.all(chainRequests);
+  await nodRequest;
   await resolveWord(pending, "NOD", true);
   assert.equal(await page.locator("#gameScore").textContent(), "0");
   await resolveWord(pending, "SUN", true);
@@ -1724,13 +1746,13 @@ test("solo submission commits stay ordered across deferred dictionary responses"
       attributeFilter: ["class"],
     });
   });
-  const suddenRequests = [
-    wordRequestWaiter(pending, waiters, "BAD"),
-    wordRequestWaiter(pending, waiters, "RAT"),
-  ];
+  const badRequest = wordRequestWaiter(pending, waiters, "BAD");
   await traceWord(page, [0, 1, 2]);
+  await badRequest;
+  await waitForTraceReset(page);
+  const ratRequest = wordRequestWaiter(pending, waiters, "RAT");
   await traceWord(page, [5, 6, 7]);
-  await Promise.all(suddenRequests);
+  await ratRequest;
   await resolveWord(pending, "RAT", true);
   assert.equal(await page.locator("#gameScore").textContent(), "0");
   await resolveWord(pending, "BAD", false);
@@ -1783,13 +1805,13 @@ test("solo submission commits stay ordered across deferred dictionary responses"
   pending.clear();
   await resetSoloBrowserPage(page, errorFixture);
   await startSoloMode(page, "classic");
-  const errorRequests = [
-    wordRequestWaiter(pending, waiters, "OWL"),
-    wordRequestWaiter(pending, waiters, "PIG"),
-  ];
+  const owlRequest = wordRequestWaiter(pending, waiters, "OWL");
   await traceWord(page, [0, 1, 2]);
+  await owlRequest;
+  await waitForTraceReset(page);
+  const pigRequest = wordRequestWaiter(pending, waiters, "PIG");
   await traceWord(page, [4, 5, 6]);
-  await Promise.all(errorRequests);
+  await pigRequest;
   await page.evaluate(() => {
     const original = Set.prototype.has;
     Set.prototype.has = function (value) {
