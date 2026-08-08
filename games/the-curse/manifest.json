@@ -1,0 +1,9 @@
+{
+  "key": "the-curse",
+  "name": "The Curse",
+  "tagline": "Play The Curse, a Wordrush word game where every word closes a path on the board.",
+  "route": "/games/the-curse",
+  "mechanicsKey": "curse",
+  "kind": "preset",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

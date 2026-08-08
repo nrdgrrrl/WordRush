@@ -265,6 +265,7 @@ test("revalidates mutable browser resources while retaining static asset caching
   const noCachePaths = [
     "/",
     "/index.html",
+    "/game-catalog.js",
     "/site-routes.js",
     "/game-config.js",
     "/board-core.js",
@@ -420,6 +421,7 @@ test("serves standalone evergreen documents, gameplay SPA routes, and redirects 
   assert.match(await themeBootstrap.text(), /localStorage\.getItem\("wordrush-theme"\)/);
   const root = await (await fetch(origin + "/")).text();
   assert.match(root, /id="homeScreen"/);
+  assert.ok(root.indexOf('/game-catalog.js') < root.indexOf('/site-routes.js'));
   assert.match(root, /<script src="\/app\.js"><\/script>/);
   const sitemap = await (await fetch(origin + "/sitemap.xml")).text();
   assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/how-to-play<\/loc>/);

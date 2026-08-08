@@ -1,0 +1,9 @@
+{
+  "key": "sudden-death",
+  "name": "Sudden Death",
+  "tagline": "Play Sudden Death in Wordrush, where one invalid word ends the round.",
+  "route": "/games/sudden-death",
+  "mechanicsKey": "sudden",
+  "kind": "preset",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

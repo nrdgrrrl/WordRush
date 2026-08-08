@@ -1,0 +1,9 @@
+{
+  "key": "echo-race",
+  "name": "Echo Race",
+  "tagline": "Race your previous Daily Rush score in Echo Race, a timed Wordrush word game.",
+  "route": "/games/echo-race",
+  "mechanicsKey": "daily",
+  "kind": "challenge",
+  "availability": { "solo": true, "multiplayer": false, "shareable": false }
+}

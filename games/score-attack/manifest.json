@@ -1,0 +1,9 @@
+{
+  "key": "score-attack",
+  "name": "Score Attack",
+  "tagline": "Race to 250 points in Wordrush Score Attack.",
+  "route": "/games/score-attack",
+  "mechanicsKey": "scoreattack",
+  "kind": "preset",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

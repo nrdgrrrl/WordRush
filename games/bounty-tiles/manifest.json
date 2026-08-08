@@ -1,0 +1,9 @@
+{
+  "key": "bounty-tiles",
+  "name": "Bounty Tiles",
+  "tagline": "Hunt charged letters and claim bonus paths in the Bounty Tiles word game.",
+  "route": "/games/bounty-tiles",
+  "mechanicsKey": "bounty",
+  "kind": "preset",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

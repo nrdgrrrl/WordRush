@@ -1,0 +1,9 @@
+{
+  "key": "dirty-mode",
+  "name": "Dirty Mode",
+  "tagline": "Play Dirty Mode, Wordrush’s 18+ adult-dictionary word game.",
+  "route": "/games/dirty",
+  "mechanicsKey": "dirty",
+  "kind": "preset",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

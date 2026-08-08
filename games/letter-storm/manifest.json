@@ -1,0 +1,9 @@
+{
+  "key": "letter-storm",
+  "name": "Letter Storm",
+  "tagline": "Search every corner of an 8×8 grid in the Wordrush Letter Storm game.",
+  "route": "/games/letter-storm",
+  "mechanicsKey": "storm",
+  "kind": "preset",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

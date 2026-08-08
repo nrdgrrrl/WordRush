@@ -28,6 +28,7 @@ const {
   getDictionary,
   getDictionaryMetadata,
 } = require("./dictionary-registry");
+const { renderBrowserCatalogScript } = require("./game-catalog");
 const wordrushRoutes = require("./site-routes");
 const {
   configForPreset,
@@ -2348,6 +2349,14 @@ const server = http.createServer((req, res) => {
   if (wordrushRoutes.transientPaths.has(pathname)) {
     res.writeHead(302, { Location: "/" });
     return res.end();
+  }
+  if (pathname === "/game-catalog.js") {
+    res.writeHead(200, {
+      "Content-Type": "application/javascript; charset=utf-8",
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "no-cache",
+    });
+    return res.end(renderBrowserCatalogScript());
   }
   const route = wordrushRoutes.routeForPath(pathname);
   if (route?.content)

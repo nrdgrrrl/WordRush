@@ -1,0 +1,9 @@
+{
+  "key": "room-heist",
+  "name": "Room Heist",
+  "tagline": "Team up, steal long-word claims, and win the Room Heist multiplayer word game.",
+  "route": "/games/room-heist",
+  "mechanicsKey": "heist",
+  "kind": "multiplayer",
+  "availability": { "solo": false, "multiplayer": true, "shareable": false }
+}

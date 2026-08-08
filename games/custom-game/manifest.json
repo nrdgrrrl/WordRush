@@ -1,0 +1,9 @@
+{
+  "key": "custom-game",
+  "name": "Custom Game",
+  "tagline": "Build a custom Wordrush word game with your own grid size, timer, and rules.",
+  "route": "/games/custom",
+  "mechanicsKey": null,
+  "kind": "builder",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

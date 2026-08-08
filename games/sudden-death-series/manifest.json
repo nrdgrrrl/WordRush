@@ -1,0 +1,9 @@
+{
+  "key": "sudden-death-series",
+  "name": "Sudden Death Series",
+  "tagline": "Play a fast Sudden Death Series of multiplayer Wordrush micro-rounds.",
+  "route": "/games/sudden-death-series",
+  "mechanicsKey": "sudden_series",
+  "kind": "multiplayer",
+  "availability": { "solo": false, "multiplayer": true, "shareable": false }
+}
