@@ -27,6 +27,22 @@ test("sitemap includes the how-to-play route", () => {
   assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/how-to-play<\/loc>/);
 });
 
+test("about is a distinct standalone content route with its own SEO metadata", () => {
+  const route = routes.routeForPath("/about");
+
+  assert.ok(route);
+  assert.equal(route.kind, "page");
+  assert.equal(route.key, "about");
+  assert.equal(route.content, "about");
+  assert.equal(route.title, "About WordRush — Fast Online Word Game");
+  assert.equal(
+    route.description,
+    "Learn about WordRush, a fast browser word game with solo challenges and multiplayer games for friends.",
+  );
+  assert.notEqual(routes.seoForPath("/about"), routes.HOME);
+  assert.equal(routes.seoForPath("/about").path, "/about");
+});
+
 test("game-modes is a distinct public route with its own SEO metadata", () => {
   const route = routes.routeForPath("/game-modes");
 
@@ -55,6 +71,20 @@ test("game-modes is in the sitemap and cross-linked with how-to-play", () => {
   assert.match(howToPlay, /href="\/game-modes">WordRush Game Modes<\/a>/);
   assert.match(footer, /href="\/how-to-play">How to play<\/a>/);
   assert.match(footer, /href="\/game-modes">Game modes<\/a>/);
+});
+
+test("about is in the sitemap, shared footer, and links to core public pages", () => {
+  const sitemap = fs.readFileSync(path.join(__dirname, "..", "sitemap.xml"), "utf8");
+  const about = fs.readFileSync(path.join(contentPages, "about.html"), "utf8");
+  const footer = fs.readFileSync(path.join(__dirname, "..", "site-footer.html"), "utf8");
+
+  assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/about<\/loc>/);
+  assert.match(footer, /href="\/about">About<\/a>/);
+  assert.match(about, /<h1>About WordRush<\/h1>/);
+  assert.match(about, /href="\/how-to-play"/);
+  assert.match(about, /href="\/game-modes"/);
+  assert.match(about, /class="primary content-cta" href="\/"/);
+  assert.doesNotMatch(about, /href="\/faq"/);
 });
 
 test("every direct Game Modes play link is a known game route", () => {

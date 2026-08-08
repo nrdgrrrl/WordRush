@@ -349,6 +349,14 @@ test("serves standalone evergreen documents, gameplay SPA routes, and redirects 
   }
   const contentRoutes = [
     {
+      path: "/about",
+      page: "about",
+      title: "About WordRush — Fast Online Word Game",
+      description: "Learn about WordRush, a fast browser word game with solo challenges and multiplayer games for friends.",
+      h1: "About WordRush",
+      excludedContentScreen: "howToPlayScreen|gameModesScreen",
+    },
+    {
       path: "/how-to-play",
       page: "howToPlay",
       title: "How to Play WordRush — Rules and Scoring",
@@ -381,17 +389,19 @@ test("serves standalone evergreen documents, gameplay SPA routes, and redirects 
     assert.match(body, new RegExp('<meta name="twitter:description" content="' + contentRoute.description));
     assert.match(body, new RegExp('<body class="content-document" data-page="' + contentRoute.page + '"'));
     assert.match(body, new RegExp("<h1>" + contentRoute.h1 + "<\\/h1>"));
+    assert.equal([...body.matchAll(/<h1\b/g)].length, 1, contentRoute.path + " has one H1");
     assert.match(body, /<footer class="site-footer">/);
     assert.match(body, /<script src="\/theme-bootstrap\.js"><\/script>/);
     assert.match(body, /<script src="\/analytics\.js"><\/script>/);
     for (const excluded of [
       "homeScreen",
       "gameScreen",
+      "board",
       "resultsScreen",
       "multiplayerDialog",
       "profileDialog",
       "profileButton",
-      contentRoute.excludedContentScreen,
+      ...contentRoute.excludedContentScreen.split("|"),
     ]) {
       assert.doesNotMatch(body, new RegExp('id="' + excluded + '"'), contentRoute.path + " includes " + excluded);
     }
@@ -406,6 +416,7 @@ test("serves standalone evergreen documents, gameplay SPA routes, and redirects 
   const sitemap = await (await fetch(origin + "/sitemap.xml")).text();
   assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/how-to-play<\/loc>/);
   assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/game-modes<\/loc>/);
+  assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/about<\/loc>/);
   const transient = await fetch(origin + "/results", { redirect: "manual" });
   assert.equal(transient.status, 302);
   assert.equal(transient.headers.get("location"), "/");
