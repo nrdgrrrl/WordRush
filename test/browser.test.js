@@ -582,7 +582,7 @@ test("Random Rush leads grouped daily challenges and games", async () => {
   }
 });
 
-test("Daily Rush freezes one shared board without adding a results panel", async (t) => {
+test("Daily Rush and Echo Race retain distinct routes after challenge generation", async (t) => {
   const browser = await chromium.launch({ headless: true, executablePath });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -590,6 +590,7 @@ test("Daily Rush freezes one shared board without adding a results panel", async
   await openDailyChallenges(page);
   await page.locator("#dailyRush").click();
   await page.waitForSelector("#roundIntroScreen.active");
+  assert.equal(new URL(page.url()).pathname, "/games/daily-rush");
   await page.locator("#introStart").click();
   await page.waitForSelector("#gameScreen.active");
   assert.equal(await page.locator(".tile").count(), 16);
@@ -601,6 +602,13 @@ test("Daily Rush freezes one shared board without adding a results panel", async
   await page.waitForSelector("#resultsScreen.active");
   assert.equal(await page.locator("#dailyChallengeResult").isHidden(), true);
   assert.equal(await page.locator("#again").textContent(), "Try today again →");
+
+  await page.locator('nav button[data-screen="homeScreen"]').click();
+  await page.waitForSelector("#homeScreen.active");
+  await openDailyChallenges(page);
+  await page.locator("#echoRace").click();
+  await page.waitForSelector("#roundIntroScreen.active");
+  assert.equal(new URL(page.url()).pathname, "/games/echo-race");
 });
 
 test("challenge lifecycle ignores stale launches and Relay submissions", async (t) => {

@@ -33,6 +33,28 @@ const expectedInventory = [
   ["word-chain", "Word Chain", "preset", "chain", "/games/word-chain", { solo: true, multiplayer: true, shareable: false }],
   ["custom-game", "Custom Game", "builder", null, "/games/custom", { solo: true, multiplayer: true, shareable: false }],
 ];
+const expectedRouteTitles = Object.freeze({
+  "random-rush": "Random Rush — A New Word Game Every Round | Wordrush",
+  "daily-rush": "Daily Rush — Play Today’s Word Game | Wordrush",
+  "echo-race": "Echo Race — Replay Your Daily Wordrush Challenge",
+  "the-curse": "The Curse — Wordrush Frozen-Tile Word Game",
+  "bounty-tiles": "Bounty Tiles — Hunt Bonus Letters | Wordrush",
+  "room-heist": "Room Heist — Multiplayer Word Game | Wordrush",
+  "word-relay": "Word Relay — Share a Wordrush Board With Friends",
+  "party-mode": "Party Mode — Build a Wordrush Game Together",
+  "custom-game": "Custom Game — Build Your Wordrush Round",
+  classic: "Classic — Two Minutes of Word Joy | Wordrush",
+  "sudden-death": "Sudden Death — One Mistake Ends the Round | Wordrush",
+  "sudden-death-series": "Sudden Death Series — Multiplayer Wordrush",
+  "dirty-mode": "Dirty Mode — Wordrush After Dark",
+  "race-to-500": "Race to 500 — First to 500 Points | Wordrush",
+  "word-stretch": "Word Stretch — Big-Word Wordrush Challenge",
+  blitz: "Blitz — A Lightning-Fast Wordrush Game",
+  "long-haul": "Long Haul — Big Words Only | Wordrush",
+  "letter-storm": "Letter Storm — Hunt an 8×8 Wordrush Board",
+  "score-attack": "Score Attack — Race to 250 Points | Wordrush",
+  "word-chain": "Word Chain — Link Every Word | Wordrush",
+});
 
 function gameFor(key) {
   const game = catalog.byKey(key);
@@ -114,6 +136,10 @@ test("catalog loader fails closed for malformed or duplicate manifests", () => {
     /route must be a \/games\/<slug> path or null/,
   );
   assert.throws(
+    () => withTemporaryCatalog([["alpha", fixture("alpha", { mechanicsKey: "missing_mode" })]], catalog.loadCatalog),
+    /mechanicsKey must exist in MODE_CONFIG \(missing_mode\)/,
+  );
+  assert.throws(
     () => withTemporaryCatalog([
       ["alpha", fixture("alpha")],
       ["beta", fixture("alpha", { name: "Game Beta", route: "/games/beta" })],
@@ -157,6 +183,10 @@ test("mechanics associations are real and wrapper or builder identities remain t
 
 test("site routes consume catalog identity and every catalog game route resolves", () => {
   assert.equal(routes.catalog, catalog);
+  assert.deepEqual(
+    Object.keys(expectedRouteTitles).sort(),
+    catalog.all.filter((game) => game.route !== null).map((game) => game.key).sort(),
+  );
   for (const game of catalog.all.filter((entry) => entry.route !== null)) {
     const route = routes.routeForPath(game.route);
     assert.ok(route, game.route);
@@ -164,12 +194,22 @@ test("site routes consume catalog identity and every catalog game route resolves
     assert.equal(route.catalogKey, game.key, game.route);
     assert.equal(route.path, game.route, game.route);
     assert.equal(route.description, game.tagline, game.route);
-    assert.ok(route.title.startsWith(game.name + " — "), game.route);
+    assert.equal(route.title, expectedRouteTitles[game.key], game.route);
   }
   assert.equal(routes.routeForPath("/games/minimum-word").catalogKey, "word-stretch");
   assert.equal(routes.routeForPath("/games/race").catalogKey, "race-to-500");
   assert.equal(routes.routeForMode("minimum")?.path, "/games/minimum-word");
   assert.equal(routes.routeForMode("race")?.path, "/games/race");
+  assert.equal(routes.routeForMode("daily"), null);
+  assert.equal(
+    routes.routeForMode("daily", { catalogKey: "daily-rush" })?.path,
+    "/games/daily-rush",
+  );
+  assert.equal(
+    routes.routeForMode("daily", { catalogKey: "echo-race" })?.path,
+    "/games/echo-race",
+  );
+  assert.equal(routes.routeForMode("daily", { catalogKey: "classic" }), null);
   assert.equal(routes.routeForMode("coop"), null);
 });
 

@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { MODE_CONFIG } = require("./game-config");
 
 const CATALOG_ROOT = path.join(__dirname, "games");
 const KINDS = new Set(["preset", "challenge", "builder", "multiplayer"]);
@@ -51,6 +52,8 @@ function validateManifest(raw, source, folderName) {
   if (raw.mechanicsKey !== null &&
     (typeof raw.mechanicsKey !== "string" || !/^[a-z][a-z0-9_]*$/.test(raw.mechanicsKey)))
     invalid(source, "mechanicsKey must be a MODE_CONFIG-style key or null");
+  if (raw.mechanicsKey !== null && !MODE_CONFIG[raw.mechanicsKey])
+    invalid(source, `mechanicsKey must exist in MODE_CONFIG (${raw.mechanicsKey})`);
   if (!KINDS.has(raw.kind))
     invalid(source, "kind must be preset, challenge, builder, or multiplayer");
   if (raw.kind === "preset" && raw.mechanicsKey === null)

@@ -83,30 +83,30 @@
         "Find answers about playing WordRush, valid words, scoring, multiplayer, accounts, stats, and game modes.",
     },
   };
-  // This contains only existing route-launch and title-suffix behavior. Public
-  // names, descriptions, paths, mechanics keys, kinds, and availability live in
-  // games/*/manifest.json and are supplied by the canonical catalog above.
+  // This contains only existing route-launch behavior and exact SEO titles.
+  // Public names, descriptions, paths, mechanics keys, kinds, and availability
+  // live in games/*/manifest.json and are supplied by the canonical catalog above.
   const GAME_ROUTE_RUNTIME = Object.freeze({
-    "random-rush": { key: "random", launcher: "random", titleSuffix: "A New Word Game Every Round" },
-    "daily-rush": { key: "daily", launcher: "daily", titleSuffix: "Play Today’s Word Game" },
-    "echo-race": { key: "echo", launcher: "echo", titleSuffix: "Replay Your Daily Wordrush Challenge", brand: false },
-    "the-curse": { key: "curse", titleSuffix: "Wordrush Frozen-Tile Word Game", brand: false },
-    "bounty-tiles": { key: "bounty", titleSuffix: "Hunt Bonus Letters" },
-    "room-heist": { key: "heist", launcher: "multiplayer", titleSuffix: "Multiplayer Word Game" },
-    "word-relay": { key: "relay", mode: "relay", launcher: "relay", titleSuffix: "Share a Wordrush Board With Friends" },
-    "party-mode": { key: "party", launcher: "party", titleSuffix: "Build a Wordrush Game Together" },
-    "custom-game": { key: "custom", launcher: "custom", titleSuffix: "Build Your Wordrush Round" },
-    classic: { key: "classic", titleSuffix: "Two Minutes of Word Joy" },
-    "sudden-death": { key: "sudden", titleSuffix: "One Mistake Ends the Round" },
-    "sudden-death-series": { key: "suddenSeries", launcher: "multiplayer", titleSuffix: "Multiplayer Wordrush" },
-    "dirty-mode": { key: "dirty", titleSuffix: "Wordrush After Dark" },
-    "race-to-500": { key: "race", titleSuffix: "First to 500 Points" },
-    "word-stretch": { key: "minimum", titleSuffix: "Big-Word Wordrush Challenge" },
-    blitz: { key: "blitz", titleSuffix: "A Lightning-Fast Wordrush Game" },
-    "long-haul": { key: "longhaul", titleSuffix: "Big Words Only" },
-    "letter-storm": { key: "storm", titleSuffix: "Hunt an 8×8 Wordrush Board" },
-    "score-attack": { key: "scoreattack", titleSuffix: "Race to 250 Points" },
-    "word-chain": { key: "chain", titleSuffix: "Link Every Word" },
+    "random-rush": { key: "random", launcher: "random", title: "Random Rush — A New Word Game Every Round | Wordrush" },
+    "daily-rush": { key: "daily", launcher: "daily", title: "Daily Rush — Play Today’s Word Game | Wordrush" },
+    "echo-race": { key: "echo", launcher: "echo", title: "Echo Race — Replay Your Daily Wordrush Challenge" },
+    "the-curse": { key: "curse", title: "The Curse — Wordrush Frozen-Tile Word Game" },
+    "bounty-tiles": { key: "bounty", title: "Bounty Tiles — Hunt Bonus Letters | Wordrush" },
+    "room-heist": { key: "heist", launcher: "multiplayer", title: "Room Heist — Multiplayer Word Game | Wordrush" },
+    "word-relay": { key: "relay", mode: "relay", launcher: "relay", title: "Word Relay — Share a Wordrush Board With Friends" },
+    "party-mode": { key: "party", launcher: "party", title: "Party Mode — Build a Wordrush Game Together" },
+    "custom-game": { key: "custom", launcher: "custom", title: "Custom Game — Build Your Wordrush Round" },
+    classic: { key: "classic", title: "Classic — Two Minutes of Word Joy | Wordrush" },
+    "sudden-death": { key: "sudden", title: "Sudden Death — One Mistake Ends the Round | Wordrush" },
+    "sudden-death-series": { key: "suddenSeries", launcher: "multiplayer", title: "Sudden Death Series — Multiplayer Wordrush" },
+    "dirty-mode": { key: "dirty", title: "Dirty Mode — Wordrush After Dark" },
+    "race-to-500": { key: "race", title: "Race to 500 — First to 500 Points | Wordrush" },
+    "word-stretch": { key: "minimum", title: "Word Stretch — Big-Word Wordrush Challenge" },
+    blitz: { key: "blitz", title: "Blitz — A Lightning-Fast Wordrush Game" },
+    "long-haul": { key: "longhaul", title: "Long Haul — Big Words Only | Wordrush" },
+    "letter-storm": { key: "storm", title: "Letter Storm — Hunt an 8×8 Wordrush Board" },
+    "score-attack": { key: "scoreattack", title: "Score Attack — Race to 250 Points | Wordrush" },
+    "word-chain": { key: "chain", title: "Word Chain — Link Every Word | Wordrush" },
   });
 
   const routeEntries = catalog.all
@@ -123,7 +123,7 @@
           : { mode: game.mechanicsKey }),
         path: game.route,
         ...(runtime.launcher ? { launcher: runtime.launcher } : {}),
-        title: `${game.name} — ${runtime.titleSuffix}${runtime.brand === false ? "" : " | Wordrush"}`,
+        title: runtime.title,
         description: game.tagline,
       })];
     });
@@ -151,11 +151,15 @@
     return byPath.get(pathname) || null;
   }
 
-  function routeForMode(mode, { randomRush = false, config = null } = {}) {
+  function routeForMode(mode, { catalogKey = null, randomRush = false, config = null } = {}) {
+    if (catalogKey !== null) {
+      const game = catalog.byKey(catalogKey);
+      if (!game?.route || game.mechanicsKey !== mode) return null;
+      return gamesByCatalogKey.get(game.key) || null;
+    }
     if (randomRush) return gamesByCatalogKey.get("random-rush");
     if (config?.party) return gamesByCatalogKey.get("party-mode");
     if (mode === "custom") return gamesByCatalogKey.get("custom-game");
-    if (mode === "daily") return gamesByCatalogKey.get("daily-rush");
     if (mode === "relay") return gamesByCatalogKey.get("word-relay");
     const game = catalog.byMechanicsKey(mode);
     return game?.route ? gamesByCatalogKey.get(game.key) : null;

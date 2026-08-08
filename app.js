@@ -1711,12 +1711,12 @@ function writeAppRoute(pathname, { replace = false } = {}) {
   }));
 }
 
-function gameRoutePath(mode, { randomRush = false, config = null } = {}) {
-  return appRoutes.routeForMode(mode, { randomRush, config })?.path || "/games/custom";
+function gameRoutePath(mode, { catalogKey = null, randomRush = false, config = null } = {}) {
+  return appRoutes.routeForMode(mode, { catalogKey, randomRush, config })?.path || "/games/custom";
 }
 
-function syncGameRoute(mode, { randomRush = false, config = null } = {}) {
-  let path = gameRoutePath(mode, { randomRush, config });
+function syncGameRoute(mode, { catalogKey = null, randomRush = false, config = null } = {}) {
+  let path = gameRoutePath(mode, { catalogKey, randomRush, config });
   const params = new URLSearchParams(location.search);
   const sharedKey = mode === "daily"
     ? "challenge"
@@ -1975,6 +1975,7 @@ async function start(
   dailyChallenge = null,
   relayChallenge = null,
   challengeOperationId = null,
+  catalogKey = null,
 ) {
   const challengeOperation = challengeOperationId ?? beginChallengeOperation();
   if (!isCurrentChallengeOperation(challengeOperation)) return;
@@ -2079,7 +2080,7 @@ async function start(
   customAdult = generationInputs.adultMode;
   s.mode = generationInputs.mode;
   s.rush = generationInputs.rush;
-  syncGameRoute(s.mode, { randomRush: s.rush, config: nextConfig });
+  syncGameRoute(s.mode, { catalogKey, randomRush: s.rush, config: nextConfig });
   s.dailyChallenge = dailyChallenge
     ? {
         id: dailyChallenge.challenge.id,
@@ -2262,6 +2263,7 @@ async function startDailyRush(shared = null, raceEcho = false, sharedRef = null)
     daily,
     null,
     challengeOperation,
+    raceEcho ? "echo-race" : "daily-rush",
   );
 }
 async function startWordRelay(id = null) {
