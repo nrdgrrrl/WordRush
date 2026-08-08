@@ -43,6 +43,22 @@ test("about is a distinct standalone content route with its own SEO metadata", (
   assert.equal(routes.seoForPath("/about").path, "/about");
 });
 
+test("faq is a distinct standalone content route with its own SEO metadata", () => {
+  const route = routes.routeForPath("/faq");
+
+  assert.ok(route);
+  assert.equal(route.kind, "page");
+  assert.equal(route.key, "faq");
+  assert.equal(route.content, "faq");
+  assert.equal(route.title, "WordRush FAQ — Playing, Multiplayer, Words and More");
+  assert.equal(
+    route.description,
+    "Find answers about playing WordRush, valid words, scoring, multiplayer, accounts, stats, and game modes.",
+  );
+  assert.notEqual(routes.seoForPath("/faq"), routes.HOME);
+  assert.equal(routes.seoForPath("/faq").path, "/faq");
+});
+
 test("game-modes is a distinct public route with its own SEO metadata", () => {
   const route = routes.routeForPath("/game-modes");
 
@@ -85,6 +101,30 @@ test("about is in the sitemap, shared footer, and links to core public pages", (
   assert.match(about, /href="\/game-modes"/);
   assert.match(about, /class="primary content-cta" href="\/"/);
   assert.doesNotMatch(about, /href="\/faq"/);
+});
+
+test("faq is in the sitemap, shared footer, and links to core public pages", () => {
+  const sitemap = fs.readFileSync(path.join(__dirname, "..", "sitemap.xml"), "utf8");
+  const faq = fs.readFileSync(path.join(contentPages, "faq.html"), "utf8");
+  const footer = fs.readFileSync(path.join(__dirname, "..", "site-footer.html"), "utf8");
+  const questionIds = [...faq.matchAll(/<h3 id="([^"]+)">/g)].map((match) => match[1]);
+
+  assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/faq<\/loc>/);
+  for (const [href, label] of [
+    ["/about", "About"],
+    ["/how-to-play", "How to play"],
+    ["/game-modes", "Game modes"],
+    ["/faq", "FAQ"],
+  ]) {
+    assert.match(footer, new RegExp('href="' + href + '">' + label + "<\\/a>"));
+  }
+  assert.match(faq, /<h1>WordRush FAQ<\/h1>/);
+  assert.match(faq, /href="\/about"/);
+  assert.match(faq, /href="\/how-to-play"/);
+  assert.match(faq, /href="\/game-modes"/);
+  assert.match(faq, /class="primary content-cta" href="\/"/);
+  assert.ok(questionIds.length >= 10);
+  assert.equal(new Set(questionIds).size, questionIds.length);
 });
 
 test("every direct Game Modes play link is a known game route", () => {
