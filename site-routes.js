@@ -69,6 +69,15 @@
       description:
         "Learn about WordRush, a fast browser word game with solo challenges and multiplayer games for friends.",
     },
+    faq: {
+      kind: "page",
+      key: "faq",
+      path: "/faq",
+      content: "faq",
+      title: "WordRush FAQ — Playing, Multiplayer, Words and More",
+      description:
+        "Find answers about playing WordRush, valid words, scoring, multiplayer, accounts, stats, and game modes.",
+    },
   };
   const GAMES = {
     random: {
@@ -265,6 +274,7 @@
     PAGES.gameModes,
     PAGES.howToPlay,
     PAGES.about,
+    PAGES.faq,
     ...Object.values(GAMES),
   ]);
   const byPath = new Map(all.map((route) => [route.path, route]));

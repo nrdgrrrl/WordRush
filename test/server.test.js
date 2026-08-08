@@ -349,6 +349,14 @@ test("serves standalone evergreen documents, gameplay SPA routes, and redirects 
   }
   const contentRoutes = [
     {
+      path: "/faq",
+      page: "faq",
+      title: "WordRush FAQ — Playing, Multiplayer, Words and More",
+      description: "Find answers about playing WordRush, valid words, scoring, multiplayer, accounts, stats, and game modes.",
+      h1: "WordRush FAQ",
+      excludedContentScreen: "howToPlayScreen|gameModesScreen|about-core-heading",
+    },
+    {
       path: "/about",
       page: "about",
       title: "About WordRush — Fast Online Word Game",
@@ -417,6 +425,7 @@ test("serves standalone evergreen documents, gameplay SPA routes, and redirects 
   assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/how-to-play<\/loc>/);
   assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/game-modes<\/loc>/);
   assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/about<\/loc>/);
+  assert.match(sitemap, /<loc>https:\/\/wordrush\.party\/faq<\/loc>/);
   const transient = await fetch(origin + "/results", { redirect: "manual" });
   assert.equal(transient.status, 302);
   assert.equal(transient.headers.get("location"), "/");

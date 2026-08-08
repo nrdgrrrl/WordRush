@@ -1124,6 +1124,17 @@ body:has(#achievementsScreen.active) .site-footer,
   color: #5b2d7f;
   font-weight: 800;
 }
+.faq-list {
+  display: grid;
+  gap: 18px;
+}
+.faq-list h3 {
+  margin: 0 0 5px;
+  color: #2c1c37;
+  font-size: 1rem;
+  letter-spacing: -.02em;
+}
+.faq-list p { margin: 0; }
 .how-to-play-steps,
 .how-to-play-rule-list {
   display: grid;
@@ -1182,7 +1193,8 @@ html[data-theme="dark"] .content-section li { color: #d1c1d8; }
 html[data-theme="dark"] .content-section h2,
 html[data-theme="dark"] .how-to-play-steps strong,
 html[data-theme="dark"] .how-to-play-rule-list strong,
-html[data-theme="dark"] .content-mode-list strong { color: #fff9f0; }
+html[data-theme="dark"] .content-mode-list strong,
+html[data-theme="dark"] .faq-list h3 { color: #fff9f0; }
 html[data-theme="dark"] .content-mode-list article { background: #242823; border-color: #555b53; }
 html[data-theme="dark"] .content-mode-list span,
 html[data-theme="dark"] .content-note { color: #aaa99f !important; }
@@ -1194,7 +1206,8 @@ html[data-theme="dark"] .content-section a { color: #f6c85f; }
   html:not([data-theme="light"]) .content-section h2,
   html:not([data-theme="light"]) .how-to-play-steps strong,
   html:not([data-theme="light"]) .how-to-play-rule-list strong,
-  html:not([data-theme="light"]) .content-mode-list strong { color: #fff9f0; }
+  html:not([data-theme="light"]) .content-mode-list strong,
+  html:not([data-theme="light"]) .faq-list h3 { color: #fff9f0; }
   html:not([data-theme="light"]) .content-mode-list article { background: #242823; border-color: #555b53; }
   html:not([data-theme="light"]) .content-mode-list span,
   html:not([data-theme="light"]) .content-note { color: #aaa99f !important; }
