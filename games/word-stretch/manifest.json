@@ -1,0 +1,9 @@
+{
+  "key": "word-stretch",
+  "name": "Word Stretch",
+  "tagline": "Find five-letter words and longer on a bigger board in Wordrush Word Stretch.",
+  "route": "/games/minimum-word",
+  "mechanicsKey": "minimum",
+  "kind": "preset",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

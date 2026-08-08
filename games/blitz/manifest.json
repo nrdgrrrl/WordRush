@@ -1,0 +1,9 @@
+{
+  "key": "blitz",
+  "name": "Blitz",
+  "tagline": "Find as many words as possible in 60 seconds with Wordrush Blitz.",
+  "route": "/games/blitz",
+  "mechanicsKey": "blitz",
+  "kind": "preset",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

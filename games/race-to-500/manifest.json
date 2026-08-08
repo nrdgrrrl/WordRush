@@ -1,0 +1,9 @@
+{
+  "key": "race-to-500",
+  "name": "Race to 500",
+  "tagline": "Play Race to 500 and be the first to reach 500 points in Wordrush.",
+  "route": "/games/race",
+  "mechanicsKey": "race",
+  "kind": "preset",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

@@ -1,0 +1,9 @@
+{
+  "key": "word-chain",
+  "name": "Word Chain",
+  "tagline": "Play Word Chain, a Wordrush game where each word starts with the last letter.",
+  "route": "/games/word-chain",
+  "mechanicsKey": "chain",
+  "kind": "preset",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

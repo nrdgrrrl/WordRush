@@ -1,0 +1,9 @@
+{
+  "key": "daily-rush",
+  "name": "Daily Rush",
+  "tagline": "Play the daily Wordrush word game on one shared board and challenge your friends.",
+  "route": "/games/daily-rush",
+  "mechanicsKey": "daily",
+  "kind": "challenge",
+  "availability": { "solo": true, "multiplayer": false, "shareable": true }
+}

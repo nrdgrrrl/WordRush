@@ -1,0 +1,9 @@
+{
+  "key": "party-mode",
+  "name": "Party Mode",
+  "tagline": "Choose the grid, word length, and clock for a custom Wordrush party game.",
+  "route": "/games/party-mode",
+  "mechanicsKey": null,
+  "kind": "builder",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

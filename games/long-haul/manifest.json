@@ -1,0 +1,9 @@
+{
+  "key": "long-haul",
+  "name": "Long Haul",
+  "tagline": "Take on the Wordrush Long Haul challenge and find words six letters or longer.",
+  "route": "/games/long-haul",
+  "mechanicsKey": "longhaul",
+  "kind": "preset",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

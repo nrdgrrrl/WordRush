@@ -1,0 +1,9 @@
+{
+  "key": "classic",
+  "name": "Classic",
+  "tagline": "Play Classic, the original two-minute Wordrush word game on a 4×4 grid.",
+  "route": "/games/classic",
+  "mechanicsKey": "classic",
+  "kind": "preset",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

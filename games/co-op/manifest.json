@@ -1,0 +1,9 @@
+{
+  "key": "co-op",
+  "name": "Co-op",
+  "tagline": "Work from one shared word pool toward a shared team score with your room.",
+  "route": null,
+  "mechanicsKey": "coop",
+  "kind": "multiplayer",
+  "availability": { "solo": false, "multiplayer": true, "shareable": false }
+}

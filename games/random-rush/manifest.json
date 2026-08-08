@@ -1,0 +1,9 @@
+{
+  "key": "random-rush",
+  "name": "Random Rush",
+  "tagline": "Play Random Rush on Wordrush and get a fresh word game, grid, and rule every round.",
+  "route": "/games/random-rush",
+  "mechanicsKey": null,
+  "kind": "challenge",
+  "availability": { "solo": true, "multiplayer": true, "shareable": false }
+}

@@ -1,0 +1,9 @@
+{
+  "key": "word-relay",
+  "name": "Word Relay",
+  "tagline": "Pass one frozen Wordrush board from player to player in Word Relay.",
+  "route": "/games/word-relay",
+  "mechanicsKey": null,
+  "kind": "challenge",
+  "availability": { "solo": true, "multiplayer": false, "shareable": true }
+}
